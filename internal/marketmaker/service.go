@@ -89,12 +89,20 @@ func (s *Service) UpdateConfig(cfg MarketMakerConfig) error {
 }
 
 func (s *Service) run(ctx context.Context) {
+	riskMgr := NewRiskManager(s.cfg.MaxInventory, 10000) // Example max loss
+	providers := NewProviderRegistry()
+	reportSvc := ReportService{}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			for _, pair := range s.cfg.Pairs {
+				// Risk check before quoting
+				if riskMgr.Breach() {
+					riskMgr.EmergencyStop()
+					return
+				}
 				// 1. Fetch real order book snapshot
 				var mid, vol float64
 				var bestBid, bestAsk float64
@@ -146,6 +154,16 @@ func (s *Service) run(ctx context.Context) {
 					}
 					_, _ = s.trading.PlaceOrder(ctx, sellOrder)
 				}
+				// After order placement, update provider volume/rebates
+				providers.UpdateVolume("internal", size)
+				providers.AddRebate("internal", 0.0001*size) // Example rebate
+				// Use external liquidity if needed
+				bidExt, askExt, _, src, err := GetBestExternalQuote(pair)
+				if err == nil && (askExt-bidExt) < (ask-bid) {
+					_ = src // In production, call PlaceOrder on src
+				}
+				// Reporting hook (stub)
+				_ = reportSvc.ProviderPerformanceReport(providers)
 				// 5. Record metrics
 				Spread.WithLabelValues(pair).Set(ask - bid)
 				Inventory.WithLabelValues(pair).Set(inv)

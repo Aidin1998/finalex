@@ -33,3 +33,28 @@ func (r *RiskManager) Breach() bool {
 	defer r.mu.Unlock()
 	return r.inventory > r.maxInventory || r.pnl < -r.maxLoss
 }
+
+// Add position/exposure checks and kill switch
+func (r *RiskManager) CheckPositionLimit(limit float64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inventory <= limit
+}
+
+func (r *RiskManager) CheckPnLLimit(limit float64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pnl >= -limit
+}
+
+func (r *RiskManager) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inventory = 0
+	r.pnl = 0
+}
+
+func (r *RiskManager) EmergencyStop() {
+	// In production, trigger a kill switch for all quoting
+	panic("Market making risk limits breached: EMERGENCY STOP")
+}

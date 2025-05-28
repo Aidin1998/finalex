@@ -19,3 +19,25 @@ func (d *DummyExternalSource) PlaceOrder(pair, side string, price, size float64)
 	// TODO: implement real integration
 	return nil
 }
+
+// Registry for multiple external sources
+
+var externalSources = make(map[string]ExternalLiquiditySource)
+
+func RegisterExternalSource(name string, src ExternalLiquiditySource) {
+	externalSources[name] = src
+}
+
+func GetBestExternalQuote(pair string) (bid, ask, size float64, srcName string, err error) {
+	bestSpread := 1e9
+	for name, src := range externalSources {
+		b, a, s, e := src.GetQuotes(pair)
+		if e == nil && (a-b) < bestSpread {
+			bid, ask, size, srcName, bestSpread = b, a, s, name, a-b
+		}
+	}
+	if bestSpread < 1e9 {
+		return bid, ask, size, srcName, nil
+	}
+	return 0, 0, 0, "", err
+}

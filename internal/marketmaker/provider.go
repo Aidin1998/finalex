@@ -26,3 +26,38 @@ func (r *ProviderRegistry) Register(lp *LiquidityProvider) {
 func (r *ProviderRegistry) Get(id string) *LiquidityProvider {
 	return r.providers[id]
 }
+
+// Add incentive logic and API stubs
+func (r *ProviderRegistry) UpdateVolume(id string, volume float64) {
+	if lp, ok := r.providers[id]; ok {
+		lp.Volume += volume
+	}
+}
+
+func (r *ProviderRegistry) AddRebate(id string, rebate float64) {
+	if lp, ok := r.providers[id]; ok {
+		lp.Rebates += rebate
+	}
+}
+
+func (r *ProviderRegistry) List() []*LiquidityProvider {
+	lps := make([]*LiquidityProvider, 0, len(r.providers))
+	for _, lp := range r.providers {
+		lps = append(lps, lp)
+	}
+	return lps
+}
+
+// API stubs for onboarding and status
+func (r *ProviderRegistry) OnboardProvider(lp *LiquidityProvider) {
+	lp.Active = true
+	r.Register(lp)
+}
+
+func (r *ProviderRegistry) GetStatus(id string) (active bool, volume float64, rebates float64) {
+	lp := r.Get(id)
+	if lp == nil {
+		return false, 0, 0
+	}
+	return lp.Active, lp.Volume, lp.Rebates
+}
