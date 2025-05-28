@@ -49,7 +49,62 @@ var (
 	)
 )
 
+// HTTP request metrics
+var (
+	HTTPRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "pincex_http_requests_total",
+			Help: "Total number of HTTP requests received",
+		},
+		[]string{"path", "method", "status"},
+	)
+	HTTPRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "pincex_http_request_duration_seconds",
+			Help:    "Histogram of HTTP request latencies",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"path", "method"},
+	)
+)
+
+// Wallet operation metrics
+var (
+	WithdrawalRequestsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pincex_withdrawal_requests_total",
+			Help: "Total number of withdrawal requests created",
+		},
+	)
+	WithdrawalRequestDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "pincex_withdrawal_request_duration_seconds",
+			Help:    "Duration in seconds of CreateWithdrawalRequest",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
+	WithdrawalApprovalsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pincex_withdrawal_approvals_total",
+			Help: "Total number of withdrawal approvals",
+		},
+	)
+	WithdrawalBroadcastsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pincex_withdrawal_broadcasts_total",
+			Help: "Total number of broadcasted withdrawals",
+		},
+	)
+)
+
 func init() {
 	prometheus.MustRegister(OrdersProcessed, OrderLatency)
 	prometheus.MustRegister(DBOpenConns, DBIdleConns, DBInUseConns)
+	prometheus.MustRegister(HTTPRequestsTotal, HTTPRequestDuration)
+	prometheus.MustRegister(
+		WithdrawalRequestsTotal,
+		WithdrawalRequestDuration,
+		WithdrawalApprovalsTotal,
+		WithdrawalBroadcastsTotal,
+	)
 }

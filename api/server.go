@@ -139,6 +139,26 @@ func (s *Server) registerRoutes() {
 			hub := s.getMarketDataHub()
 			hub.ServeWS(c.Writer, c.Request)
 		})
+
+		// API Documentation (Swagger / ReDoc)
+		public.GET("/docs/openapi.yaml", func(c *gin.Context) {
+			c.File("docs/openapi.yaml")
+		})
+		public.GET("/docs", func(c *gin.Context) {
+			html := `<!DOCTYPE html>
+			<html>
+			<head>
+			  <title>API Docs</title>
+			  <meta charset="utf-8" />
+			  <meta name="viewport" content="width=device-width, initial-scale=1">
+			  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+			</head>
+			<body>
+			  <redoc spec-url='/api/v1/docs/openapi.yaml'></redoc>
+			</body>
+			</html>`
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+		})
 	}
 
 	// Protected routes (require authentication)

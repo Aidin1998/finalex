@@ -69,27 +69,36 @@ func main() {
 		}
 	}()
 
-	// Create services
-	identitiesSvc, err := identities.NewService(zapLogger, pgDB)
+	// Initialize DB failover manager (PG primary, CR standby)
+	failMgr := database.NewFailoverManager(pgDB, crDB, zapLogger, 30*time.Second)
+	// Start failover monitoring
+	ctx := context.Background()
+	go failMgr.Start(ctx)
+	// Use failover-managed DB for services
+	db := failMgr.DB()
+
+	// Create services using failover DB
+	identitiesSvc, err := identities.NewService(zapLogger, db)
 	if err != nil {
 		zapLogger.Fatal("Failed to create identities service", zap.Error(err))
 	}
 
-	bookkeeperSvc, err := bookkeeper.NewService(zapLogger, pgDB)
+	bookkeeperSvc, err := bookkeeper.NewService(zapLogger, db)
 	if err != nil {
 		zapLogger.Fatal("Failed to create bookkeeper service", zap.Error(err))
 	}
 
-	fiatSvc, err := fiat.NewService(zapLogger, pgDB, bookkeeperSvc)
+	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc)
 	if err != nil {
 		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
 	}
 
-	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, pgDB)
+	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db)
 	if err != nil {
 		zapLogger.Fatal("Failed to create market feeds service", zap.Error(err))
 	}
 
+	// Trading service uses CockroachDB directly
 	tradingSvc, err := trading.NewService(zapLogger, crDB, bookkeeperSvc)
 	if err != nil {
 		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
