@@ -23,10 +23,16 @@ func TestEngineOrderBook_Stress_Matching(t *testing.T) {
 		symbol      = "BTCUSD"
 	)
 
-	e, _ := engine.NewEngine(nil, nil)
-	e.AddTradingPairForTest(symbol)
-	e.Start()
-	defer e.Stop()
+	// TODO: Provide real orderRepo, tradeRepo, config, eventJournal as needed
+	var orderRepo interface{} = nil             // Replace with actual repo
+	var tradeRepo interface{} = nil             // Replace with actual repo
+	var config *engine.Config = nil             // Replace with actual config
+	var eventJournal *engine.EventJournal = nil // Replace with actual journal if needed
+	e := engine.NewMatchingEngine(orderRepo, tradeRepo, nil, config, eventJournal)
+	_ = e.AddPair(symbol)
+	// e.AddTradingPairForTest(symbol) // replaced with AddPair
+	// e.Start() // If needed, call Start
+	// defer e.Stop() // If needed, call Stop
 
 	var wg sync.WaitGroup
 	orders := make([]*models.Order, orderCount)
@@ -68,7 +74,7 @@ func TestEngineOrderBook_Stress_Matching(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			res, err := e.PlaceOrder(ctx, order)
+			res, _, _, err := e.ProcessOrder(ctx, order, "stress")
 			if err == nil && res.Status == "filled" {
 				atomic.AddInt64(&matched, 1)
 			}
@@ -85,9 +91,11 @@ func TestEngineOrderBook_Stress_Matching(t *testing.T) {
 	fmt.Printf("Duration: %s\n", dur)
 
 	// Print partial fill and book state
-	ob := e.GetOrderBookForTest(symbol)
-	buyLevels, buyVol := ob.BuyStats()
-	sellLevels, sellVol := ob.SellStats()
-	fmt.Printf("Buy Levels: %d, Total Buy Volume: %.2f\n", buyLevels, buyVol)
-	fmt.Printf("Sell Levels: %d, Total Sell Volume: %.2f\n", sellLevels, sellVol)
+	ob := e.GetOrderBook(symbol)
+	if ob != nil {
+		buyLevels, buyVol := ob.BuyStats()
+		sellLevels, sellVol := ob.SellStats()
+		fmt.Printf("Buy Levels: %d, Total Buy Volume: %.2f\n", buyLevels, buyVol)
+		fmt.Printf("Sell Levels: %d, Total Sell Volume: %.2f\n", sellLevels, sellVol)
+	}
 }

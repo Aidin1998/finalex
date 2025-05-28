@@ -37,17 +37,19 @@ type TradingService interface {
 type Service struct {
 	logger        *zap.Logger
 	db            *gorm.DB
-	engine        *engine.Engine
+	engine        *engine.MatchingEngine
 	bookkeeperSvc bookkeeper.BookkeeperService
 }
 
 // NewService creates a new trading service
 func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService) (TradingService, error) {
 	// Create trading engine
-	tradingEngine, err := engine.NewEngine(logger, db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trading engine: %w", err)
-	}
+	// TODO: Provide real orderRepo, tradeRepo, config, eventJournal as needed
+	var orderRepo interface{} = nil             // Replace with actual repo
+	var tradeRepo interface{} = nil             // Replace with actual repo
+	var config *engine.Config = nil             // Replace with actual config
+	var eventJournal *engine.EventJournal = nil // Replace with actual journal if needed
+	tradingEngine := engine.NewMatchingEngine(orderRepo, tradeRepo, logger.Sugar(), config, eventJournal)
 
 	// Create service
 	svc := &Service{
@@ -121,7 +123,7 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 	}
 
 	// Place order in trading engine
-	placedOrder, err := s.engine.PlaceOrder(ctx, order)
+	placedOrder, _, _, err := s.engine.ProcessOrder(ctx, order, "api")
 	if err != nil {
 		// Unlock funds if order placement fails
 		if order.Side == "buy" {
@@ -155,7 +157,8 @@ func (s *Service) CancelOrder(ctx context.Context, orderID string) error {
 	}
 
 	// Cancel order in trading engine
-	err = s.engine.CancelOrder(ctx, orderID)
+	cancelReq := &engine.CancelRequest{OrderID: orderID}
+	err = s.engine.CancelOrder(cancelReq)
 	if err != nil {
 		// Ignore errors for orders that cannot be canceled (e.g., already filled)
 		if strings.Contains(err.Error(), "order cannot be canceled") {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestConcurrentOrderBook_Concurrency(t *testing.T) {
-	ob := NewConcurrentOrderBook("BTCUSD")
+	ob := NewOrderBook("BTCUSD") // Fix: use NewOrderBook for exported API
 	wg := sync.WaitGroup{}
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
@@ -33,7 +33,7 @@ func TestConcurrentOrderBook_Concurrency(t *testing.T) {
 }
 
 func TestConcurrentOrderBook_ConcurrentAddAndCancel(t *testing.T) {
-	ob := NewConcurrentOrderBook("BTCUSD")
+	ob := NewOrderBook("BTCUSD") // Fix: use NewOrderBook for exported API
 	wg := sync.WaitGroup{}
 	orderCount := 10000
 	cancelCount := 5000
@@ -75,7 +75,7 @@ func TestConcurrentOrderBook_ConcurrentAddAndCancel(t *testing.T) {
 }
 
 func BenchmarkConcurrentOrderBook_AddOrder(b *testing.B) {
-	ob := NewConcurrentOrderBook("BTCUSD")
+	ob := NewOrderBook("BTCUSD") // Fix: use NewOrderBook for exported API
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
