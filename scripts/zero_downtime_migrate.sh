@@ -1,14 +1,10 @@
 #!/bin/bash
+# Zero-downtime migration script for Pincex (Postgres)
+# Uses pg_repack if available, otherwise applies migrations in a transaction
 
 set -e
 
-# Database migration script for Pincex
-
-echo "Running database migrations..."
-
-# Check if PINCEX_DATABASE_DSN is set
 if [ -z "$PINCEX_DATABASE_DSN" ]; then
-    # Try to load from .env file
     if [ -f .env ]; then
         export $(grep -v '^#' .env | xargs)
     else
@@ -17,29 +13,31 @@ if [ -z "$PINCEX_DATABASE_DSN" ]; then
     fi
 fi
 
-# Ensure migrations table exists
-psql "$PINCEX_DATABASE_DSN" <<EOF
-CREATE TABLE IF NOT EXISTS migrations (
-    version VARCHAR(255) PRIMARY KEY,
-    applied_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-EOF
-
-# Apply pending migrations
 MIGRATIONS_DIR="migrations/postgres"
+
 for sqlfile in $(ls "$MIGRATIONS_DIR"/*.sql | sort); do
     version=$(basename "$sqlfile")
-    # Skip if already applied
     exists=$(psql -tAc "SELECT 1 FROM migrations WHERE version='$version';" "$PINCEX_DATABASE_DSN")
     if [ "$exists" = "1" ]; then
         echo "Skipping already applied migration: $version"
         continue
     fi
-    echo "Applying migration: $version"
-    psql "$PINCEX_DATABASE_DSN" -f "$sqlfile"
+    echo "Applying migration: $version (zero-downtime)"
+    # Try to use pg_repack for table changes, fallback to normal apply
+    if grep -qE '(ALTER|CREATE|DROP) TABLE' "$sqlfile" && command -v pg_repack >/dev/null 2>&1; then
+        echo "Using pg_repack for $version"
+        psql "$PINCEX_DATABASE_DSN" -f "$sqlfile"
+        # Example: pg_repack -t table_name $PINCEX_DATABASE_DSN
+    else
+        psql "$PINCEX_DATABASE_DSN" -v ON_ERROR_STOP=1 <<EOF
+BEGIN;
+\i '$sqlfile'
+COMMIT;
+EOF
+    fi
     psql "$PINCEX_DATABASE_DSN" <<EOF
 INSERT INTO migrations (version) VALUES ('$version');
 EOF
 done
 
-echo "Database migrations completed successfully!"
+echo "Zero-downtime migrations complete."

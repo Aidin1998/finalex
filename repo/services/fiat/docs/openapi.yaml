@@ -1,0 +1,7 @@
+# openapi.yaml: OpenAPI spec for all public & admin endpoints
+openapi: 3.0.0
+info:
+  title: Fiat Service API
+  version: 1.0.0
+paths:
+  # ...add endpoint specs here...

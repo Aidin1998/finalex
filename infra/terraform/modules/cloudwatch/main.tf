@@ -1,0 +1,47 @@
+// CloudWatch monitoring module
+
+// SNS topic for alerts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}  }    AutoScalingGroupName = var.eks_asg_name  dimensions = {  alarm_actions       = [aws_sns_topic.alerts.arn]  alarm_description   = "Trigger when EKS worker CPU > 75%"  threshold           = 75  statistic           = "Average"  period              = 300  namespace           = "AWS/EC2"  metric_name         = "CPUUtilization"  evaluation_periods  = 2  comparison_operator = "GreaterThanThreshold"  alarm_name          = "${var.environment}-eks-node-cpu-high"resource "aws_cloudwatch_metric_alarm" "eks_node_cpu_high" {// EKS worker node CPU Utilization Alarm}  }    DBInstanceIdentifier = var.rds_identifier  dimensions = {  alarm_actions       = [aws_sns_topic.alerts.arn]  alarm_description   = "Trigger when RDS CPU > 80%"  threshold           = 80  statistic           = "Average"  period              = 300  namespace           = "AWS/RDS"  metric_name         = "CPUUtilization"  evaluation_periods  = 2  comparison_operator = "GreaterThanThreshold"  alarm_name          = "${var.environment}-rds-cpu-high"resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {// RDS CPU Utilization Alarm}  endpoint  = var.notification_email  protocol  = "email"  topic_arn = aws_sns_topic.alerts.arnresource "aws_sns_topic_subscription" "email" {}  name = "${var.environment}-alerts"esource "aws_sns_topic" "alerts" {

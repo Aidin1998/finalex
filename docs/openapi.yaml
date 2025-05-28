@@ -1,0 +1,115 @@
+openapi: 3.0.0
+info:
+  title: "Pincex Crypto Exchange API"
+  description: "OpenAPI 3.0 specification for the Pincex Crypto Exchange REST API."
+  version: "1.0.0"
+servers:
+  - url: "https://api.pincex.com/api/v1"
+paths:
+  /health:
+    get:
+      summary: "Health Check"
+      description: "Returns the status of the API."
+      responses:
+        '200':
+          description: "OK"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /market/prices:
+    get:
+      summary: "Get All Market Prices"
+      description: "Returns current prices for all trading pairs."
+      responses:
+        '200':
+          description: "List of market prices"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MarketPrice'
+  /market/history/{symbol}:
+    get:
+      summary: "Get Market History"
+      description: "Returns historical market data for a trading pair."
+      parameters:
+        - name: "symbol"
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: "interval"
+          in: query
+          schema:
+            type: string
+            default: "1h"
+        - name: "limit"
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: "Historical data"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                  interval:
+                    type: string
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Candle'
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+        time:
+          type: string
+          format: date-time
+    MarketPrice:
+      type: object
+      properties:
+        symbol:
+          type: string
+        price:
+          type: number
+        change_24h:
+          type: number
+        volume_24h:
+          type: number
+        high_24h:
+          type: number
+        low_24h:
+          type: number
+        updated_at:
+          type: string
+          format: date-time
+    Candle:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
