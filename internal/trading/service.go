@@ -4,10 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/pincex_unified/pkg/metrics"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -79,6 +84,16 @@ func (s *Service) Stop() error {
 
 // PlaceOrder places an order
 func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
+	tracer := otel.Tracer("trading.Service")
+	ctx, span := tracer.Start(ctx, "PlaceOrder", trace.WithAttributes(
+		attribute.String("order.side", order.Side),
+		attribute.String("order.type", order.Type),
+		attribute.String("order.symbol", order.Symbol),
+		attribute.String("order.user_id", order.UserID.String()),
+	))
+	defer span.End()
+	start := time.Now()
+
 	// Lock funds for buy orders
 	if order.Side == "buy" {
 		// Calculate required funds
@@ -126,7 +141,8 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 		}
 		return nil, fmt.Errorf("failed to place order: %w", err)
 	}
-
+	metrics.OrdersProcessed.WithLabelValues(order.Side).Inc()
+	metrics.OrderLatency.Observe(time.Since(start).Seconds())
 	return placedOrder, nil
 }
 
