@@ -83,3 +83,27 @@ func (c *DummyCustodyProvider) CreateWithdrawal(walletID, toAddress string, amou
 func (c *DummyCustodyProvider) GetTransactionStatus(txID string) (string, error) {
 	return "confirmed", nil
 }
+
+// HSMKeyManager is a stub for a real HSM-backed key manager (for production)
+type HSMKeyManager struct {
+	// Add HSM/TSS client fields here (e.g., PKCS#11, cloud HSM, TSS client)
+}
+
+func NewHSMKeyManager() *HSMKeyManager {
+	return &HSMKeyManager{}
+}
+
+func (h *HSMKeyManager) GenerateKey(label string) (string, error) {
+	// TODO: Implement key generation using HSM/TSS
+	return "hsm-" + label, nil
+}
+
+func (h *HSMKeyManager) SignTransaction(keyID string, txData []byte) ([]byte, error) {
+	// TODO: Implement transaction signing using HSM/TSS
+	return []byte("hsm-signed-" + string(txData)), nil
+}
+
+func (h *HSMKeyManager) GetPublicKey(keyID string) ([]byte, error) {
+	// TODO: Implement public key retrieval from HSM/TSS
+	return []byte("hsm-public-key"), nil
+}

@@ -195,6 +195,10 @@ func (s *Server) registerRoutes() {
 			wallet.POST("/withdraw/:id/approve", s.approveWithdrawal)
 			wallet.GET("/balance", s.getWalletBalance)
 			wallet.GET("/transactions", s.listWalletTransactions)
+			// New endpoints for wallet creation and whitelist management
+			wallet.POST("/create", s.createWallet)
+			wallet.POST(":id/whitelist/add", s.addWhitelistAddress)
+			wallet.POST(":id/whitelist/remove", s.removeWhitelistAddress)
 		}
 	}
 

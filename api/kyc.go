@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // POST /api/v1/user/kyc/start
@@ -16,15 +18,14 @@ func (s *Server) startKYC(c *gin.Context) {
 		s.writeError(c, err)
 		return
 	}
-	// Call provider (stub)
-	provider, ok := s.kycProvider.(interface {
-		StartVerification(string, *kyc.KYCData) (string, error)
+	service, ok := s.kycProvider.(interface {
+		StartKYCRequest(ctx context.Context, userID uuid.UUID, data *kyc.KYCData) (string, error)
 	})
 	if !ok {
 		s.writeError(c, http.ErrNotSupported)
 		return
 	}
-	sessionID, err := provider.StartVerification(userID.(string), &req)
+	sessionID, err := service.StartKYCRequest(c.Request.Context(), userID.(uuid.UUID), &req)
 	if err != nil {
 		s.writeError(c, err)
 		return
@@ -35,9 +36,19 @@ func (s *Server) startKYC(c *gin.Context) {
 // GET /api/v1/user/kyc/status
 func (s *Server) getKYCStatus(c *gin.Context) {
 	userID, _ := c.Get("userID")
-	_ = userID // silence unused var warning
-	// Lookup latest KYCRequest for user (stub)
-	c.JSON(http.StatusOK, gin.H{"status": "pending"})
+	service, ok := s.kycProvider.(interface {
+		GetKYCStatus(ctx context.Context, userID uuid.UUID) (string, error)
+	})
+	if !ok {
+		s.writeError(c, http.ErrNotSupported)
+		return
+	}
+	status, err := service.GetKYCStatus(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": status})
 }
 
 // POST /api/v1/user/kyc/document
