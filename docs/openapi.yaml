@@ -69,7 +69,66 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Candle'
+  /wallet/withdraw:
+    post:
+      summary: "Create Withdrawal Request"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalRequest'
+      responses:
+        '200':
+          description: "Withdrawal request created"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalRequest'
+  /wallet/withdraw/{id}/approve:
+    post:
+      summary: "Approve a Withdrawal Request"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Withdrawal approved"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /wallet/broadcast/{id}:
+    post:
+      summary: "Broadcast Withdrawn Transaction"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Broadcast result"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  txid:
+                    type: string
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     Health:
       type: object
@@ -113,3 +172,42 @@ components:
           type: number
         volume:
           type: number
+    WithdrawalRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        wallet_id:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        to_address:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Approval:
+      type: object
+      properties:
+        id:
+          type: string
+        request_id:
+          type: string
+        approver:
+          type: string
+        approved:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+security:
+  - BearerAuth: []
