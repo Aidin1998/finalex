@@ -661,14 +661,14 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 			qtyLeft = qtyLeft.Sub(matchQty)
 			// Record trade
 			trade := &model.Trade{
-				ID:           uuid.New(),
-				Pair:         order.Pair,
-				Price:        priceDec,
-				Quantity:     matchQty,
-				TakerSide:    order.Side,
-				TakerOrderID: order.ID,
-				MakerOrderID: maker.ID,
-				Timestamp:    time.Now(),
+				ID:        uuid.New(),
+				OrderID:   order.ID,
+				Pair:      order.Pair,
+				Price:     priceDec,
+				Quantity:  matchQty,
+				Side:      order.Side,
+				Maker:     false,
+				CreatedAt: time.Now(),
 			}
 			trades = append(trades, trade)
 			if maker.FilledQuantity.Equal(maker.Quantity) {
@@ -814,6 +814,17 @@ func (ob *OrderBook) OrdersCount() int {
 	ob.ordersMu.RLock()
 	defer ob.ordersMu.RUnlock()
 	return len(ob.ordersByID)
+}
+
+// GetOrderIDs returns a slice of all order IDs in the order book (for test cleanup)
+func (ob *OrderBook) GetOrderIDs() []uuid.UUID {
+	ob.ordersMu.RLock()
+	defer ob.ordersMu.RUnlock()
+	ids := make([]uuid.UUID, 0, len(ob.ordersByID))
+	for id := range ob.ordersByID {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (ob *OrderBook) ProcessLimitOrder(ctx context.Context, order *model.Order) (*model.Order, []*model.Trade, []*model.Order, error) {

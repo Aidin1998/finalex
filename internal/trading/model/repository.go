@@ -53,3 +53,12 @@ type StopOrderActivator interface {
 type PriceFeed interface {
 	GetLastPrice(pair string) (decimal.Decimal, error)
 }
+
+// TradeEvent represents a trade event for registered handlers.
+type TradeEvent struct {
+	Trade      *Trade
+	TakerOrder *Order
+	MakerOrder *Order
+	Timestamp  time.Time
+	MatchingID string // For correlating trades
+}

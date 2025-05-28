@@ -23,23 +23,25 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
+	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
-	trading "github.com/Aidin1998/pincex_unified/internal/trading"
-	errors "github.com/Aidin1998/pincex_unified/common/errors"
+
+	"runtime"
 
 	"go.uber.org/zap"
 )
 
-// OrderBookShardManager is a placeholder for shard management, define as needed
-type OrderBookShardManager interface{}
+// CancelRequest is re-exported from orderbook package for unified API.
+type CancelRequest = orderbook.CancelRequest
 
 // =============================
 // Unified error handling for matching engine
@@ -189,7 +191,7 @@ type kafkaOrderNotifier struct {
 }
 
 func (n *kafkaOrderNotifier) NotifyOrder(ctx context.Context, order *model.Order) error {
-	order.Version = 1 // Set message version for Kafka schema evolution
+	// order.Version = 1 // Removed: Set message version for Kafka schema evolution
 	data, err := json.Marshal(order)
 	if err != nil {
 		n.logger.Errorw("Failed to marshal order for Kafka", "error", err)
@@ -206,7 +208,7 @@ type kafkaTradeNotifier struct {
 }
 
 func (n *kafkaTradeNotifier) NotifyTrade(ctx context.Context, trade *model.Trade) error {
-	trade.Version = 1 // Set message version for Kafka schema evolution
+	// trade.Version = 1 // Removed: Set message version for Kafka schema evolution
 	data, err := json.Marshal(trade)
 	if err != nil {
 		n.logger.Errorw("Failed to marshal trade for Kafka", "error", err)
@@ -256,7 +258,7 @@ type RecoveryService struct {
 	orderRepo model.Repository
 	tradeRepo TradeRepository
 	logger    *zap.SugaredLogger
-	journal   *EventJournal
+	journal   *eventjournal.EventJournal
 	config    RecoveryConfig
 }
 
@@ -264,7 +266,7 @@ type RecoveryService struct {
 // This enables replay, disaster recovery, and state restoration for the engine.
 func NewRecoveryService(me *MatchingEngine, cfg RecoveryConfig, orderRepo model.Repository, tradeRepo TradeRepository, logger *zap.SugaredLogger) *RecoveryService {
 	journalPath := "recovery_journal.log" // In production, make this configurable
-	journal, err := NewEventJournal(logger, journalPath)
+	journal, err := eventjournal.NewEventJournal(logger, journalPath)
 	if err != nil {
 		logger.Errorw("Failed to initialize event journal for recovery", "error", err)
 		journal = nil // Recovery will be degraded, but engine can still run
@@ -286,16 +288,16 @@ func (r *RecoveryService) ReplayEvents() error {
 		return nil
 	}
 	r.logger.Info("Replaying events from journal for recovery...")
-	return r.journal.ReplayEvents(func(event WALEvent) (bool, error) {
+	return r.journal.ReplayEvents(func(event eventjournal.WALEvent) (bool, error) {
 		switch event.EventType {
-		case EventTypeOrderPlaced:
+		case eventjournal.EventTypeOrderPlaced:
 			order, ok := event.Data.(*model.Order)
 			if ok {
 				_, _, _, _ = r.engine.ProcessOrder(context.Background(), order, OrderSourceGTDExpiration)
 			}
-		case EventTypeOrderCancelled:
+		case eventjournal.EventTypeOrderCancelled:
 			// Implement cancel replay logic as needed
-		case EventTypeTradeExecuted:
+		case eventjournal.EventTypeTradeExecuted:
 			// Implement trade replay logic as needed
 		}
 		return true, nil
@@ -392,11 +394,11 @@ func (me *MatchingEngine) AdminCancelOrder(orderID string) error {
 	orderUUID, err := uuid.Parse(orderID)
 	if err != nil {
 		// Use unified error type for invalid ID
-		return errors.New(errors.ErrKindValidation).Explain("invalid order ID: %v", err)
+		return fmt.Errorf("invalid order ID: %v", err)
 	}
 	order, err := me.orderRepo.GetOrderByID(ctx, orderUUID)
 	if err != nil {
-		return errors.Wrap(err).Explain("failed to get order by ID")
+		return fmt.Errorf("failed to get order by ID: %w", err)
 	}
 	// Remove from order book if present
 	me.orderbooksMu.RLock()
@@ -409,7 +411,7 @@ func (me *MatchingEngine) AdminCancelOrder(orderID string) error {
 	}
 	// Cancel in DB
 	if err := me.orderRepo.CancelOrder(ctx, orderUUID); err != nil {
-		return errors.Wrap(err).Explain("failed to cancel order in DB")
+		return fmt.Errorf("failed to cancel order in DB: %w", err)
 	}
 	me.logger.Info("Order cancelled by admin", "orderID", orderID)
 	auditlog.LogAuditEvent(context.Background(), auditlog.AuditEvent{
@@ -752,17 +754,13 @@ func (rl *RateLimiter) SetCapacity(capacity int) {
 type MatchingEngine struct {
 	orderRepo    model.Repository
 	tradeRepo    TradeRepository
-	orderbooks   map[string]*OrderBook
+	orderbooks   map[string]*orderbook.OrderBook
 	orderbooksMu sync.RWMutex
 	logger       *zap.SugaredLogger
 	config       *Config
-	workerPool   *WorkerPool   // For background jobs
-	rateLimiter  *RateLimiter  // Integrated for future use (API, jobs, etc.)
-	eventJournal *EventJournal // <-- Add this line for recovery
-
-	// Add a field for the shard manager to MatchingEngine
-	shardManager OrderBookShardManager
-	// Add other fields as needed for event handlers, notifiers, etc.
+	workerPool   *WorkerPool  // For background jobs
+	rateLimiter  *RateLimiter // Integrated for future use (API, jobs, etc.)
+	eventJournal *eventjournal.EventJournal
 }
 
 // Exported constructor for MatchingEngine to fix undefined: matching_engine.NewMatchingEngine errors
@@ -772,7 +770,7 @@ func NewMatchingEngine(
 	tradeRepo TradeRepository,
 	logger *zap.SugaredLogger,
 	config *Config,
-	eventJournal *EventJournal, // new param, can be nil
+	eventJournal *eventjournal.EventJournal, // new param, can be nil
 ) *MatchingEngine {
 	var workerPool *WorkerPool
 	if config != nil && config.Engine.WorkerPoolSize > 0 {
@@ -790,12 +788,12 @@ func NewMatchingEngine(
 	return &MatchingEngine{
 		orderRepo:    orderRepo,
 		tradeRepo:    tradeRepo,
+		orderbooks:   make(map[string]*orderbook.OrderBook),
 		logger:       logger,
 		config:       config,
-		orderbooks:   make(map[string]*OrderBook),
 		workerPool:   workerPool,
 		rateLimiter:  rateLimiter,
-		eventJournal: eventJournal, // set here
+		eventJournal: eventJournal,
 	}
 }
 
@@ -805,18 +803,18 @@ func NewMatchingEngine(
 func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, source OrderSourceType) (*model.Order, []*model.Trade, []*model.Order, error) {
 	// 1. Validate order (basic checks, symbol, size, etc.)
 	if order == nil {
-		return nil, nil, nil, errors.New(errors.ErrKindInternal).Explain("order is nil")
+		return nil, nil, nil, fmt.Errorf("order is nil")
 	}
 	if order.Pair == "" {
-		return nil, nil, nil, errors.New(errors.ErrKindInternal).Explain("order pair is required")
+		return nil, nil, nil, fmt.Errorf("order pair is required")
 	}
 	if order.Quantity.LessThanOrEqual(decimal.Zero) {
-		return nil, nil, nil, errors.New(errors.ErrKindInternal).Explain("order quantity must be positive")
+		return nil, nil, nil, fmt.Errorf("order quantity must be positive")
 	}
 
 	// 2. Check if market is paused
 	if isMarketPaused(order.Pair) {
-		return nil, nil, nil, errors.New(errors.ErrKindInternal).Explain("market %s is paused", order.Pair)
+		return nil, nil, nil, fmt.Errorf("market %s is paused", order.Pair)
 	}
 
 	// REVIEW: locking mechanism will be bottlenecked whole engine. In this architecture, we have only one engine instance (that is also another problem to solve).
@@ -831,7 +829,7 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 		me.orderbooksMu.Lock()
 		orderBook, ok = me.orderbooks[order.Pair]
 		if !ok {
-			orderBook = NewOrderBook(order.Pair)
+			orderBook = orderbook.NewOrderBook(order.Pair)
 			me.orderbooks[order.Pair] = orderBook
 		}
 		me.orderbooksMu.Unlock()
@@ -854,12 +852,12 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 		// Stop Limit (trigger logic may be elsewhere)
 		return me.processStopLimitOrder(ctx, order, orderBook)
 	default:
-		return nil, nil, nil, errors.New(errors.ErrKindValidation).Explain("unsupported order type: %s", order.Type)
+		return nil, nil, nil, fmt.Errorf("unsupported order type: %s", order.Type)
 	}
 }
 
 // --- The following methods are for test/integration only. Remove or refactor before launch. ---
-func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Order, orderBook *OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	result, err := orderBook.AddOrder(order)
 	// Update order status based on fills
 	if err == nil {
@@ -871,7 +869,7 @@ func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Or
 	}
 	return order, result.Trades, result.RestingOrders, err
 }
-func (me *MatchingEngine) processMarketOrder(ctx context.Context, order *model.Order, orderBook *OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+func (me *MatchingEngine) processMarketOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	result, err := orderBook.AddOrder(order)
 	// Update order status based on fills
 	if err == nil {
@@ -883,7 +881,7 @@ func (me *MatchingEngine) processMarketOrder(ctx context.Context, order *model.O
 	}
 	return order, result.Trades, nil, err
 }
-func (me *MatchingEngine) processIOCOrder(ctx context.Context, order *model.Order, orderBook *OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+func (me *MatchingEngine) processIOCOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	if order.TimeInForce == "" {
 		order.TimeInForce = model.TimeInForceIOC
 	}
@@ -898,7 +896,7 @@ func (me *MatchingEngine) processIOCOrder(ctx context.Context, order *model.Orde
 	}
 	return order, result.Trades, nil, err
 }
-func (me *MatchingEngine) processFOKOrder(ctx context.Context, order *model.Order, orderBook *OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+func (me *MatchingEngine) processFOKOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	if order.TimeInForce == "" {
 		order.TimeInForce = model.TimeInForceFOK
 	}
@@ -913,7 +911,7 @@ func (me *MatchingEngine) processFOKOrder(ctx context.Context, order *model.Orde
 	}
 	return order, result.Trades, nil, err
 }
-func (me *MatchingEngine) processStopLimitOrder(ctx context.Context, order *model.Order, orderBook *OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+func (me *MatchingEngine) processStopLimitOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	result, err := orderBook.AddOrder(order)
 	// Update order status based on fills
 	if err == nil {
@@ -937,32 +935,32 @@ func (me *MatchingEngine) AddPair(pair string) error {
 	me.orderbooksMu.Lock()
 	defer me.orderbooksMu.Unlock()
 	if _, ok := me.orderbooks[pair]; !ok {
-		me.orderbooks[pair] = NewOrderBook(pair)
+		me.orderbooks[pair] = orderbook.NewOrderBook(pair)
 	}
 	return nil
 }
 
-// Update GetOrderBook and SetOrderBook to use the shard manager
-func (me *MatchingEngine) GetOrderBook(pair string) IOrderBook {
-	if me.shardManager != nil {
-		return me.shardManager.GetShard(pair)
-	}
+// GetOrderBook retrieves or creates an OrderBook for the given pair.
+func (me *MatchingEngine) GetOrderBook(pair string) *orderbook.OrderBook {
 	me.orderbooksMu.RLock()
-	defer me.orderbooksMu.RUnlock()
-	if ob, ok := me.orderbooks[pair]; ok {
-		return ob
+	ob, ok := me.orderbooks[pair]
+	me.orderbooksMu.RUnlock()
+	if !ok {
+		me.orderbooksMu.Lock()
+		ob = orderbook.NewOrderBook(pair)
+		me.orderbooks[pair] = ob
+		me.orderbooksMu.Unlock()
 	}
-	return nil
+	return ob
 }
 
-func (me *MatchingEngine) SetOrderBook(pair string, ob IOrderBook) {
-	if me.shardManager != nil {
-		me.shardManager.SetShard(pair, ob)
-	}
+// SetOrderBook replaces the OrderBook for a given pair.
+func (me *MatchingEngine) SetOrderBook(pair string, ob *orderbook.OrderBook) {
+	me.orderbooksMu.Lock()
+	me.orderbooks[pair] = ob
+	me.orderbooksMu.Unlock()
 }
 
-// Extension point: For stateless engine nodes, use DistributedOrderBookStateManager for all order book state access.
-// Example: Replace shardManager with a distributed implementation in production.
 // --- DistributedOrderBookStateManager: Distributed State Management for Order Books ---
 // This manager handles order book state across distributed nodes.
 // It ensures consistency and availability of order book data in a cloud-native environment.
@@ -1129,12 +1127,7 @@ func (me *MatchingEngine) TestSyncProcessAll(pair string) {
 	}
 
 	// Additional cleanup: cancel all remaining orders in the book
-	orderBook.ordersMu.RLock()
-	remainingOrderIds := make([]uuid.UUID, 0, len(orderBook.ordersByID))
-	for orderID := range orderBook.ordersByID {
-		remainingOrderIds = append(remainingOrderIds, orderID)
-	}
-	orderBook.ordersMu.RUnlock()
+	remainingOrderIds := orderBook.GetOrderIDs()
 	for _, orderID := range remainingOrderIds {
 		_ = orderBook.CancelOrder(orderID)
 	}
