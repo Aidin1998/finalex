@@ -123,3 +123,5 @@ func (a *Auth) parseIdToken(idToken string) (*CustomClaims, error) {
 
 	return &CustomClaims{mapClaims}, nil
 }
+
+// Deprecated: Logic is now in internal/identities/service.go

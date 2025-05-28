@@ -1,3 +1,5 @@
+// Deprecated: Logic is now in internal/fiat/service.go
+
 // client.go: gRPC/REST calls into Wallet service
 package accounts
 

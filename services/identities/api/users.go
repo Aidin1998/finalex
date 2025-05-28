@@ -1,39 +1,6 @@
+// Deprecated: Logic is now in internal/identities/service.go
+
 package api
-
-import (
-	"net/http"
-
-	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/litebittech/cex/common/pt"
-	"github.com/litebittech/cex/services/identities/models"
-)
-
-type UserResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	FirstName string    `json:"firstName"`
-	LastName  string    `json:"lastName"`
-}
-
-func mapUserToResponse(user *models.User) UserResponse {
-	return UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email,
-		FirstName: user.FirstName,
-		LastName:  user.LastName,
-	}
-}
-
-func mapUsersToResponses(users []models.User) []UserResponse {
-	responses := make([]UserResponse, len(users))
-	for i, user := range users {
-		responses[i] = mapUserToResponse(pt.Pointer(user))
-	}
-	return responses
-}
 
 // Me returns the authenticated user's profile information
 // @Summary Get current user

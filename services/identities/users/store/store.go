@@ -1,16 +1,6 @@
+// Deprecated: Logic is now in internal/identities/service.go
+
 package store
-
-import (
-	"context"
-	"log/slog"
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/litebittech/cex/common/dbutil"
-	"github.com/litebittech/cex/common/errors"
-	"github.com/litebittech/cex/services/identities/models"
-	"gorm.io/gorm"
-)
 
 // Input structs for more complex user operations
 type CreateIn struct {
