@@ -258,47 +258,63 @@ func (s *Server) auditLog(event, userID, ip string, details map[string]interface
 
 // --- 2FA HANDLERS ---
 func (s *Server) enable2FA(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	secret := totp.GenerateOpts{
-		Issuer:      "Pincex",
-		AccountName: userID.(string),
-	}
-	key, err := totp.Generate(secret)
+	userID := c.GetString("userID")
+	// Lookup user in DB (pseudo-code, replace with real DB call)
+	user, err := s.getUserByID(userID)
 	if err != nil {
-		s.writeError(c, err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 		return
 	}
-	// TODO: Save key.Secret() to DB for userID
-	s.auditLog("2fa_enable", userID.(string), c.ClientIP(), map[string]interface{}{})
+	if user.MFAEnabled && user.TOTPSecret != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "2FA already enabled"})
+		return
+	}
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "OrbitCEX",
+		AccountName: user.Email,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate TOTP secret"})
+		return
+	}
+	user.TOTPSecret = key.Secret()
+	// Save user.TOTPSecret to DB (pseudo-code)
+	_ = s.saveUser(user)
 	c.JSON(http.StatusOK, gin.H{"secret": key.Secret(), "url": key.URL()})
 }
 
 func (s *Server) verify2FA(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	var req struct {
-		Code string `json:"code" binding:"required"`
-	}
+	userID := c.GetString("userID")
+	var req struct{ Code string `json:"code"` }
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.writeError(c, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	// TODO: Load secret from DB for userID
-	secret := "user-secret-from-db"
-	valid := totp.Validate(req.Code, secret)
-	if !valid {
-		s.auditLog("2fa_verify_failed", userID.(string), c.ClientIP(), map[string]interface{}{"code": req.Code})
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
+	user, err := s.getUserByID(userID)
+	if err != nil || user.TOTPSecret == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found or 2FA not setup"})
 		return
 	}
-	s.auditLog("2fa_verify_success", userID.(string), c.ClientIP(), map[string]interface{}{})
-	c.JSON(http.StatusOK, gin.H{"status": "2FA verified"})
+	if !totp.Validate(req.Code, user.TOTPSecret) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid TOTP code"})
+		return
+	}
+	user.MFAEnabled = true
+	_ = s.saveUser(user)
+	c.JSON(http.StatusOK, gin.H{"message": "2FA enabled"})
 }
 
 func (s *Server) disable2FA(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	// TODO: Remove 2FA secret from DB for userID
-	s.auditLog("2fa_disable", userID.(string), c.ClientIP(), map[string]interface{}{})
-	c.JSON(http.StatusOK, gin.H{"status": "2FA disabled"})
+	userID := c.GetString("userID")
+	user, err := s.getUserByID(userID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+	user.MFAEnabled = false
+	user.TOTPSecret = ""
+	_ = s.saveUser(user)
+	c.JSON(http.StatusOK, gin.H{"message": "2FA disabled"})
 }
 
 // healthCheck handles the health check endpoint

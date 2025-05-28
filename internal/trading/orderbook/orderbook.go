@@ -1008,3 +1008,35 @@ func NewOrderBook(pair string) *OrderBook {
 		snapshotCache: snapshotCache{},
 	}
 }
+
+// AllActiveOrders returns a slice of all open/active orders in the book.
+func (ob *OrderBook) AllActiveOrders() []*model.Order {
+	ob.ordersMu.RLock()
+	defer ob.ordersMu.RUnlock()
+	orders := make([]*model.Order, 0, len(ob.ordersByID))
+	for _, o := range ob.ordersByID {
+		if o.Status == model.OrderStatusOpen || o.Status == model.OrderStatusPartiallyFilled || o.Status == model.OrderStatusAlgoPending {
+			orders = append(orders, o)
+		}
+	}
+	return orders
+}
+
+// RemoveOrder removes an order by ID from the book.
+func (ob *OrderBook) RemoveOrder(orderID uuid.UUID) error {
+	ob.ordersMu.Lock()
+	defer ob.ordersMu.Unlock()
+	order, ok := ob.ordersByID[orderID]
+	if !ok {
+		return fmt.Errorf("order not found: %v", orderID)
+	}
+	order.Status = model.OrderStatusCancelled
+	delete(ob.ordersByID, orderID)
+	// TODO: Remove from price level as well
+	return nil
+}
+
+// GetMutex exposes the main ordersMu for external locking (engine periodic tasks)
+func (ob *OrderBook) GetMutex() *sync.RWMutex {
+	return &ob.ordersMu
+}

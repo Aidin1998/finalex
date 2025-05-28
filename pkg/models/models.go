@@ -15,8 +15,12 @@ type User struct {
 	FirstName    string    `json:"first_name"`
 	LastName     string    `json:"last_name"`
 	KYCStatus    string    `json:"kyc_status"` // pending, approved, rejected
-	TwoFAEnabled bool      `json:"two_fa_enabled"`
-	TwoFASecret  string    `json:"-" gorm:"column:two_fa_secret"`
+	Role          string    `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
+	MFAEnabled    bool      `json:"mfa_enabled"`
+	TOTPSecret    string    `json:"-" gorm:"column:totp_secret"`
+	LastLogin     time.Time `json:"last_login"`
+	LastMFA       time.Time `json:"last_mfa"`
+	TrustedDevices string   `json:"trusted_devices" gorm:"type:text"` // JSON array of device fingerprints
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

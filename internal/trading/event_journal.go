@@ -359,10 +359,10 @@ func (ej *EventJournal) StartKafkaConsumer(handler func(WALEvent) error) error {
 // HealthCheck returns the distributed journal health for monitoring/HA.
 func (ej *EventJournal) HealthCheck() map[string]interface{} {
 	health := map[string]interface{}{
-		"instance_id": ej.InstanceID,
-		"kafka_enabled": ej.Kafka != nil && ej.KafkaTopic != "",
-		"async_append": ej.AsyncAppend,
-		"coordinator": ej.Coordinator != nil,
+		"instance_id":      ej.InstanceID,
+		"kafka_enabled":    ej.Kafka != nil && ej.KafkaTopic != "",
+		"async_append":     ej.AsyncAppend,
+		"coordinator":      ej.Coordinator != nil,
 		"append_queue_len": len(ej.appendCh),
 	}
 	if ej.Coordinator != nil {
@@ -371,4 +371,5 @@ func (ej *EventJournal) HealthCheck() map[string]interface{} {
 	}
 	return health
 }
+
 // --- End Distributed Event Journal Usage ---

@@ -835,22 +835,35 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 		me.orderbooksMu.Unlock()
 	}
 
+	// Advanced order validation
+	if err := order.ValidateAdvanced(); err != nil {
+		return nil, nil, nil, fmt.Errorf("order validation failed: %w", err)
+	}
+
 	// --- Order type handling (add/remove logic as needed before launch) ---
 	switch order.Type {
 	case model.OrderTypeLimit:
-		// Standard limit order
 		return me.processLimitOrder(ctx, order, orderBook)
 	case model.OrderTypeMarket:
 		return me.processMarketOrder(ctx, order, orderBook)
 	case model.OrderTypeIOC:
-		// Immediate or Cancel
 		return me.processIOCOrder(ctx, order, orderBook)
 	case model.OrderTypeFOK:
-		// Fill or Kill
 		return me.processFOKOrder(ctx, order, orderBook)
 	case model.OrderTypeStopLimit:
-		// Stop Limit (trigger logic may be elsewhere)
 		return me.processStopLimitOrder(ctx, order, orderBook)
+	case model.OrderTypeIceberg, model.OrderTypeHidden:
+		return me.processIcebergOrder(ctx, order, orderBook)
+	case model.OrderTypeGTD:
+		return me.processGTDOrder(ctx, order, orderBook)
+	case model.OrderTypeOCO:
+		return me.processOCOOrder(ctx, order, orderBook)
+	case model.OrderTypeTrailing:
+		return me.processTrailingStopOrder(ctx, order, orderBook)
+	case model.OrderTypeTWAP:
+		return me.processTWAPOrder(ctx, order, orderBook)
+	case model.OrderTypeVWAP:
+		return me.processVWAPOrder(ctx, order, orderBook)
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported order type: %s", order.Type)
 	}
@@ -922,6 +935,79 @@ func (me *MatchingEngine) processStopLimitOrder(ctx context.Context, order *mode
 		}
 	}
 	return order, result.Trades, result.RestingOrders, err
+}
+
+// --- Stubs for advanced order handlers ---
+func (me *MatchingEngine) processIcebergOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	// Iceberg/hidden: only DisplayQuantity is visible at a time
+	if order.DisplayQuantity.LessThanOrEqual(decimal.Zero) || order.DisplayQuantity.GreaterThan(order.Quantity) {
+		return nil, nil, nil, fmt.Errorf("invalid display quantity for iceberg/hidden order")
+	}
+	remaining := order.Quantity.Sub(order.FilledQuantity)
+	visible := decimal.Min(order.DisplayQuantity, remaining)
+	// Create a visible child order for the displayed quantity
+	visibleOrder := *order // shallow copy
+	visibleOrder.Quantity = visible
+	visibleOrder.FilledQuantity = decimal.Zero
+	visibleOrder.Hidden = false
+	// Mark parent as hidden
+	order.Hidden = true
+	// Place visible child in the book
+	result, err := orderBook.AddOrder(&visibleOrder)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// After each fill, replenish if parent still has remaining quantity
+	// (This requires a periodic or event-driven replenishment in production)
+	if visibleOrder.FilledQuantity.Equal(visible) && order.Quantity.Sub(order.FilledQuantity).GreaterThan(decimal.Zero) {
+		// Recurse to replenish next slice
+		order.FilledQuantity = order.FilledQuantity.Add(visible)
+		return me.processIcebergOrder(ctx, order, orderBook)
+	}
+	// Return parent order with updated filled quantity
+	order.FilledQuantity = order.FilledQuantity.Add(visibleOrder.FilledQuantity)
+	return order, result.Trades, result.RestingOrders, nil
+}
+func (me *MatchingEngine) processGTDOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	if order.ExpireAt != nil && time.Now().After(*order.ExpireAt) {
+		order.Status = model.OrderStatusExpired
+		return order, nil, nil, fmt.Errorf("order expired (GTD)")
+	}
+	// Place as a normal limit order, but engine must periodically expire it
+	return me.processLimitOrder(ctx, order, orderBook)
+}
+func (me *MatchingEngine) processOCOOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	if order.OCOGroupID == nil {
+		return nil, nil, nil, fmt.Errorf("OCO order missing OCOGroupID")
+	}
+	// Place the order as a normal limit/stop order (could be extended for other types)
+	result, err := orderBook.AddOrder(order)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// OCO logic: if this order is filled/cancelled, cancel all others in the group
+	// (This requires a group tracking mechanism in the engine; here we stub the logic)
+	// TODO: Implement OCO group tracking and cancellation in engine/orderbook
+	return order, result.Trades, result.RestingOrders, nil
+}
+func (me *MatchingEngine) processTrailingStopOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	if order.TrailingOffset.LessThanOrEqual(decimal.Zero) {
+		return nil, nil, nil, fmt.Errorf("invalid trailing offset")
+	}
+	// Place as a stop order, but engine must periodically update stop price and trigger
+	order.Status = model.OrderStatusPendingTrigger
+	// TODO: Implement price tracking and trigger logic in periodic engine task
+	return order, nil, nil, nil
+}
+func (me *MatchingEngine) processTWAPOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	order.Status = model.OrderStatusAlgoPending
+	// TODO: Implement TWAP slicing and scheduling in periodic engine task
+	return order, nil, nil, nil
+}
+func (me *MatchingEngine) processVWAPOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
+	order.Status = model.OrderStatusAlgoPending
+	// TODO: Implement VWAP slicing and scheduling in periodic engine task
+	return order, nil, nil, nil
 }
 
 // CancelOrder cancels an order given a CancelRequest.
@@ -1145,3 +1231,46 @@ func (me *MatchingEngine) TestSyncProcessAll(pair string) {
 // =============================
 // END PATCH FOR TESTING ONLY
 // =============================
+
+// StartPeriodicOrderTasks launches a background goroutine for time/trigger-based order management.
+func (me *MatchingEngine) StartPeriodicOrderTasks(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			me.processPeriodicOrderTasks()
+		}
+	}()
+}
+
+// processPeriodicOrderTasks scans all order books for expiring, trailing, OCO, and algo orders.
+func (me *MatchingEngine) processPeriodicOrderTasks() {
+	me.orderbooksMu.RLock()
+	for pair, ob := range me.orderbooks {
+		obMu := ob.GetMutex() // Assume orderbook exposes a mutex or locking method
+		obMu.Lock()
+		orders := ob.AllActiveOrders() // Assume orderbook exposes all active orders
+		for _, order := range orders {
+			// GTD expiration
+			if order.ExpireAt != nil && time.Now().After(*order.ExpireAt) && order.Status == model.OrderStatusOpen {
+				order.Status = model.OrderStatusExpired
+				_ = ob.RemoveOrder(order.ID) // Remove from book
+				// Optionally notify/callback
+			}
+			// Trailing stop update/trigger (stub)
+			if order.Type == model.OrderTypeTrailing && order.Status == model.OrderStatusPendingTrigger {
+				// TODO: Update trailing stop price, trigger if needed
+			}
+			// TWAP/VWAP slice execution (stub)
+			if (order.Type == model.OrderTypeTWAP || order.Type == model.OrderTypeVWAP) && order.Status == model.OrderStatusAlgoPending {
+				// TODO: Execute next slice if time
+			}
+			// OCO group cancellation (stub)
+			if order.Type == model.OrderTypeOCO && order.Status == model.OrderStatusOpen {
+				// TODO: If OCO group peer filled/cancelled, cancel this order
+			}
+		}
+		obMu.Unlock()
+	}
+	me.orderbooksMu.RUnlock()
+}

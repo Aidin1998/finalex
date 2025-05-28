@@ -94,3 +94,35 @@ func Middleware(log *slog.Logger, cfg AuthorizationConfig) echo.MiddlewareFunc {
 		}
 	}
 }
+
+// RBAC enforcement: requireRole checks if user has required role
+func RequireRole(requiredRole string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(ctx echo.Context) error {
+			userRole, ok := ctx.Get("role").(string)
+			if !ok || userRole == "" {
+				return ctx.JSON(http.StatusForbidden, map[string]string{"message": "role not found"})
+			}
+			if userRole != requiredRole && userRole != "admin" {
+				return ctx.JSON(http.StatusForbidden, map[string]string{"message": "insufficient role"})
+			}
+			return next(ctx)
+		}
+	}
+}
+
+// TOTP (MFA) enforcement: require TOTP if enabled
+func RequireTOTP(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(ctx echo.Context) error {
+		mfaEnabled, _ := ctx.Get("mfa_enabled").(bool)
+		if mfaEnabled {
+			code := ctx.Request().Header.Get("X-TOTP-Code")
+			if code == "" {
+				return ctx.JSON(http.StatusUnauthorized, map[string]string{"message": "TOTP code required"})
+			}
+			// TODO: Validate TOTP code using user's TOTPSecret
+			// If invalid, return unauthorized
+		}
+		return next(ctx)
+	}
+}
