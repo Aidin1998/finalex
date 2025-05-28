@@ -1,3 +1,8 @@
+// If you are using this from the 'common' module, you must add the following to common/go.mod:
+// replace github.com/Aidin1998/pincex_unified/pkg/metrics => ../../pkg/metrics
+//
+// Otherwise, you will get an import error for the metrics package.
+
 package apiutil
 
 import (

@@ -1,5 +1,5 @@
 // moved from internal/marketfeeds/service_test.go
-package marketfeeds_test
+package api_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupTestDB(t *testing.T) *gorm.DB {
+func setupMarketfeedsTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
 	err = db.AutoMigrate(&models.TradingPair{})
@@ -22,7 +22,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestGetMarketPricesEmpty(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupMarketfeedsTestDB(t)
 	logger := zap.NewNop() // Use a no-op logger
 	svc, err := marketfeeds.NewService(logger, db)
 	assert.NoError(t, err)
@@ -37,7 +37,7 @@ func TestGetMarketPricesEmpty(t *testing.T) {
 }
 
 func TestGetMarketPricesWithPair(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupMarketfeedsTestDB(t)
 	// Insert an active trading pair
 	pair := &models.TradingPair{Symbol: "ETHUSD", Status: "active"}
 	_ = db.Create(pair)

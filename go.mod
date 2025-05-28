@@ -5,6 +5,7 @@ go 1.22
 toolchain go1.24.2
 
 require (
+	github.com/Aidin1998/pincex_unified/pkg/metrics v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.13.12
 	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-contrib/zap v0.2.0
@@ -42,8 +43,6 @@ require (
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
-	github.com/chenzhuoyu/iasm v0.9.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
@@ -120,3 +119,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/Aidin1998/pincex_unified => ./
+
+replace github.com/Aidin1998/pincex_unified/pkg/metrics => ./pkg/metrics

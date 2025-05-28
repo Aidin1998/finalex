@@ -33,7 +33,7 @@ clean:
 	rm -f $(BUILD_DIR)
 
 test:
-	$(GOTEST) -v ./...
+	$(GOTEST) -v ./test/...
 
 fmt:
 	$(GOFMT) -l -w .

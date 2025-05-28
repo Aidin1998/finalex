@@ -23,8 +23,8 @@ jobs:
     - name: Build
       run: go build -v ./cmd/pincex
 
-    - name: Test
-      run: go test -v ./...
+    - name: Test (unit & integration)
+      run: go test -v ./test/...
 
   lint:
     runs-on: ubuntu-latest

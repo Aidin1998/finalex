@@ -1,5 +1,4 @@
-// moved from internal/trading/service_test.go
-package trading_test
+package api
 
 import (
 	"context"
