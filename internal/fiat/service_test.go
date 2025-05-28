@@ -6,6 +6,7 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
+	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -21,12 +22,15 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// stubKYCService implements a no-op KYCService for testing
+var stubKYC = kyc.NewKYCService(nil)
+
 func TestInitiateDepositAndGetDeposits(t *testing.T) {
 	db := setupTestDB(t)
 	logger := zap.NewNop()
 	bkSvc, err := bookkeeper.NewService(logger, db)
 	assert.NoError(t, err)
-	svc, err := fiat.NewService(logger, db, bkSvc)
+	svc, err := fiat.NewService(logger, db, bkSvc, stubKYC)
 	assert.NoError(t, err)
 	ctx := context.Background()
 	userID := uuid.New().String()
@@ -56,7 +60,7 @@ func TestInitiateWithdrawalAndGetWithdrawals(t *testing.T) {
 	logger := zap.NewNop()
 	bkSvc, err := bookkeeper.NewService(logger, db)
 	assert.NoError(t, err)
-	svc, err := fiat.NewService(logger, db, bkSvc)
+	svc, err := fiat.NewService(logger, db, bkSvc, stubKYC)
 	assert.NoError(t, err)
 	ctx := context.Background()
 	userID := uuid.New().String()

@@ -102,7 +102,7 @@ func (s *Service) Register(ctx context.Context, req *models.RegisterRequest) (*m
 		FirstName:    req.FirstName,
 		LastName:     req.LastName,
 		KYCStatus:    "pending",
-		TwoFAEnabled: false,
+		MFAEnabled:   false,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -132,7 +132,7 @@ func (s *Service) Login(ctx context.Context, req *models.LoginRequest) (*models.
 	}
 
 	// Check if 2FA is enabled
-	if user.TwoFAEnabled {
+	if user.MFAEnabled {
 		return &models.LoginResponse{
 			Requires2FA: true,
 			UserID:      user.ID,
@@ -165,7 +165,7 @@ func (s *Service) Verify2FA(ctx context.Context, userID string, token string) (*
 	}
 
 	// Check if 2FA is enabled
-	if !user.TwoFAEnabled {
+	if !user.MFAEnabled {
 		return nil, fmt.Errorf("2FA not enabled")
 	}
 
@@ -201,7 +201,7 @@ func (s *Service) Enable2FA(ctx context.Context, userID string) (string, error) 
 	}
 
 	// Check if 2FA is already enabled
-	if user.TwoFAEnabled {
+	if user.MFAEnabled {
 		return "", fmt.Errorf("2FA already enabled")
 	}
 
@@ -213,7 +213,7 @@ func (s *Service) Enable2FA(ctx context.Context, userID string) (string, error) 
 	secretBase32 := base64.StdEncoding.EncodeToString(secret)
 
 	// Save 2FA secret
-	user.TwoFASecret = secretBase32
+	user.TOTPSecret = secretBase32
 	if err := s.db.Save(&user).Error; err != nil {
 		return "", fmt.Errorf("failed to save user: %w", err)
 	}
@@ -234,7 +234,7 @@ func (s *Service) Verify2FASetup(ctx context.Context, userID string, token strin
 	}
 
 	// Check if 2FA is already enabled
-	if user.TwoFAEnabled {
+	if user.MFAEnabled {
 		return fmt.Errorf("2FA already enabled")
 	}
 
@@ -245,7 +245,7 @@ func (s *Service) Verify2FASetup(ctx context.Context, userID string, token strin
 	}
 
 	// Enable 2FA
-	user.TwoFAEnabled = true
+	user.MFAEnabled = true
 	if err := s.db.Save(&user).Error; err != nil {
 		return fmt.Errorf("failed to save user: %w", err)
 	}
@@ -265,7 +265,7 @@ func (s *Service) Disable2FA(ctx context.Context, userID string, token string) e
 	}
 
 	// Check if 2FA is enabled
-	if !user.TwoFAEnabled {
+	if !user.MFAEnabled {
 		return fmt.Errorf("2FA not enabled")
 	}
 
@@ -276,8 +276,8 @@ func (s *Service) Disable2FA(ctx context.Context, userID string, token string) e
 	}
 
 	// Disable 2FA
-	user.TwoFAEnabled = false
-	user.TwoFASecret = ""
+	user.MFAEnabled = false
+	user.TOTPSecret = ""
 	if err := s.db.Save(&user).Error; err != nil {
 		return fmt.Errorf("failed to save user: %w", err)
 	}

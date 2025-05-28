@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -27,15 +29,17 @@ type Service struct {
 	logger        *zap.Logger
 	db            *gorm.DB
 	bookkeeperSvc bookkeeper.BookkeeperService
+	kycService    *kyc.KYCService // Compliance hooks
 }
 
 // NewService creates a new FiatService
-func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService) (FiatService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, kycService *kyc.KYCService) (FiatService, error) {
 	// Create service
 	svc := &Service{
 		logger:        logger,
 		db:            db,
 		bookkeeperSvc: bookkeeperSvc,
+		kycService:    kycService,
 	}
 
 	return svc, nil
@@ -75,7 +79,16 @@ func (s *Service) InitiateDeposit(ctx context.Context, userID string, currency s
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
-
+	// Compliance: Monitor deposit
+	if s.kycService != nil {
+		uid, err := uuid.Parse(userID)
+		if err == nil {
+			_, amlErr := s.kycService.MonitorTransaction(ctx, uid, "deposit", provider, amount)
+			if amlErr != nil {
+				s.logger.Warn("AML alert on deposit", zap.String("userID", userID), zap.Error(amlErr))
+			}
+		}
+	}
 	// In a real implementation, this would initiate a deposit with the provider
 	s.logger.Info("Initiating fiat deposit", zap.String("userID", userID), zap.String("currency", currency), zap.Float64("amount", amount), zap.String("provider", provider))
 
@@ -104,7 +117,16 @@ func (s *Service) InitiateWithdrawal(ctx context.Context, userID string, currenc
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
-
+	// Compliance: Monitor withdrawal
+	if s.kycService != nil {
+		uid, err := uuid.Parse(userID)
+		if err == nil {
+			_, amlErr := s.kycService.MonitorTransaction(ctx, uid, "withdrawal", "bank", amount)
+			if amlErr != nil {
+				s.logger.Warn("AML alert on withdrawal", zap.String("userID", userID), zap.Error(amlErr))
+			}
+		}
+	}
 	// Lock funds
 	if err := s.bookkeeperSvc.LockFunds(ctx, userID, currency, amount); err != nil {
 		// Fail transaction
@@ -186,7 +208,13 @@ func (s *Service) CompleteWithdrawal(ctx context.Context, transactionID string) 
 		}
 		return fmt.Errorf("failed to find transaction: %w", err)
 	}
-
+	// Compliance: Monitor withdrawal completion
+	if s.kycService != nil {
+		_, amlErr := s.kycService.MonitorTransaction(ctx, transaction.UserID, "withdrawal_complete", "fiat", transaction.Amount)
+		if amlErr != nil {
+			s.logger.Warn("AML alert on withdrawal completion", zap.String("userID", transaction.UserID.String()), zap.Error(amlErr))
+		}
+	}
 	// Check if transaction is a withdrawal
 	if transaction.Type != "withdrawal" {
 		return fmt.Errorf("transaction is not a withdrawal")

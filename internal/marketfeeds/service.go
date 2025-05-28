@@ -22,6 +22,12 @@ type MarketFeedService interface {
 }
 
 // Service implements MarketFeedService
+// Add pubsub for distribution
+
+type PubSubBackend interface {
+	Publish(ctx context.Context, channel string, msg interface{}) error
+}
+
 type Service struct {
 	logger    *zap.Logger
 	db        *gorm.DB
@@ -30,10 +36,11 @@ type Service struct {
 	mutex     sync.RWMutex
 	stopChan  chan struct{}
 	isRunning bool
+	pubsub    PubSubBackend // new: publish updates
 }
 
 // NewService creates a new MarketFeedService
-func NewService(logger *zap.Logger, db *gorm.DB) (MarketFeedService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, pubsub PubSubBackend) (MarketFeedService, error) {
 	// Create service
 	svc := &Service{
 		logger:    logger,
@@ -42,6 +49,7 @@ func NewService(logger *zap.Logger, db *gorm.DB) (MarketFeedService, error) {
 		candles:   make(map[string]map[string][]*models.Candle),
 		stopChan:  make(chan struct{}),
 		isRunning: false,
+		pubsub:    pubsub,
 	}
 
 	return svc, nil
@@ -201,6 +209,12 @@ func (s *Service) AddExternalPrice(ctx context.Context, symbol string, price flo
 		s.candles[symbol][interval] = append(s.candles[symbol][interval], candle)
 	}
 
+	// Publish normalized update to pubsub
+	if s.pubsub != nil {
+		_ = s.pubsub.Publish(ctx, "ticker", s.prices[symbol])
+		// Optionally publish orderbook/candle/trade as needed
+	}
+
 	return nil
 }
 
@@ -272,6 +286,12 @@ func (s *Service) fetchExternalPrices() {
 			if len(s.candles[symbol][interval]) > 1000 {
 				s.candles[symbol][interval] = s.candles[symbol][interval][len(s.candles[symbol][interval])-1000:]
 			}
+		}
+
+		// After updating s.prices[symbol] and s.candles[symbol][interval]:
+		if s.pubsub != nil {
+			_ = s.pubsub.Publish(context.Background(), "ticker", s.prices[symbol])
+			// Optionally publish orderbook/candle/trade as needed
 		}
 	}
 }

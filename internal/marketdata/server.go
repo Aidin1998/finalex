@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
@@ -17,10 +19,12 @@ import (
 
 // MessageType represents the type of market data message
 const (
-	MsgOrderBook = "orderbook"
-	MsgTrade     = "trade"
-	MsgTicker    = "ticker"
-	MsgCandle    = "candle"
+	MsgOrderBook      = "orderbook"
+	MsgTrade          = "trade"
+	MsgTicker         = "ticker"
+	MsgCandle         = "candle"
+	MsgOrderBookDelta = "orderbook_delta"
+	MsgBinary         = "binary"
 )
 
 // MarketDataMessage is the structure sent to clients
@@ -60,10 +64,18 @@ var (
 		Help:    "Latency of broadcasting market data messages to clients.",
 		Buckets: prometheus.DefBuckets,
 	})
+	MarketDataBinaryMessages = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "marketdata_binary_messages_total",
+		Help: "Total number of binary market data messages broadcasted.",
+	})
+	MarketDataDeltaMessages = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "marketdata_delta_messages_total",
+		Help: "Total number of delta-encoded market data messages broadcasted.",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(MarketDataConnections, MarketDataMessages, MarketDataBroadcastLatency)
+	prometheus.MustRegister(MarketDataConnections, MarketDataMessages, MarketDataBroadcastLatency, MarketDataBinaryMessages, MarketDataDeltaMessages)
 }
 
 func NewHub() *Hub {
@@ -143,8 +155,14 @@ var upgrader = websocket.Upgrader{
 	EnableCompression: true, // Enable permessage-deflate compression
 }
 
-// ServeWS handles WebSocket requests
+// ServeWS handles WebSocket requests with protocol negotiation
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	// Protocol negotiation: check query param or subprotocol
+	protocol := r.URL.Query().Get("protocol")
+	if protocol == "" {
+		protocol = r.Header.Get("Sec-WebSocket-Protocol")
+	}
+	protocol = strings.ToLower(protocol)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
@@ -156,9 +174,31 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		send:      make(chan []byte, 256),
 		connected: time.Now(),
 	}
+	// Store protocol preference
+	if protocol != "" {
+		client.channels["_protocol"] = true // marker
+		// Optionally store protocol in client struct
+	}
+	// Advanced connection management: auth, subscriptions, backpressure
+	// Example: check for auth token
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.Header.Get("Authorization")
+	}
+	if !validateToken(token) {
+		conn.WriteMessage(websocket.CloseMessage, []byte("unauthorized"))
+		conn.Close()
+		return
+	}
 	h.register <- client
 	go client.writePump()
 	go client.readPump(h)
+}
+
+// validateToken is a stub for authentication
+func validateToken(token string) bool {
+	// TODO: Implement real token validation
+	return token != ""
 }
 
 func (c *Client) readPump(h *Hub) {
@@ -227,6 +267,43 @@ func (c *Client) writePump() {
 func (h *Hub) BroadcastMarketData(msg MarketDataMessage) {
 	data, _ := json.Marshal(msg)
 	h.broadcast <- data
+}
+
+// BroadcastBinaryMarketData broadcasts a binary-encoded market data message to all clients
+func (h *Hub) BroadcastBinaryMarketData(data []byte) {
+	h.broadcast <- data
+	MarketDataBinaryMessages.Inc()
+}
+
+// BroadcastDeltaMarketData broadcasts a delta-encoded market data message to all clients
+func (h *Hub) BroadcastDeltaMarketData(data []byte) {
+	h.broadcast <- data
+	MarketDataDeltaMessages.Inc()
+}
+
+// Add support for multi-format broadcast (JSON, binary, delta)
+func (h *Hub) BroadcastOrderBook(prev, curr *marketdata.OrderBookSnapshot) {
+	// JSON broadcast (default)
+	msg := MarketDataMessage{Type: MsgOrderBook, Data: curr}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+	MarketDataMessages.Inc()
+	// Delta encoding
+	delta := marketdata.ComputeDelta(prev, curr)
+	if delta != nil {
+		if b, err := marketdata.EncodeOrderBookDelta(delta); err == nil {
+			h.BroadcastDeltaMarketData(b)
+		}
+	}
+	// Binary snapshot
+	if b, err := marketdata.EncodeOrderBookSnapshot(curr); err == nil {
+		h.BroadcastBinaryMarketData(b)
+	}
+	// FIX gateway broadcast (if enabled)
+	if fixGateway != nil {
+		_ = fixGateway.BroadcastMarketDataFIX(curr)
+		_ = fixGateway.BroadcastMarketDataIncrementalFIX(delta)
+	}
 }
 
 // PublishOrderBookUpdate publishes an order book update to pubsub
@@ -330,3 +407,10 @@ func FetchMissedMessages(rdb *redis.Client, stream string, lastID string, count 
 	}
 	return messages, newLastID, nil
 }
+
+// Stub for FIX gateway integration
+var fixGateway *marketdata.FIXGateway
+
+// In main or setup, initialize fixGateway and start it as needed
+// fixGateway = marketdata.NewFIXGateway()
+// go fixGateway.Start()

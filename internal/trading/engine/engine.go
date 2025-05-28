@@ -1246,7 +1246,7 @@ func (me *MatchingEngine) StartPeriodicOrderTasks(interval time.Duration) {
 // processPeriodicOrderTasks scans all order books for expiring, trailing, OCO, and algo orders.
 func (me *MatchingEngine) processPeriodicOrderTasks() {
 	me.orderbooksMu.RLock()
-	for pair, ob := range me.orderbooks {
+	for _, ob := range me.orderbooks {
 		obMu := ob.GetMutex() // Assume orderbook exposes a mutex or locking method
 		obMu.Lock()
 		orders := ob.AllActiveOrders() // Assume orderbook exposes all active orders
