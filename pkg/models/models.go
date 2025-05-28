@@ -8,21 +8,21 @@ import (
 
 // User represents a user in the system
 type User struct {
-	ID           uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
-	Email        string    `json:"email" gorm:"uniqueIndex"`
-	Username     string    `json:"username" gorm:"uniqueIndex"`
-	PasswordHash string    `json:"-" gorm:"column:password_hash"`
-	FirstName    string    `json:"first_name"`
-	LastName     string    `json:"last_name"`
-	KYCStatus    string    `json:"kyc_status"` // pending, approved, rejected
-	Role          string    `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
-	MFAEnabled    bool      `json:"mfa_enabled"`
-	TOTPSecret    string    `json:"-" gorm:"column:totp_secret"`
-	LastLogin     time.Time `json:"last_login"`
-	LastMFA       time.Time `json:"last_mfa"`
-	TrustedDevices string   `json:"trusted_devices" gorm:"type:text"` // JSON array of device fingerprints
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
+	Email          string    `json:"email" gorm:"uniqueIndex"`
+	Username       string    `json:"username" gorm:"uniqueIndex"`
+	PasswordHash   string    `json:"-" gorm:"column:password_hash"`
+	FirstName      string    `json:"first_name"`
+	LastName       string    `json:"last_name"`
+	KYCStatus      string    `json:"kyc_status"`               // pending, approved, rejected
+	Role           string    `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
+	MFAEnabled     bool      `json:"mfa_enabled"`
+	TOTPSecret     string    `json:"-" gorm:"column:totp_secret"`
+	LastLogin      time.Time `json:"last_login"`
+	LastMFA        time.Time `json:"last_mfa"`
+	TrustedDevices string    `json:"trusted_devices" gorm:"type:text"` // JSON array of device fingerprints
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Account represents a user's account for a specific currency

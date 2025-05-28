@@ -76,3 +76,75 @@ func (s *Server) listWalletTransactions(c *gin.Context) {
 	// List transactions (stub)
 	c.JSON(http.StatusOK, gin.H{"transactions": []interface{}{}})
 }
+
+// POST /api/v1/wallet/create
+func (s *Server) createWallet(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	var req struct {
+		Asset         string   `json:"asset"`
+		Type          string   `json:"type"`
+		Signers       []string `json:"signers"`
+		Threshold     int      `json:"threshold"`
+		Whitelist     []string `json:"whitelist"`
+		IsColdStorage bool     `json:"is_cold_storage"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.writeError(c, err)
+		return
+	}
+	ws, ok := s.walletService.(*wallet.WalletService)
+	if !ok {
+		s.writeError(c, http.ErrNotSupported)
+		return
+	}
+	w, err := ws.CreateWallet(c.Request.Context(), userID.(uuid.UUID), req.Asset, req.Type, req.Signers, req.Threshold, req.Whitelist, req.IsColdStorage)
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, w)
+}
+
+// POST /api/v1/wallet/:id/whitelist/add
+func (s *Server) addWhitelistAddress(c *gin.Context) {
+	walletID := c.Param("id")
+	var req struct {
+		Address string `json:"address"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.writeError(c, err)
+		return
+	}
+	ws, ok := s.walletService.(*wallet.WalletService)
+	if !ok {
+		s.writeError(c, http.ErrNotSupported)
+		return
+	}
+	if err := ws.AddWhitelistAddress(c.Request.Context(), walletID, req.Address); err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "address added"})
+}
+
+// POST /api/v1/wallet/:id/whitelist/remove
+func (s *Server) removeWhitelistAddress(c *gin.Context) {
+	walletID := c.Param("id")
+	var req struct {
+		Address string `json:"address"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.writeError(c, err)
+		return
+	}
+	ws, ok := s.walletService.(*wallet.WalletService)
+	if !ok {
+		s.writeError(c, http.ErrNotSupported)
+		return
+	}
+	if err := ws.RemoveWhitelistAddress(c.Request.Context(), walletID, req.Address); err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "address removed"})
+}

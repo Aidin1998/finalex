@@ -285,7 +285,9 @@ func (s *Server) enable2FA(c *gin.Context) {
 
 func (s *Server) verify2FA(c *gin.Context) {
 	userID := c.GetString("userID")
-	var req struct{ Code string `json:"code"` }
+	var req struct {
+		Code string `json:"code"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
@@ -509,4 +511,14 @@ func (s *Server) getMarketDataHub() *marketdata.Hub {
 		go marketDataHub.Run()
 	})
 	return marketDataHub
+}
+
+// --- User DB helpers (stub, replace with real DB logic) ---
+func (s *Server) getUserByID(userID string) (*models.User, error) {
+	// TODO: Replace with real DB lookup
+	return &models.User{ID: uuid.MustParse(userID), Email: "user@example.com"}, nil
+}
+func (s *Server) saveUser(user *models.User) error {
+	// TODO: Replace with real DB save
+	return nil
 }

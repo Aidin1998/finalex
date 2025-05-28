@@ -28,7 +28,8 @@ func NewWalletService(km KeyManager, cp CustodyProvider, db *gorm.DB, logger *za
 }
 
 // CreateWallet creates a new wallet (hot/warm/cold)
-func (s *WalletService) CreateWallet(ctx context.Context, userID uuid.UUID, asset, walletType string) (*models.Wallet, error) {
+// Enhanced: supports multi-sig config, address whitelisting, cold storage
+func (s *WalletService) CreateWallet(ctx context.Context, userID uuid.UUID, asset, walletType string, signers []string, threshold int, whitelist []string, isColdStorage bool) (*models.Wallet, error) {
 	// For hot wallets, generate key using HSM/KMS
 	var address string
 	var err error
@@ -51,14 +52,18 @@ func (s *WalletService) CreateWallet(ctx context.Context, userID uuid.UUID, asse
 		}
 	}
 	wallet := &models.Wallet{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Type:      walletType,
-		Asset:     asset,
-		Address:   address,
-		Balance:   0,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:               uuid.New(),
+		UserID:           userID,
+		Type:             walletType,
+		Asset:            asset,
+		Address:          address,
+		Balance:          0,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		Signers:          signers,
+		Threshold:        threshold,
+		AddressWhitelist: whitelist,
+		IsColdStorage:    isColdStorage,
 	}
 	if err := s.db.WithContext(ctx).Create(wallet).Error; err != nil {
 		return nil, err
@@ -81,8 +86,26 @@ func (s *WalletService) GetBalance(ctx context.Context, walletID string) (float6
 	return onChain, nil
 }
 
-// CreateWithdrawalRequest creates a new withdrawal request (multi-sig)
+// CreateWithdrawalRequest creates a new withdrawal request (multi-sig, whitelist enforced)
 func (s *WalletService) CreateWithdrawalRequest(ctx context.Context, userID uuid.UUID, walletID, asset, toAddress string, amount float64) (*models.WithdrawalRequest, error) {
+	var wallet models.Wallet
+	if err := s.db.WithContext(ctx).First(&wallet, "id = ?", walletID).Error; err != nil {
+		return nil, err
+	}
+	// Enforce address whitelisting
+	if len(wallet.AddressWhitelist) > 0 {
+		whitelisted := false
+		for _, addr := range wallet.AddressWhitelist {
+			if addr == toAddress {
+				whitelisted = true
+				break
+			}
+		}
+		if !whitelisted {
+			s.logger.Warn("Withdrawal address not whitelisted", zap.String("wallet_id", walletID), zap.String("to_address", toAddress))
+			return nil, errors.New("withdrawal address not whitelisted")
+		}
+	}
 	wr := &models.WithdrawalRequest{
 		ID:        uuid.New(),
 		UserID:    userID,
@@ -181,4 +204,50 @@ func (s *WalletService) LogAudit(walletID, event, actor, details string) error {
 		CreatedAt: time.Now(),
 	}
 	return s.db.Create(audit).Error
+}
+
+// ColdStorageTransfer moves funds to/from cold storage (stub)
+func (s *WalletService) ColdStorageTransfer(ctx context.Context, fromWalletID, toWalletID string, amount float64, operator string) error {
+	// TODO: Implement secure cold storage transfer logic, approval, and audit
+	s.logger.Info("Cold storage transfer initiated", zap.String("from", fromWalletID), zap.String("to", toWalletID), zap.Float64("amount", amount), zap.String("operator", operator))
+	return nil
+}
+
+// AddWhitelistAddress adds an address to the wallet's whitelist
+func (s *WalletService) AddWhitelistAddress(ctx context.Context, walletID string, address string) error {
+	var wallet models.Wallet
+	if err := s.db.WithContext(ctx).First(&wallet, "id = ?", walletID).Error; err != nil {
+		return err
+	}
+	for _, addr := range wallet.AddressWhitelist {
+		if addr == address {
+			return nil // Already whitelisted
+		}
+	}
+	wallet.AddressWhitelist = append(wallet.AddressWhitelist, address)
+	if err := s.db.WithContext(ctx).Save(&wallet).Error; err != nil {
+		return err
+	}
+	s.logger.Info("Added address to whitelist", zap.String("wallet_id", walletID), zap.String("address", address))
+	return nil
+}
+
+// RemoveWhitelistAddress removes an address from the wallet's whitelist
+func (s *WalletService) RemoveWhitelistAddress(ctx context.Context, walletID string, address string) error {
+	var wallet models.Wallet
+	if err := s.db.WithContext(ctx).First(&wallet, "id = ?", walletID).Error; err != nil {
+		return err
+	}
+	newList := make([]string, 0, len(wallet.AddressWhitelist))
+	for _, addr := range wallet.AddressWhitelist {
+		if addr != address {
+			newList = append(newList, addr)
+		}
+	}
+	wallet.AddressWhitelist = newList
+	if err := s.db.WithContext(ctx).Save(&wallet).Error; err != nil {
+		return err
+	}
+	s.logger.Info("Removed address from whitelist", zap.String("wallet_id", walletID), zap.String("address", address))
+	return nil
 }
