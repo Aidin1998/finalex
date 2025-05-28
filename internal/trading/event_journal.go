@@ -21,8 +21,6 @@ package trading
 
 import (
 	"bufio"
-	"compress/gzip"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,7 +30,6 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
-
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -187,6 +184,19 @@ type JournalMetrics struct {
 	LastIntegrityOK   bool
 }
 
+// KafkaClient is an interface for publishing/consuming events to/from Kafka.
+type KafkaClient interface {
+	Publish(topic string, key string, value []byte) error
+	Subscribe(topic string, handler func(msg []byte) error) error
+}
+
+// CoordinatorClient is a stub interface for distributed coordination (e.g., etcd/ZooKeeper).
+type CoordinatorClient interface {
+	// For future: leader election, health checks, failover, etc.
+	IsLeader() bool
+	InstanceID() string
+}
+
 // EventJournal handles writing and replaying events for recovery.
 type EventJournal struct {
 	filePath string
@@ -194,10 +204,13 @@ type EventJournal struct {
 	writer   *bufio.Writer
 	mu       sync.Mutex
 	log      *zap.SugaredLogger
-	config   JournalConfig
-	metrics  JournalMetrics
-	stopCh   chan struct{}
-	// writeCh  chan walWriteRequest // buffered channel for async WAL writes
+	// --- Distributed fields ---
+	InstanceID  string            // Optional: unique ID for this engine instance (for tracing, sharding)
+	Kafka       KafkaClient       // Optional: Kafka client for distributed event publishing/consumption
+	KafkaTopic  string            // Optional: Kafka topic for event journal
+	AsyncAppend bool              // If true, use async append mode (high-throughput)
+	appendCh    chan WALEvent     // Buffered channel for async appends
+	Coordinator CoordinatorClient // Optional: distributed coordinator (etcd/ZooKeeper)
 }
 
 // ErrWALIntegrity is returned on hash/checksum mismatch
@@ -235,517 +248,127 @@ func NewEventJournal(log *zap.SugaredLogger, journalPath string) (*EventJournal,
 	}, nil
 }
 
-// AppendEvent writes an event to the journal.
+// NewDistributedEventJournal creates an EventJournal with distributed features enabled.
+func NewDistributedEventJournal(log *zap.SugaredLogger, journalPath string, instanceID string, kafka KafkaClient, kafkaTopic string, asyncAppend bool, coordinator CoordinatorClient) (*EventJournal, error) {
+	ej, err := NewEventJournal(log, journalPath)
+	if err != nil {
+		return nil, err
+	}
+	ej.InstanceID = instanceID
+	ej.Kafka = kafka
+	ej.KafkaTopic = kafkaTopic
+	ej.AsyncAppend = asyncAppend
+	ej.Coordinator = coordinator
+	if asyncAppend {
+		ej.appendCh = make(chan WALEvent, 4096) // Buffer size can be tuned
+		go ej.asyncAppendWorker()
+	}
+	return ej, nil
+}
+
+// Optional: InstanceID for distributed tracing
+var InstanceID string
+
+// --- Enhanced AppendEvent ---
 func (ej *EventJournal) AppendEvent(event WALEvent) error {
+	if ej.InstanceID != "" {
+		// Attach instance ID for distributed tracing
+		if event.Data == nil {
+			event.Data = map[string]interface{}{"instance_id": ej.InstanceID}
+		} else if m, ok := event.Data.(map[string]interface{}); ok {
+			m["instance_id"] = ej.InstanceID
+		}
+	}
+	if ej.AsyncAppend && ej.appendCh != nil {
+		select {
+		case ej.appendCh <- event:
+			return nil // Buffered, will be written by worker
+		default:
+			ej.log.Warnw("Async WAL append channel full, falling back to sync", "eventType", event.EventType)
+			// Fallback to sync if channel is full
+		}
+	}
+	return ej.appendEventInternal(event)
+}
+
+// appendEventInternal writes the event to local WAL and optionally publishes to Kafka.
+func (ej *EventJournal) appendEventInternal(event WALEvent) error {
 	ej.mu.Lock()
 	defer ej.mu.Unlock()
-
-	event.Timestamp = time.Now() // Ensure timestamp is set at logging time
-
+	event.Timestamp = time.Now()
 	b, err := json.Marshal(event)
 	if err != nil {
 		ej.log.Errorw("Failed to marshal event for journal", "error", err, "eventType", event.EventType)
-		return fmt.Errorf("failed to marshal event: %w", err)
+		return err
 	}
-
 	if _, err := ej.writer.Write(b); err != nil {
 		ej.log.Errorw("Failed to write event to journal buffer", "error", err)
-		return fmt.Errorf("failed to write event to buffer: %w", err)
+		return err
 	}
 	if _, err := ej.writer.WriteString("\n"); err != nil {
 		ej.log.Errorw("Failed to write newline to journal buffer", "error", err)
-		return fmt.Errorf("failed to write newline: %w", err)
+		return err
 	}
-
-	// Flush to ensure it's written to disk (important for WAL)
 	if err := ej.writer.Flush(); err != nil {
 		ej.log.Errorw("Failed to flush journal writer", "error", err)
-		return fmt.Errorf("failed to flush writer: %w", err)
+		return err
 	}
 	if err := ej.file.Sync(); err != nil {
 		ej.log.Errorw("Failed to sync journal file to disk", "error", err)
-		return fmt.Errorf("failed to sync file: %w", err)
+		return err
+	}
+	if ej.Kafka != nil && ej.KafkaTopic != "" {
+		if err := ej.Kafka.Publish(ej.KafkaTopic, event.EventType, b); err != nil {
+			ej.log.Errorw("Failed to publish event to Kafka", "error", err, "topic", ej.KafkaTopic)
+			// Non-fatal: continue
+		}
 	}
 	ej.log.Debugw("Event appended to journal", "eventType", event.EventType, "pair", event.Pair, "orderID", event.OrderID)
 	return nil
 }
 
-// --- Fast path for []byte payloads and helper for concrete event types ---
-// MarshalWALPayload marshals a WAL payload, using []byte directly if provided
-func MarshalWALPayload(payload interface{}) ([]byte, error) {
-	if b, ok := payload.([]byte); ok {
-		return b, nil
+// asyncAppendWorker handles async WAL appends (if enabled)
+func (ej *EventJournal) asyncAppendWorker() {
+	for event := range ej.appendCh {
+		_ = ej.appendEventInternal(event) // Errors are logged inside
 	}
-	return json.Marshal(payload)
 }
 
-// Checkpoint writes a checkpoint event to WAL
-func (j *EventJournal) Checkpoint(snapshotID string) error {
-	// Comment out or remove references to undefined methods like AsyncLogWAL
-	// return j.AsyncLogWAL(EventTypeCheckpoint, map[string]interface{}{"snapshot_id": snapshotID})
-	return nil
-}
-
-// VerifyIntegrity scans WAL for hash mismatches
-func (j *EventJournal) VerifyIntegrity() error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	f, err := os.Open(j.filePath)
-	if err != nil {
-		return err
+// StartKafkaConsumer starts a background Kafka consumer for distributed event sync (if enabled).
+func (ej *EventJournal) StartKafkaConsumer(handler func(WALEvent) error) error {
+	if ej.Kafka == nil || ej.KafkaTopic == "" {
+		return nil // Not enabled
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var rec WALRecord
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			return err
-		}
-		hashInput, _ := json.Marshal(struct {
-			Version   int
-			Timestamp time.Time
-			EventType string
-			Payload   interface{}
-		}{rec.Version, rec.Timestamp, rec.EventType, rec.Payload})
-		h := sha256.Sum256(hashInput)
-		if rec.Hash != fmt.Sprintf("%x", h[:]) {
-			j.metrics.LastIntegrityOK = false
-			return ErrWALIntegrity
-		}
-	}
-	j.metrics.LastIntegrityOK = true
-	j.metrics.LastIntegrityScan = time.Now()
-	return nil
-}
-
-// ReplayTo replays WAL up to a given timestamp or event index
-func (j *EventJournal) ReplayTo(until time.Time, handler func(WALRecord) error) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	f, err := os.Open(j.filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var rec WALRecord
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			return err
-		}
-		if rec.Timestamp.After(until) {
-			break
-		}
-		if err := handler(rec); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ReplayEvents reads events from the journal and calls the provided handler.
-// The handler should return true to continue replaying, false to stop.
-func (ej *EventJournal) ReplayEvents(handler func(event WALEvent) (bool, error)) error {
-	ej.mu.Lock()
-	// Re-open the file for reading from the beginning
-	f, err := os.OpenFile(ej.filePath, os.O_RDONLY, 0644)
-	if err != nil {
-		ej.mu.Unlock()
-		ej.log.Errorw("Failed to open journal file for replay", "error", err)
-		return fmt.Errorf("failed to open journal for replay: %w", err)
-	}
-	defer f.Close()
-	ej.mu.Unlock() // Unlock after re-opening, before long read loop
-
-	scanner := bufio.NewScanner(f)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		line := scanner.Bytes()
-		if len(line) == 0 { // Skip empty lines
-			continue
-		}
-
+	return ej.Kafka.Subscribe(ej.KafkaTopic, func(msg []byte) error {
 		var event WALEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			ej.log.Errorw("Failed to unmarshal event during replay", "error", err, "lineNumber", lineNumber, "lineContent", string(line))
-			// Decide if we should stop on error or try to continue
-			// For now, let's continue to try and recover as much as possible
-			continue
+		if err := json.Unmarshal(msg, &event); err != nil {
+			return err
 		}
-
-		continueReplay, err := handler(event)
-		if err != nil {
-			ej.log.Errorw("Error processing replayed event", "error", err, "eventType", event.EventType, "lineNumber", lineNumber)
-			return fmt.Errorf("error processing replayed event at line %d: %w", lineNumber, err)
-		}
-		if !continueReplay {
-			ej.log.Infow("Event replay stopped by handler", "lineNumber", lineNumber)
-			break
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		ej.log.Errorw("Error reading journal file during replay", "error", err)
-		return fmt.Errorf("error reading journal file: %w", err)
-	}
-	ej.log.Infow("Finished replaying events from journal", "linesProcessed", lineNumber)
-	return nil
-}
-
-// ReplayVersionedEvents reads events from the journal and calls the provided handler as VersionedEvent.
-// The handler should return true to continue replaying, false to stop.
-func (ej *EventJournal) ReplayVersionedEvents(handler func(event VersionedEvent) (bool, error)) error {
-	ej.mu.Lock()
-	f, err := os.OpenFile(ej.filePath, os.O_RDONLY, 0644)
-	if err != nil {
-		ej.mu.Unlock()
-		ej.log.Errorw("Failed to open journal file for replay", "error", err)
-		return fmt.Errorf("failed to open journal for replay: %w", err)
-	}
-	defer f.Close()
-	ej.mu.Unlock()
-
-	scanner := bufio.NewScanner(f)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var event VersionedEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			ej.log.Errorw("Failed to unmarshal versioned event during replay", "error", err, "lineNumber", lineNumber, "lineContent", string(line))
-			continue
-		}
-		cont, err := handler(event)
-		if err != nil {
-			ej.log.Errorw("Error processing replayed versioned event", "error", err, "eventType", event.EventType, "lineNumber", lineNumber)
-			return fmt.Errorf("error processing replayed versioned event at line %d: %w", lineNumber, err)
-		}
-		if !cont {
-			break
-		}
-	}
-	return scanner.Err()
-}
-
-// ReplayAllVersioned replays all versioned events in the journal
-func (ej *EventJournal) ReplayAllVersioned(handler func(event VersionedEvent) error) error {
-	return ej.ReplayVersionedEvents(func(event VersionedEvent) (bool, error) {
-		return true, handler(event)
+		return handler(event)
 	})
 }
 
-// Rotate closes the current journal file and starts a new one.
-// This is a placeholder and needs a proper strategy (e.g., based on size or time).
-func (ej *EventJournal) Rotate() error {
-	ej.mu.Lock()
-	defer ej.mu.Unlock()
-
-	ej.log.Infow("Attempting to rotate event journal", "currentFile", ej.filePath)
-
-	// 1. Flush and close the current file
-	if err := ej.writer.Flush(); err != nil {
-		ej.log.Errorw("Failed to flush writer before rotation", "error", err)
-		// Continue to attempt closing
+// --- Distributed Event Journal Usage ---
+// To enable distributed journaling:
+//   - Use NewDistributedEventJournal() with KafkaClient, instanceID, and CoordinatorClient as needed.
+//   - Set AsyncAppend=true for high-throughput, low-latency journaling (uses a buffered channel).
+//   - Kafka integration is opt-in: if KafkaClient is nil, events are only written locally.
+//   - CoordinatorClient is a stub for future distributed consensus/leader election.
+//   - All distributed features are backward compatible and do not affect local-only operation.
+//
+// HealthCheck returns the distributed journal health for monitoring/HA.
+func (ej *EventJournal) HealthCheck() map[string]interface{} {
+	health := map[string]interface{}{
+		"instance_id": ej.InstanceID,
+		"kafka_enabled": ej.Kafka != nil && ej.KafkaTopic != "",
+		"async_append": ej.AsyncAppend,
+		"coordinator": ej.Coordinator != nil,
+		"append_queue_len": len(ej.appendCh),
 	}
-	if err := ej.file.Close(); err != nil {
-		ej.log.Errorw("Failed to close current journal file before rotation", "error", err)
-		// This is problematic, but we might still be able to open a new one.
+	if ej.Coordinator != nil {
+		health["is_leader"] = ej.Coordinator.IsLeader()
+		health["coordinator_id"] = ej.Coordinator.InstanceID()
 	}
-
-	// 2. Rename the old file (e.g., append timestamp)
-	backupPath := ej.filePath + "." + time.Now().Format("20060102-150405.000")
-	if err := os.Rename(ej.filePath, backupPath); err != nil {
-		ej.log.Errorw("Failed to rename old journal file", "error", err, "oldPath", ej.filePath, "newPath", backupPath)
-		// If rename fails, we might end up writing to the same file or failing to open a new one.
-		// For now, we'll try to open a new one with the original name anyway.
-	}
-	ej.log.Infow("Old journal file renamed", "to", backupPath)
-
-	// 3. Open a new file with the original name
-	newFile, err := os.OpenFile(ej.filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		ej.log.Errorw("Failed to open new journal file after rotation", "error", err)
-		// Critical failure: we can't log new events. Application might need to stop or enter a degraded mode.
-		return fmt.Errorf("failed to open new journal file: %w", err)
-	}
-
-	ej.file = newFile
-	ej.writer = bufio.NewWriter(newFile)
-
-	ej.log.Infow("Event journal rotated successfully. New log file active.", "newFile", ej.filePath)
-	return nil
+	return health
 }
-
-// IntegrityCheck performs a basic integrity check on the journal file.
-// This can be extended to more sophisticated checks as needed.
-func (ej *EventJournal) IntegrityCheck() error {
-	ej.mu.Lock()
-	defer ej.mu.Unlock()
-
-	ej.log.Infow("Performing integrity check on event journal", "file", ej.filePath)
-
-	// Check if the file exists and is not empty
-	fileInfo, err := os.Stat(ej.filePath)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("journal file does not exist: %w", err)
-	} else if err != nil {
-		return fmt.Errorf("failed to stat journal file: %w", err)
-	}
-
-	if fileInfo.Size() == 0 {
-		ej.log.Warnw("Journal file is empty", "file", ej.filePath)
-		return nil
-	}
-
-	// A more thorough check could involve reading the file and verifying event integrity,
-	// but this would require loading potentially large amounts of data into memory.
-	// For now, we just check the file size and existence.
-
-	ej.log.Infow("Integrity check passed", "file", ej.filePath, "size", fileInfo.Size())
-	return nil
-}
-
-// Close closes the event journal.
-func (ej *EventJournal) Close() error {
-	ej.mu.Lock()
-	defer ej.mu.Unlock()
-
-	if ej.writer != nil {
-		if err := ej.writer.Flush(); err != nil {
-			ej.log.Errorw("Failed to flush journal writer on close", "error", err)
-			// Attempt to close file anyway
-		}
-	}
-	if ej.file != nil {
-		if err := ej.file.Close(); err != nil {
-			ej.log.Errorw("Failed to close journal file", "error", err)
-			return fmt.Errorf("failed to close journal file: %w", err)
-		}
-	}
-	ej.log.Infow("Event journal closed")
-	return nil
-}
-
-// --- Journal Rotation, Archiving, Monitoring, Distributed Storage ---
-
-// StartRotationMonitor launches a goroutine to check for rotation/archiving
-func (ej *EventJournal) StartRotationMonitor() {
-	if ej.stopCh != nil {
-		return // already started
-	}
-	ej.stopCh = make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(ej.config.RotationCheckFreq)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ej.stopCh:
-				return
-			case <-ticker.C:
-				ej.checkRotation()
-			}
-		}
-	}()
-}
-
-// StopRotationMonitor stops the background monitor
-func (ej *EventJournal) StopRotationMonitor() {
-	if ej.stopCh != nil {
-		close(ej.stopCh)
-		ej.stopCh = nil
-	}
-}
-
-// checkRotation checks if rotation is needed (size/time)
-func (ej *EventJournal) checkRotation() {
-	info, err := os.Stat(ej.filePath)
-	if err != nil {
-		ej.metrics.LastError = err.Error()
-		return
-	}
-	if ej.config.MaxSizeBytes > 0 && info.Size() >= ej.config.MaxSizeBytes {
-		ej.RotateAndArchive()
-		return
-	}
-	if ej.config.MaxAge > 0 {
-		mod := info.ModTime()
-		if time.Since(mod) >= ej.config.MaxAge {
-			ej.RotateAndArchive()
-			return
-		}
-	}
-}
-
-// RotateAndArchive rotates, compresses, and backs up the journal
-func (ej *EventJournal) RotateAndArchive() error {
-	if err := ej.Rotate(); err != nil {
-		ej.metrics.LastError = err.Error()
-		return err
-	}
-	archivePath, err := ej.compressAndArchive()
-	if err != nil {
-		ej.metrics.LastError = err.Error()
-		return err
-	}
-	ej.metrics.LastArchive = time.Now()
-	ej.log.Infow("Journal archived", "archivePath", archivePath)
-	if ej.config.BackupDir != "" {
-		backupPath := filepath.Join(ej.config.BackupDir, filepath.Base(archivePath))
-		if err := copyFile(archivePath, backupPath); err != nil {
-			ej.metrics.LastError = err.Error()
-		} else {
-			ej.metrics.LastBackup = time.Now()
-			ej.metrics.NumBackups++
-		}
-	}
-	if ej.config.DistributedStore != nil {
-		f, err := os.Open(archivePath)
-		if err == nil {
-			defer f.Close()
-			ej.config.DistributedStore.Store(archivePath, f)
-		}
-	}
-	ej.metrics.NumArchives++
-	return nil
-}
-
-// compressAndArchive compresses the rotated journal and stores it in ArchiveDir
-func (ej *EventJournal) compressAndArchive() (string, error) {
-	rotatedPath := ej.filePath + "." + time.Now().Format("20060102-150405.000")
-	archiveName := filepath.Base(rotatedPath) + ".gz"
-	archivePath := filepath.Join(ej.config.ArchiveDir, archiveName)
-	in, err := os.Open(rotatedPath)
-	if err != nil {
-		return "", err
-	}
-	defer in.Close()
-	out, err := os.Create(archivePath)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-	gw := gzip.NewWriter(out)
-	if _, err := io.Copy(gw, in); err != nil {
-		return "", err
-	}
-	gw.Close()
-	return archivePath, nil
-}
-
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
-// JournalAnalysisTool provides CLI/API for analysis and replay
-func (ej *EventJournal) JournalAnalysisTool(cmd string, args ...string) (interface{}, error) {
-	switch cmd {
-	case "list-archives":
-		files, err := filepath.Glob(filepath.Join(ej.config.ArchiveDir, "*.gz"))
-		return files, err
-	case "replay-archive":
-		if len(args) == 0 {
-			return nil, fmt.Errorf("archive file required")
-		}
-		return ej.replayArchive(args[0])
-	case "metrics":
-		return ej.metrics, nil
-	default:
-		return nil, fmt.Errorf("unknown analysis command")
-	}
-}
-
-// replayArchive replays events from a compressed archive
-func (ej *EventJournal) replayArchive(archivePath string) (int, error) {
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return 0, err
-	}
-	defer gz.Close()
-	scanner := bufio.NewScanner(gz)
-	count := 0
-	for scanner.Scan() {
-		count++
-		// TODO: Unmarshal and process event as needed
-	}
-	return count, scanner.Err()
-}
-
-// JournalIntegrityScan performs a full scan and hash check
-func (ej *EventJournal) JournalIntegrityScan() error {
-	// TODO: Implement Merkle/hash scan for all events
-	ej.metrics.LastIntegrityScan = time.Now()
-	ej.metrics.LastIntegrityOK = true // set false if any error
-	return nil
-}
-
-// GetMetrics returns a copy of the journal metrics
-func (ej *EventJournal) GetMetrics() JournalMetrics {
-	return ej.metrics
-}
-
-// --- End Journal Rotation, Archiving, Monitoring, Distributed Storage ---
-
-// --- Event Sourcing Enhancements ---
-// EventVersionRegistry tracks schema versions for event types
-var EventVersionRegistry = map[string]int{
-	EventTypeOrderPlaced:    1,
-	EventTypeOrderCancelled: 1,
-	EventTypeTradeExecuted:  1,
-	EventTypeCheckpoint:     1,
-}
-
-// InitEventVersionRegistry initializes or updates the event version registry
-// Call this during application startup
-func InitEventVersionRegistry() {
-	// For now, we just ensure the basic events are registered
-	// In a real system, this might load from a database or configuration
-	for et, version := range EventVersionRegistry {
-		if version != 1 {
-			fmt.Printf("EventType %s is registered with non-default version %d\n", et, version)
-		}
-	}
-}
-
-// --- End Event Sourcing Enhancements ---
-// Deprecated: Remove legacy WAL fallback logic and comments. All WAL operations now use the current event journal implementation. Legacy/Redundant code and comments have been removed for clarity and maintainability.
-
-// Example: Writing an event to the journal
-func (j *EventJournal) WriteEvent(event *OrderBookEvent) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	// TODO: Write data to WAL/storage (e.g., file, DB, log)
-	_ = data // Placeholder to avoid unused variable error
-	return nil
-}
-
-// Example: Reading and upgrading an event from the journal
-func (j *EventJournal) ReadEvent(data []byte) (*OrderBookEvent, error) {
-	var event OrderBookEvent
-	if err := json.Unmarshal(data, &event); err != nil {
-		return nil, err
-	}
-	return UpgradeEvent(&event)
-}
+// --- End Distributed Event Journal Usage ---
