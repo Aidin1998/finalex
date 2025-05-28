@@ -1,12 +1,29 @@
 package marketdata
 
+// --- FIX 4.4/5.0 Protocol Gateway for Institutions ---
+// Use QuickFIX/Go or similar for real implementation
+// - Market data: MarketDataSnapshotFullRefresh, MarketDataIncrementalRefresh
+// - Order entry: NewOrderSingle, OrderCancelRequest, ExecutionReport
+// - Low-latency: direct TCP, minimal allocations, pre-allocated buffers
+// - Session management: multiple sessions, heartbeats, sequence numbers
+// - Monitoring: Prometheus metrics for session count, message latency, error rate
+// - HFT: tune OS/network, use dedicated CPU cores, kernel bypass if needed
+//
+// See https://github.com/quickfixgo/quickfix for details
+//
+// Example integration points:
+//   - On market data update: call BroadcastMarketDataFIX/BroadcastMarketDataIncrementalFIX
+//   - On order: call HandleOrderEntryFIX
+//   - On execution: send ExecutionReport
+//
+// For full production, implement all required FIX tags, session state, and error handling.
+
 // FIXGateway provides FIX 4.4/5.0 market data and order entry for institutional clients.
 // (Skeleton implementation)
 
 // FIX engine integration (QuickFIX/Go or similar)
-import (
-	// "github.com/quickfixgo/quickfix"
-)
+
+// "github.com/quickfixgo/quickfix"
 
 type FIXGateway struct {
 	// Add fields for session management, config, etc.
