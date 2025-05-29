@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	api "github.com/Aidin1998/pincex_unified/api"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/config"
 	"github.com/Aidin1998/pincex_unified/internal/database"
@@ -24,6 +23,8 @@ import (
 	"github.com/Aidin1998/pincex_unified/pkg/metrics"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
+
+	"github.com/Aidin1998/pincex_unified/internal/server"
 )
 
 // --- STUB KYC PROVIDER ---
@@ -128,15 +129,13 @@ func main() {
 	}
 
 	// Create API server
-	apiServer := api.NewServer(
+	apiServer := server.NewServer(
 		zapLogger,
 		identitiesSvc,
 		bookkeeperSvc,
 		fiatSvc,
 		marketfeedsSvc,
 		tradingSvc,
-		kycService, // kycProvider
-		pubsub,     // walletService (placeholder, replace with real wallet service)
 	)
 
 	// Schedule DB pool metrics collection every 30s
@@ -177,11 +176,11 @@ func main() {
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-
 	// Start server in a goroutine
 	go func() {
 		zapLogger.Info("Starting API server", zap.String("addr", addr))
-		if err := apiServer.Start(addr); err != nil {
+		router := apiServer.Router()
+		if err := http.ListenAndServe(addr, router); err != nil {
 			zapLogger.Fatal("Failed to start API server", zap.Error(err))
 		}
 	}()
