@@ -74,113 +74,42 @@ func (s *Service) Stop() error {
 
 // Register registers a new user
 func (s *Service) Register(ctx context.Context, req *models.RegisterRequest) (*models.User, error) {
-	// Comprehensive input validation
+	// Validate email and username
 	if err := validation.ValidateEmail(req.Email); err != nil {
 		s.logger.Warn("Invalid email in registration", zap.String("email", req.Email), zap.Error(err))
-		return nil, fmt.Errorf("invalid email format: %w", err)
+		return nil, fmt.Errorf("invalid email: %w", err)
 	}
-
 	if err := validation.ValidateUsername(req.Username); err != nil {
 		s.logger.Warn("Invalid username in registration", zap.String("username", req.Username), zap.Error(err))
 		return nil, fmt.Errorf("invalid username: %w", err)
 	}
 
-	if err := validation.ValidatePassword(req.Password); err != nil {
-		s.logger.Warn("Invalid password in registration", zap.String("username", req.Username), zap.Error(err))
-		return nil, fmt.Errorf("invalid password: %w", err)
-	}
-
-	// Check for malicious content and SQL injection
-	if validation.ContainsMaliciousContent(req.Email) {
-		s.logger.Warn("Malicious content detected in email", zap.String("email", req.Email))
-		return nil, fmt.Errorf("invalid email content")
-	}
-
-	if validation.ContainsMaliciousContent(req.Username) {
-		s.logger.Warn("Malicious content detected in username", zap.String("username", req.Username))
-		return nil, fmt.Errorf("invalid username content")
-	}
-
-	if validation.ContainsMaliciousContent(req.FirstName) || validation.ContainsMaliciousContent(req.LastName) {
-		s.logger.Warn("Malicious content detected in name fields", 
-			zap.String("username", req.Username),
-			zap.String("firstName", req.FirstName),
-			zap.String("lastName", req.LastName))
-		return nil, fmt.Errorf("invalid name content")
-	}
-
-	// Sanitize inputs
-	email := validation.SanitizeInput(req.Email)
-	username := validation.SanitizeInput(req.Username)
-	firstName := validation.SanitizeInput(req.FirstName)
-	lastName := validation.SanitizeInput(req.LastName)
-
-	// Validate name fields
-	if err := validation.ValidateAlphaSpace(firstName); err != nil && firstName != "" {
-		s.logger.Warn("Invalid first name", zap.String("firstName", firstName), zap.Error(err))
-		return nil, fmt.Errorf("invalid first name: %w", err)
-	}
-
-	if err := validation.ValidateAlphaSpace(lastName); err != nil && lastName != "" {
-		s.logger.Warn("Invalid last name", zap.String("lastName", lastName), zap.Error(err))
-		return nil, fmt.Errorf("invalid last name: %w", err)
-	}
-
-	// Check if email already exists using parameterized query
+	// Check if email already exists
 	var count int64
-	if err := s.db.Model(&models.User{}).Where("email = ?", email).Count(&count).Error; err != nil {
-		s.logger.Error("Failed to check email existence", zap.String("email", email), zap.Error(err))
+	if err := s.db.Model(&models.User{}).Where("email = ?", req.Email).Count(&count).Error; err != nil {
 		return nil, fmt.Errorf("failed to check email: %w", err)
 	}
 	if count > 0 {
-		s.logger.Warn("Email already exists during registration", zap.String("email", email))
 		return nil, fmt.Errorf("email already exists")
 	}
 
-	// Check if username already exists using parameterized query
-	if err := s.db.Model(&models.User{}).Where("username = ?", username).Count(&count).Error; err != nil {
-		s.logger.Error("Failed to check username existence", zap.String("username", username), zap.Error(err))
+	// Check if username already exists
+	if err := s.db.Model(&models.User{}).Where("username = ?", req.Username).Count(&count).Error; err != nil {
 		return nil, fmt.Errorf("failed to check username: %w", err)
 	}
 	if count > 0 {
-		s.logger.Warn("Username already exists during registration", zap.String("username", username))
 		return nil, fmt.Errorf("username already exists")
 	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		s.logger.Error("Failed to hash password during registration", zap.String("username", username), zap.Error(err))
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	// Create user
+	// Create user record
 	user := &models.User{
 		ID:           uuid.New(),
-		Email:        email,
-		Username:     username,
-		PasswordHash: string(hashedPassword),
-		FirstName:    firstName,
-		LastName:     lastName,
-		KYCStatus:    "pending",
-		MFAEnabled:   false,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-
-	// Save user to database
-	if err := s.db.Create(user).Error; err != nil {
-		s.logger.Error("Failed to create user", zap.String("username", username), zap.String("email", email), zap.Error(err))
-		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	s.logger.Info("User registered successfully", 
-		zap.String("userID", user.ID.String()),
-		zap.String("username", username),
-		zap.String("email", email))
-
-	return user, nil
-}
 		Email:        req.Email,
 		Username:     req.Username,
 		PasswordHash: string(hashedPassword),
@@ -192,7 +121,7 @@ func (s *Service) Register(ctx context.Context, req *models.RegisterRequest) (*m
 		UpdatedAt:    time.Now(),
 	}
 
-	// Save user to database
+	// Save to DB
 	if err := s.db.Create(user).Error; err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
