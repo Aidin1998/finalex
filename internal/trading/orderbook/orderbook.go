@@ -330,6 +330,12 @@ func (pl *PriceLevel) Orders() []*model.Order {
 // and a stub for batch market order matching
 
 // --- Integrate spread cache and node size tracking into OrderBook struct ---
+type topLevel struct {
+	Price  string
+	Volume string
+}
+
+// --- Refactored OrderBook with heap and linked list ---
 type OrderBook struct {
 	Pair       string
 	bids       *btree.Map[string, *PriceLevel]
@@ -352,6 +358,10 @@ type OrderBook struct {
 	snapshotCache    snapshotCache
 	lastContention   int64 // last observed contention
 	contentionThresh int64 // threshold to switch to cache (default 10)
+
+	topBidsCache []topLevel
+	topAsksCache []topLevel
+	topLevelsMu  sync.RWMutex // protects topBidsCache/topAsksCache
 }
 
 // CircuitBreakerState represents the state of a market circuit breaker
@@ -716,7 +726,10 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 		ob.ordersMu.Unlock()
 		restingOrders = append(restingOrders, order)
 	}
-	return &AddOrderResult{Trades: trades, RestingOrders: restingOrders}, nil
+	result := &AddOrderResult{Trades: trades, RestingOrders: restingOrders}
+	// Update top levels cache after mutation
+	ob.UpdateTopLevelsCache(defaultTopLevelsDepth)
+	return result, nil
 }
 
 // CancelOrder cancels an order by ID.
@@ -754,6 +767,8 @@ func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 	delete(ob.ordersByID, orderID)
 	ob.ordersMu.Unlock()
 	PutOrderToPool(order)
+	// Update top levels cache after mutation
+	ob.UpdateTopLevelsCache(defaultTopLevelsDepth)
 	return nil
 }
 
@@ -986,12 +1001,78 @@ func (ob *OrderBook) StartSnapshotCacheRefresher(depth int, interval time.Durati
 	}()
 }
 
-// =============================
-// Unified error handling for order book
-// All errors use errors.New or errors.Wrap with error kind and message
-// =============================
-// Example usage:
-// return errors.New(errors.ErrKindInternal).Explain("order not found: %v", err)
+// --- Top N Levels Cache for Fast Snapshots ---
+// Pool for snapshot slices
+var snapshotSlicePool = sync.Pool{
+	New: func() interface{} { return make([]topLevel, 0, 100) },
+}
+
+// UpdateTopLevelsCache updates the top N levels cache for bids and asks
+func (ob *OrderBook) UpdateTopLevelsCache(depth int) {
+	bids := snapshotSlicePool.Get().([]topLevel)[:0]
+	asks := snapshotSlicePool.Get().([]topLevel)[:0]
+	// Bids: descending
+	ob.bids.Reverse(func(price string, level *PriceLevel) bool {
+		level.mu.RLock()
+		qty := decimal.Zero
+		for _, order := range level.Orders() {
+			qty = qty.Add(order.Quantity.Sub(order.FilledQuantity))
+		}
+		if qty.GreaterThan(decimal.Zero) {
+			bids = append(bids, topLevel{Price: price, Volume: qty.String()})
+		}
+		level.mu.RUnlock()
+		return len(bids) < depth
+	})
+	// Asks: ascending
+	ob.asks.Scan(func(price string, level *PriceLevel) bool {
+		level.mu.RLock()
+		qty := decimal.Zero
+		for _, order := range level.Orders() {
+			qty = qty.Add(order.Quantity.Sub(order.FilledQuantity))
+		}
+		if qty.GreaterThan(decimal.Zero) {
+			asks = append(asks, topLevel{Price: price, Volume: qty.String()})
+		}
+		level.mu.RUnlock()
+		return len(asks) < depth
+	})
+	ob.topLevelsMu.Lock()
+	ob.topBidsCache = append(ob.topBidsCache[:0], bids...)
+	ob.topAsksCache = append(ob.topAsksCache[:0], asks...)
+	ob.topLevelsMu.Unlock()
+	snapshotSlicePool.Put(bids)
+	snapshotSlicePool.Put(asks)
+}
+
+// GetTopLevelsSnapshot returns a copy of the cached top N levels (bids/asks)
+func (ob *OrderBook) GetTopLevelsSnapshot(depth int) ([][]string, [][]string) {
+	ob.topLevelsMu.RLock()
+	bids := ob.topBidsCache
+	asks := ob.topAsksCache
+	// Defensive copy, up to depth
+	bidsOut := make([][]string, 0, min(len(bids), depth))
+	for i := 0; i < len(bids) && i < depth; i++ {
+		bidsOut = append(bidsOut, []string{bids[i].Price, bids[i].Volume})
+	}
+	asksOut := make([][]string, 0, min(len(asks), depth))
+	for i := 0; i < len(asks) && i < depth; i++ {
+		asksOut = append(asksOut, []string{asks[i].Price, asks[i].Volume})
+	}
+	ob.topLevelsMu.RUnlock()
+	return bidsOut, asksOut
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Call UpdateTopLevelsCache in AddOrder, CancelOrder, and after matching
+// ...existing code...
+const defaultTopLevelsDepth = 20
 
 // NewOrderBook creates a new OrderBook for a given trading pair.
 func NewOrderBook(pair string) *OrderBook {

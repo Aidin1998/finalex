@@ -211,7 +211,12 @@ func (s *Service) GetOrderBook(symbol string, depth int) (*models.OrderBookSnaps
 	if ob == nil {
 		return nil, fmt.Errorf("order book not found")
 	}
-	bids, asks := ob.GetSnapshot(depth)
+	var bids, asks [][]string
+	if ob.GetTopLevelsSnapshot != nil {
+		bids, asks = ob.GetTopLevelsSnapshot(depth)
+	} else {
+		bids, asks = ob.GetSnapshot(depth)
+	}
 	apiBids := make([]models.OrderBookLevel, 0, len(bids))
 	for _, b := range bids {
 		if len(b) >= 2 {
@@ -249,7 +254,12 @@ func (s *Service) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
 	if ob == nil {
 		return nil, fmt.Errorf("order book not found")
 	}
-	bids, asks := ob.GetSnapshot(depth)
+	var bids, asks [][]string
+	if ob.GetTopLevelsSnapshot != nil {
+		bids, asks = ob.GetTopLevelsSnapshot(depth)
+	} else {
+		bids, asks = ob.GetSnapshot(depth)
+	}
 	levelsBids := make([]marketdata.LevelDelta, 0, len(bids))
 	for _, b := range bids {
 		if len(b) >= 2 {
