@@ -10,10 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/config"
-	"github.com/Aidin1998/pincex_unified/internal/database"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
@@ -21,10 +22,9 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/messaging"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
-	"github.com/Aidin1998/pincex_unified/pkg/metrics"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
-	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -136,56 +136,27 @@ func main() {
 		zapLogger.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
-	// Connect to PostgreSQL
-	pgDB, err := database.NewPostgresDB(cfg.Database.DSN, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime)
-	if err != nil {
-		zapLogger.Fatal("Failed to connect to PostgreSQL", zap.Error(err))
+	// Initialize sharded databases and Redis cluster
+	if err := dbutil.InitializeConnections(
+		cfg.DBSharding,
+		cfg.RedisCluster,
+	); err != nil {
+		zapLogger.Fatal("Failed to initialize DB shards or Redis cluster", zap.Error(err))
 	}
 
-	// Connect to CockroachDB
-	crDB, err := database.NewCockroachDB(cfg.Database.CockroachDSN, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime)
-	if err != nil {
-		zapLogger.Fatal("Failed to connect to CockroachDB", zap.Error(err))
-	}
+	// Use shard 0 as default DB for other services
+	db := dbutil.GetDBForKey(0)
 
-	// Schedule data lifecycle: archive orders older than 24h every hour
-	ticker := time.NewTicker(1 * time.Hour)
-	go func() {
-		for range ticker.C {
-			ctx := context.Background()
-			if err := database.ArchiveOrders(ctx, crDB, pgDB, 24*time.Hour); err != nil {
-				zapLogger.Error("Order archive failed", zap.Error(err))
-			}
-		}
-	}()
-
-	// Initialize DB failover manager (PG primary, CR standby)
-	failMgr := database.NewFailoverManager(pgDB, crDB, zapLogger, 30*time.Second)
-	// Start failover monitoring
-	ctx := context.Background()
-	go failMgr.Start(ctx)
-	// Use failover-managed DB for services
-	db := failMgr.DB()
-
-	// Create Redis client for rate limiting
-	redisClient := redis.NewClient(&redis.Options{
+	// Simple Redis client for rate limiting
+	simpleRedis := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Address,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
-
-	// Test Redis connection
-	if err := redisClient.Ping(context.Background()).Err(); err != nil {
-		zapLogger.Warn("Redis connection failed, using in-memory rate limiter", zap.Error(err))
-	}
-
-	// Create rate limiter (Redis-based if available, in-memory as fallback)
-	var rateLimiter auth.RateLimiter
-	if redisClient.Ping(context.Background()).Err() == nil {
-		rateLimiter = auth.NewAdvancedRateLimiter(redisClient)
-	} else {
-		rateLimiter = auth.NewInMemoryRateLimiter()
-	}
+	var rateLimiter auth.RateLimiter = auth.NewRedisRateLimiter(simpleRedis)
+	// Tiered rate limiter
+	userService := auth.NewAuthUserService(db)
+	tieredRateLimiter := auth.NewTieredRateLimiter(simpleRedis, zapLogger, userService)
 
 	// Create unified authentication service
 	authSvc, err := auth.NewAuthService(
@@ -195,7 +166,7 @@ func main() {
 		time.Duration(cfg.JWT.ExpirationHours)*time.Hour,
 		cfg.JWT.RefreshSecret,
 		time.Duration(cfg.JWT.RefreshExpHours)*time.Hour,
-		"pincex-exchange", // issuer
+		"pincex-exchange",
 		rateLimiter,
 	)
 	if err != nil {
@@ -203,13 +174,7 @@ func main() {
 	}
 
 	// Create user service adapter for tiered rate limiter
-	userService := auth.NewAuthUserService(db)
-
-	// Create tiered rate limiter
-	var tieredRateLimiter *auth.TieredRateLimiter
-	if redisClient.Ping(context.Background()).Err() == nil {
-		tieredRateLimiter = auth.NewTieredRateLimiter(redisClient, zapLogger, userService)
-	}
+	userService = auth.NewAuthUserService(db)
 
 	// Create services using failover DB and auth service
 	identitiesSvc, err := identities.NewService(zapLogger, db, authSvc)
@@ -239,53 +204,13 @@ func main() {
 	go marketDataHub.Run()
 	zapLogger.Info("Marketdata WebSocket Hub started")
 
-	// Initialize messaging system if enabled
-	var messagingFactory *messaging.MessagingFactory
-	var messageBus *messaging.MessageBus
-	var tradingSvc trading.TradingService
-
-	if cfg.Kafka.EnableMessageQueue {
-		zapLogger.Info("Initializing message queue system")
-
-		// Create messaging factory
-		messagingFactory = messaging.NewMessagingFactory(nil, zapLogger)
-
-		// Initialize message bus
-		var err error
-		messageBus, err = messagingFactory.CreateMessageBus()
-		if err != nil {
-			zapLogger.Fatal("Failed to create message bus", zap.Error(err))
-		}
-
-		// Create trading services with messaging
-		tradingServices, err := messagingFactory.CreateTradingServices(messageBus, bookkeeperSvc)
-		if err != nil {
-			zapLogger.Fatal("Failed to create trading services", zap.Error(err))
-		}
-
-		// Start message consumers
-		if err := messagingFactory.StartServices(tradingServices); err != nil {
-			zapLogger.Fatal("Failed to start messaging services", zap.Error(err))
-		}
-
-		zapLogger.Info("Message queue system initialized successfully")
-
-		// Create a wrapper that implements TradingService interface for message-driven operations
-		tradingSvc = &messageTradingWrapper{
-			msgTradingService: tradingServices.TradingService,
-			db:                crDB,
-			logger:            zapLogger,
-		}
-	} else {
-		zapLogger.Info("Using direct service calls (message queue disabled)")
-
-		// Trading service uses CockroachDB directly
-		var err error
-		tradingSvc, err = trading.NewService(zapLogger, crDB, bookkeeperSvc)
-		if err != nil {
-			zapLogger.Fatal("Failed to create trading service", zap.Error(err))
-		}
+	// Initialize trading service (direct mode)
+	tradingSvc, err := trading.NewService(zapLogger, db, bookkeeperSvc)
+	if err != nil {
+		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
 	}
+
+	// Remove old pool metrics ticker for pgDB/crDB
 
 	// Create market data distributor with Redis pubsub
 	marketDataDistributor := marketdata.NewMarketDataDistributor(marketDataHub, pubsub)
@@ -309,25 +234,6 @@ func main() {
 		marketDataHub,
 		tieredRateLimiter,
 	)
-
-	// Schedule DB pool metrics collection every 30s
-	tickerDB := time.NewTicker(30 * time.Second)
-	go func() {
-		for range tickerDB.C {
-			if sqlDB, err := pgDB.DB(); err == nil {
-				stats := sqlDB.Stats()
-				metrics.DBOpenConns.WithLabelValues("postgres").Set(float64(stats.OpenConnections))
-				metrics.DBIdleConns.WithLabelValues("postgres").Set(float64(stats.Idle))
-				metrics.DBInUseConns.WithLabelValues("postgres").Set(float64(stats.InUse))
-			}
-			if sqlDB, err := crDB.DB(); err == nil {
-				stats := sqlDB.Stats()
-				metrics.DBOpenConns.WithLabelValues("cockroach").Set(float64(stats.OpenConnections))
-				metrics.DBIdleConns.WithLabelValues("cockroach").Set(float64(stats.Idle))
-				metrics.DBInUseConns.WithLabelValues("cockroach").Set(float64(stats.InUse))
-			}
-		}
-	}()
 
 	// Start services
 	if err := identitiesSvc.Start(); err != nil {

@@ -5,6 +5,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	tradingconfig "github.com/Aidin1998/pincex_unified/internal/trading/config"
 
 	"github.com/spf13/viper"
 )
@@ -42,6 +45,8 @@ type Config struct {
 		EnableMessageQueue  bool
 		ConsumerGroupPrefix string
 	}
+	DBSharding   tradingconfig.DBConfig
+	RedisCluster tradingconfig.RedisConfig
 }
 
 // LoadConfig loads the application configuration
@@ -65,6 +70,20 @@ func LoadConfig() (*Config, error) {
 	config.Kafka.Brokers = []string{"localhost:9092"}
 	config.Kafka.EnableMessageQueue = true
 	config.Kafka.ConsumerGroupPrefix = "pincex"
+
+	// Sharded DB defaults: single shard using primary DSN
+	config.DBSharding = tradingconfig.DBConfig{
+		Shards: []tradingconfig.ShardConfig{{
+			Name:      "shard-0",
+			MasterDSN: config.Database.DSN,
+		}},
+		Pool: tradingconfig.PoolConfig{
+			MaxOpenConns:    config.Database.MaxOpenConns,
+			MaxIdleConns:    config.Database.MaxIdleConns,
+			ConnMaxLifetime: time.Duration(config.Database.ConnMaxLifetime) * time.Second,
+		},
+	}
+	// Redis cluster defaults already set in config.RedisCluster
 
 	// Load configuration from environment variables
 	if port, err := strconv.Atoi(os.Getenv("SERVER_PORT")); err == nil {
@@ -129,6 +148,33 @@ func LoadConfig() (*Config, error) {
 
 	if groupPrefix := os.Getenv("KAFKA_GROUP_PREFIX"); groupPrefix != "" {
 		config.Kafka.ConsumerGroupPrefix = groupPrefix
+	}
+
+	// Build sharded DB config from environment variables
+	masters := strings.Split(os.Getenv("DB_SHARD_MASTERS"), ",")
+	if len(masters) > 0 && masters[0] != "" {
+		replicas := strings.Split(os.Getenv("DB_SHARD_REPLICAS"), ",")
+		shards := make([]tradingconfig.ShardConfig, len(masters))
+		for i, master := range masters {
+			shard := tradingconfig.ShardConfig{Name: fmt.Sprintf("shard-%d", i), MasterDSN: master}
+			if i < len(replicas) && replicas[i] != "" {
+				shard.ReplicaDSN = replicas[i]
+			}
+			shards[i] = shard
+		}
+		config.DBSharding.Shards = shards
+	}
+
+	// Build Redis cluster config
+	addrs := strings.Split(os.Getenv("REDIS_CLUSTER_ADDRESSES"), ",")
+	if len(addrs) > 0 && addrs[0] != "" {
+		config.RedisCluster.Addrs = addrs
+	}
+	if pwd := os.Getenv("REDIS_CLUSTER_PASSWORD"); pwd != "" {
+		config.RedisCluster.Password = pwd
+	}
+	if ps, err := strconv.Atoi(os.Getenv("REDIS_CLUSTER_POOL_SIZE")); err == nil {
+		config.RedisCluster.PoolSize = ps
 	}
 
 	// Load configuration from file
