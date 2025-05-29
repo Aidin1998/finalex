@@ -55,6 +55,42 @@
      go tool pprof mutex.out
      ```
    - For flamegraphs and advanced analysis, see Go pprof documentation.
+9. Run market data distribution latency benchmarks:
+   ```powershell
+   go test -tags=performance -bench=BenchmarkMarketDataDistributionLatency ./test/
+   ```
+   - For profiling (CPU, memory, mutex):
+     ```powershell
+     go test -tags=performance -bench=BenchmarkMarketDataDistributionLatency -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out ./test/
+     go tool pprof cpu.out
+     go tool pprof mem.out
+     go tool pprof mutex.out
+     ```
+   - For flamegraphs and advanced analysis, see Go pprof documentation.
+10. Run database read/write performance benchmarks:
+    ```powershell
+    go test -tags=performance -bench=BenchmarkDatabaseReadWritePerformance ./test/
+    ```
+    - For profiling (CPU, memory, mutex):
+      ```powershell
+      go test -tags=performance -bench=BenchmarkDatabaseReadWritePerformance -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out ./test/
+      go tool pprof cpu.out
+      go tool pprof mem.out
+      go tool pprof mutex.out
+      ```
+    - For flamegraphs and advanced analysis, see Go pprof documentation.
+11. Run end-to-end transaction latency benchmarks:
+    ```powershell
+    go test -tags=performance -bench=BenchmarkEndToEndTransactionLatency ./test/
+    ```
+    - For profiling (CPU, memory, mutex):
+      ```powershell
+      go test -tags=performance -bench=BenchmarkEndToEndTransactionLatency -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out ./test/
+      go tool pprof cpu.out
+      go tool pprof mem.out
+      go tool pprof mutex.out
+      ```
+    - For flamegraphs and advanced analysis, see Go pprof documentation.
 
 ## Code Conventions
 
