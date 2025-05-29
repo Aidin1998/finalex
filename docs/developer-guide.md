@@ -31,6 +31,30 @@
    go build -o pincex.exe ./cmd/pincex
    .\pincex.exe
    ```
+7. Run performance benchmarks:
+   ```powershell
+   go test -tags=performance -bench=BenchmarkOrderPlacementThroughput ./test/
+   ```
+   - For profiling (CPU, memory, mutex):
+     ```powershell
+     go test -tags=performance -bench=BenchmarkOrderPlacementThroughput -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out ./test/
+     go tool pprof cpu.out
+     go tool pprof mem.out
+     go tool pprof mutex.out
+     ```
+   - For flamegraphs and advanced analysis, see Go pprof documentation.
+8. Run matching engine latency benchmarks:
+   ```powershell
+   go test -tags=performance -bench=BenchmarkMatchingEngineLatency ./test/
+   ```
+   - For profiling (CPU, memory, mutex):
+     ```powershell
+     go test -tags=performance -bench=BenchmarkMatchingEngineLatency -cpuprofile=cpu.out -memprofile=mem.out -mutexprofile=mutex.out ./test/
+     go tool pprof cpu.out
+     go tool pprof mem.out
+     go tool pprof mutex.out
+     ```
+   - For flamegraphs and advanced analysis, see Go pprof documentation.
 
 ## Code Conventions
 
