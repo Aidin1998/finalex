@@ -200,6 +200,18 @@ func (s *Server) registerRoutes() {
 			wallet.POST(":id/whitelist/add", s.addWhitelistAddress)
 			wallet.POST(":id/whitelist/remove", s.removeWhitelistAddress)
 		}
+
+		// Institutional account endpoints
+		institutional := protected.Group("/institutional")
+		{
+			institutional.GET("/accounts", s.listInstitutionalAccounts)         // List all accounts for user (master/sub)
+			institutional.POST("/accounts", s.createInstitutionalAccount)      // Create sub-account
+			institutional.PUT("/accounts/:id", s.updateInstitutionalAccount)   // Update sub-account
+			institutional.DELETE("/accounts/:id", s.deleteInstitutionalAccount) // Delete sub-account
+			institutional.GET("/rbac", s.getRBACAssignments)                   // List RBAC assignments
+			institutional.POST("/rbac", s.assignRBAC)                          // Assign RBAC role
+			institutional.GET("/audit", s.getAuditLogs)                       // Retrieve audit logs for user
+		}
 	}
 
 	// Admin routes (require admin authentication)
@@ -235,294 +247,329 @@ func (s *Server) registerRoutes() {
 		admin.GET("/kyc/cases", s.listKYCCases)
 		admin.POST("/kyc/case/:id/approve", s.approveKYC)
 		admin.POST("/kyc/case/:id/reject", s.rejectKYC)
-	}
-}
 
-// --- SECURITY MIDDLEWARES ---
-// Input validation middleware
-func (s *Server) inputValidationMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Set("validator", s.validator)
-		c.Next()
+		// Admin institutional endpoints
+		adminInstitutional := admin.Group("/institutional")
+		{
+			adminInstitutional.GET("/accounts", s.adminListAllInstitutionalAccounts) // List all institutional accounts (all orgs)
+			adminInstitutional.GET("/audit", s.adminGetAllAuditLogs)                 // Retrieve all audit logs
+		}
 	}
-}
 
-// --- AUDIT LOGGING ---
-func (s *Server) auditLog(event, userID, ip string, details map[string]interface{}) {
-	fields := []zap.Field{
-		zap.String("event", event),
-		zap.String("userID", userID),
-		zap.String("ip", ip),
+	// --- INSTITUTIONAL ACCOUNT HANDLERS (stubs) ---
+	func (s *Server) listInstitutionalAccounts(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"accounts": []interface{}{}})
 	}
-	for k, v := range details {
-		fields = append(fields, zap.Any(k, v))
+	func (s *Server) createInstitutionalAccount(c *gin.Context) {
+		c.JSON(http.StatusCreated, gin.H{"account": nil})
 	}
-	s.logger.Info("AUDIT", fields...)
-}
+	func (s *Server) updateInstitutionalAccount(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"account": nil})
+	}
+	func (s *Server) deleteInstitutionalAccount(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"deleted": true})
+	}
+	func (s *Server) getRBACAssignments(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"rbac": []interface{}{}})
+	}
+	func (s *Server) assignRBAC(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"assigned": true})
+	}
+	func (s *Server) getAuditLogs(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"logs": []interface{}{}})
+	}
+	func (s *Server) adminListAllInstitutionalAccounts(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"accounts": []interface{}{}})
+	}
+	func (s *Server) adminGetAllAuditLogs(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"logs": []interface{}{}})
+	}
 
-// --- 2FA HANDLERS ---
-func (s *Server) enable2FA(c *gin.Context) {
-	userID := c.GetString("userID")
-	// Lookup user in DB (pseudo-code, replace with real DB call)
-	user, err := s.getUserByID(userID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
-		return
+	// --- SECURITY MIDDLEWARES ---
+	// Input validation middleware
+	func (s *Server) inputValidationMiddleware() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.Set("validator", s.validator)
+			c.Next()
+		}
 	}
-	if user.MFAEnabled && user.TOTPSecret != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "2FA already enabled"})
-		return
-	}
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "OrbitCEX",
-		AccountName: user.Email,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate TOTP secret"})
-		return
-	}
-	user.TOTPSecret = key.Secret()
-	// Save user.TOTPSecret to DB (pseudo-code)
-	_ = s.saveUser(user)
-	c.JSON(http.StatusOK, gin.H{"secret": key.Secret(), "url": key.URL()})
-}
 
-func (s *Server) verify2FA(c *gin.Context) {
-	userID := c.GetString("userID")
-	var req struct {
-		Code string `json:"code"`
+	// --- AUDIT LOGGING ---
+	func (s *Server) auditLog(event, userID, ip string, details map[string]interface{}) {
+		fields := []zap.Field{
+			zap.String("event", event),
+			zap.String("userID", userID),
+			zap.String("ip", ip),
+		}
+		for k, v := range details {
+			fields = append(fields, zap.Any(k, v))
+		}
+		s.logger.Info("AUDIT", fields...)
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-	user, err := s.getUserByID(userID)
-	if err != nil || user.TOTPSecret == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found or 2FA not setup"})
-		return
-	}
-	if !totp.Validate(req.Code, user.TOTPSecret) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid TOTP code"})
-		return
-	}
-	user.MFAEnabled = true
-	_ = s.saveUser(user)
-	c.JSON(http.StatusOK, gin.H{"message": "2FA enabled"})
-}
 
-func (s *Server) disable2FA(c *gin.Context) {
-	userID := c.GetString("userID")
-	user, err := s.getUserByID(userID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
-		return
-	}
-	user.MFAEnabled = false
-	user.TOTPSecret = ""
-	_ = s.saveUser(user)
-	c.JSON(http.StatusOK, gin.H{"message": "2FA disabled"})
-}
-
-// healthCheck handles the health check endpoint
-func (s *Server) healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-		"time":   time.Now(),
-	})
-}
-
-// authMiddleware returns a middleware for authentication
-func (s *Server) authMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Get token from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
+	// --- 2FA HANDLERS ---
+	func (s *Server) enable2FA(c *gin.Context) {
+		userID := c.GetString("userID")
+		// Lookup user in DB (pseudo-code, replace with real DB call)
+		user, err := s.getUserByID(userID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 			return
 		}
-
-		// Extract token
-		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			_ = authHeader[7:]
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
-			c.Abort()
+		if user.MFAEnabled && user.TOTPSecret != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "2FA already enabled"})
 			return
 		}
-
-		// Validate token
-		// In a real implementation, you would validate the JWT token
-		// For this example, we'll just assume it's valid
-
-		// Set user ID in context
-		c.Set("userID", "00000000-0000-0000-0000-000000000000")
-
-		c.Next()
-	}
-}
-
-// adminAuthMiddleware returns a middleware for admin authentication
-func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Get token from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
+		key, err := totp.Generate(totp.GenerateOpts{
+			Issuer:      "OrbitCEX",
+			AccountName: user.Email,
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate TOTP secret"})
 			return
 		}
+		user.TOTPSecret = key.Secret()
+		// Save user.TOTPSecret to DB (pseudo-code)
+		_ = s.saveUser(user)
+		c.JSON(http.StatusOK, gin.H{"secret": key.Secret(), "url": key.URL()})
+	}
 
-		// Extract token
-		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			_ = authHeader[7:]
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
-			c.Abort()
+	func (s *Server) verify2FA(c *gin.Context) {
+		userID := c.GetString("userID")
+		var req struct {
+			Code string `json:"code"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 			return
 		}
-
-		// Validate token and check admin role
-		// In a real implementation, you would validate the JWT token and check the user's role
-		// For this example, we'll just assume it's valid and the user is an admin
-
-		// Set user ID in context
-		c.Set("userID", "00000000-0000-0000-0000-000000000000")
-		c.Set("isAdmin", true)
-
-		c.Next()
+		user, err := s.getUserByID(userID)
+		if err != nil || user.TOTPSecret == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found or 2FA not setup"})
+			return
+		}
+		if !totp.Validate(req.Code, user.TOTPSecret) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid TOTP code"})
+			return
+		}
+		user.MFAEnabled = true
+		_ = s.saveUser(user)
+		c.JSON(http.StatusOK, gin.H{"message": "2FA enabled"})
 	}
-}
 
-// --- STUB HANDLERS ---
-func (s *Server) NotImplemented(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Not implemented"})
-}
-
-func (s *Server) getMarketPrices(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"prices": []interface{}{}})
-}
-
-func (s *Server) getMarketHistory(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"history": []interface{}{}})
-}
-
-func (s *Server) getAccounts(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"accounts": []interface{}{}})
-}
-
-// --- STUB writeError ---
-func (s *Server) writeError(c *gin.Context, err error) {
-	s.logger.Error("handler error", zap.Error(err))
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-}
-
-// --- TRADE HANDLERS ---
-// placeOrder handles advanced order types (limit, market, stop, stop-limit, trailing-stop, OCO)
-func (s *Server) placeOrder(c *gin.Context) {
-	var req models.Order
-	if err := c.ShouldBindJSON(&req); err != nil {
-		s.writeError(c, err)
-		return
+	func (s *Server) disable2FA(c *gin.Context) {
+		userID := c.GetString("userID")
+		user, err := s.getUserByID(userID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+			return
+		}
+		user.MFAEnabled = false
+		user.TOTPSecret = ""
+		_ = s.saveUser(user)
+		c.JSON(http.StatusOK, gin.H{"message": "2FA disabled"})
 	}
-	userID, _ := c.Get("userID")
-	if userIDStr, ok := userID.(string); ok {
-		req.UserID, _ = uuid.Parse(userIDStr)
-	}
-	tradingSvc, ok := s.trading.(trading.TradingService)
-	if !ok {
-		s.writeError(c, fmt.Errorf("trading service unavailable"))
-		return
-	}
-	order, err := tradingSvc.PlaceOrder(c.Request.Context(), &req)
-	if err != nil {
-		s.writeError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"order_id": order.ID, "status": order.Status, "order": order})
-}
 
-// cancelOrder cancels an order by ID
-func (s *Server) cancelOrder(c *gin.Context) {
-	orderID := c.Param("id")
-	tradingSvc, ok := s.trading.(trading.TradingService)
-	if !ok {
-		s.writeError(c, fmt.Errorf("trading service unavailable"))
-		return
+	// healthCheck handles the health check endpoint
+	func (s *Server) healthCheck(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"time":   time.Now(),
+		})
 	}
-	if err := tradingSvc.CancelOrder(c.Request.Context(), orderID); err != nil {
-		s.writeError(c, err)
-		return
+
+	// authMiddleware returns a middleware for authentication
+	func (s *Server) authMiddleware() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			// Get token from Authorization header
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+				c.Abort()
+				return
+			}
+
+			// Extract token
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				_ = authHeader[7:]
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
+				c.Abort()
+				return
+			}
+
+			// Validate token
+			// In a real implementation, you would validate the JWT token
+			// For this example, we'll just assume it's valid
+
+			// Set user ID in context
+			c.Set("userID", "00000000-0000-0000-0000-000000000000")
+
+			c.Next()
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"order_id": orderID, "status": "canceled"})
-}
 
-// getOrder returns order details by ID
-func (s *Server) getOrder(c *gin.Context) {
-	orderID := c.Param("id")
-	tradingSvc, ok := s.trading.(trading.TradingService)
-	if !ok {
-		s.writeError(c, fmt.Errorf("trading service unavailable"))
-		return
+	// adminAuthMiddleware returns a middleware for admin authentication
+	func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			// Get token from Authorization header
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+				c.Abort()
+				return
+			}
+
+			// Extract token
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				_ = authHeader[7:]
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
+				c.Abort()
+				return
+			}
+
+			// Validate token and check admin role
+			// In a real implementation, you would validate the JWT token and check the user's role
+			// For this example, we'll just assume it's valid and the user is an admin
+
+			// Set user ID in context
+			c.Set("userID", "00000000-0000-0000-0000-000000000000")
+			c.Set("isAdmin", true)
+
+			c.Next()
+		}
 	}
-	order, err := tradingSvc.GetOrder(orderID)
-	if err != nil {
-		s.writeError(c, err)
-		return
+
+	// --- STUB HANDLERS ---
+	func (s *Server) NotImplemented(c *gin.Context) {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "Not implemented"})
 	}
-	c.JSON(http.StatusOK, gin.H{"order": order})
-}
 
-// listOrders lists orders with optional filters for type/status
-func (s *Server) listOrders(c *gin.Context) {
-	var filter models.OrderFilter
-	if err := c.ShouldBindQuery(&filter); err != nil {
-		s.writeError(c, err)
-		return
+	func (s *Server) getMarketPrices(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"prices": []interface{}{}})
 	}
-	userID, _ := c.Get("userID")
-	userIDStr, _ := userID.(string)
-	tradingSvc, ok := s.trading.(trading.TradingService)
-	if !ok {
-		s.writeError(c, fmt.Errorf("trading service unavailable"))
-		return
+
+	func (s *Server) getMarketHistory(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"history": []interface{}{}})
 	}
-	orders, err := tradingSvc.ListOrders(userIDStr, &filter)
-	if err != nil {
-		s.writeError(c, err)
-		return
+
+	func (s *Server) getAccounts(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"accounts": []interface{}{}})
 	}
-	c.JSON(http.StatusOK, gin.H{"orders": orders})
-}
 
-func (s *Server) cancelOCOGroup(c *gin.Context) {
-	s.writeError(c, fmt.Errorf("OCO group cancel not implemented in trading service"))
-}
+	// --- STUB writeError ---
+	func (s *Server) writeError(c *gin.Context, err error) {
+		s.logger.Error("handler error", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
 
-func (s *Server) listTriggeredOrders(c *gin.Context) {
-	s.writeError(c, fmt.Errorf("Listing triggered/conditional orders not implemented in trading service"))
-}
+	// --- TRADE HANDLERS ---
+	// placeOrder handles advanced order types (limit, market, stop, stop-limit, trailing-stop, OCO)
+	func (s *Server) placeOrder(c *gin.Context) {
+		var req models.Order
+		if err := c.ShouldBindJSON(&req); err != nil {
+			s.writeError(c, err)
+			return
+		}
+		userID, _ := c.Get("userID")
+		if userIDStr, ok := userID.(string); ok {
+			req.UserID, _ = uuid.Parse(userIDStr)
+		}
+		tradingSvc, ok := s.trading.(trading.TradingService)
+		if !ok {
+			s.writeError(c, fmt.Errorf("trading service unavailable"))
+			return
+		}
+		order, err := tradingSvc.PlaceOrder(c.Request.Context(), &req)
+		if err != nil {
+			s.writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"order_id": order.ID, "status": order.Status, "order": order})
+	}
 
-// --- MARKET DATA HUB SINGLETON ---
-var (
-	marketDataHub     *marketdata.Hub
-	marketDataHubOnce sync.Once
-)
+	// cancelOrder cancels an order by ID
+	func (s *Server) cancelOrder(c *gin.Context) {
+		orderID := c.Param("id")
+		tradingSvc, ok := s.trading.(trading.TradingService)
+		if !ok {
+			s.writeError(c, fmt.Errorf("trading service unavailable"))
+			return
+		}
+		if err := tradingSvc.CancelOrder(c.Request.Context(), orderID); err != nil {
+			s.writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"order_id": orderID, "status": "canceled"})
+	}
 
-func (s *Server) getMarketDataHub() *marketdata.Hub {
-	marketDataHubOnce.Do(func() {
-		marketDataHub = marketdata.NewHub()
-		go marketDataHub.Run()
-	})
-	return marketDataHub
-}
+	// getOrder returns order details by ID
+	func (s *Server) getOrder(c *gin.Context) {
+		orderID := c.Param("id")
+		tradingSvc, ok := s.trading.(trading.TradingService)
+		if !ok {
+			s.writeError(c, fmt.Errorf("trading service unavailable"))
+			return
+		}
+		order, err := tradingSvc.GetOrder(orderID)
+		if err != nil {
+			s.writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"order": order})
+	}
 
-// --- User DB helpers (stub, replace with real DB logic) ---
-func (s *Server) getUserByID(userID string) (*models.User, error) {
-	// TODO: Replace with real DB lookup
-	return &models.User{ID: uuid.MustParse(userID), Email: "user@example.com"}, nil
-}
-func (s *Server) saveUser(user *models.User) error {
-	// TODO: Replace with real DB save
-	return nil
-}
+	// listOrders lists orders with optional filters for type/status
+	func (s *Server) listOrders(c *gin.Context) {
+		var filter models.OrderFilter
+		if err := c.ShouldBindQuery(&filter); err != nil {
+			s.writeError(c, err)
+			return
+		}
+		userID, _ := c.Get("userID")
+		userIDStr, _ := userID.(string)
+		tradingSvc, ok := s.trading.(trading.TradingService)
+		if !ok {
+			s.writeError(c, fmt.Errorf("trading service unavailable"))
+			return
+		}
+		orders, err := tradingSvc.ListOrders(userIDStr, &filter)
+		if err != nil {
+			s.writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"orders": orders})
+	}
+
+	func (s *Server) cancelOCOGroup(c *gin.Context) {
+		s.writeError(c, fmt.Errorf("OCO group cancel not implemented in trading service"))
+	}
+
+	func (s *Server) listTriggeredOrders(c *gin.Context) {
+		s.writeError(c, fmt.Errorf("Listing triggered/conditional orders not implemented in trading service"))
+	}
+
+	// --- MARKET DATA HUB SINGLETON ---
+	var (
+		marketDataHub     *marketdata.Hub
+		marketDataHubOnce sync.Once
+	)
+
+	func (s *Server) getMarketDataHub() *marketdata.Hub {
+		marketDataHubOnce.Do(func() {
+			marketDataHub = marketdata.NewHub()
+			go marketDataHub.Run()
+		})
+		return marketDataHub
+	}
+
+	// --- User DB helpers (stub, replace with real DB logic) ---
+	func (s *Server) getUserByID(userID string) (*models.User, error) {
+		// TODO: Replace with real DB lookup
+		return &models.User{ID: uuid.MustParse(userID), Email: "user@example.com"}, nil
+	}
+	func (s *Server) saveUser(user *models.User) error {
+		// TODO: Replace with real DB save
+		return nil
+	}

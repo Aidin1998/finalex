@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
@@ -278,21 +277,21 @@ func (h *Hub) BroadcastDeltaMarketData(data []byte) {
 }
 
 // Add support for multi-format broadcast (JSON, binary, delta)
-func (h *Hub) BroadcastOrderBook(prev, curr *marketdata.OrderBookSnapshot) {
+func (h *Hub) BroadcastOrderBook(prev, curr *OrderBookSnapshot) {
 	// JSON broadcast (default)
 	msg := MarketDataMessage{Type: MsgOrderBook, Data: curr}
 	data, _ := json.Marshal(msg)
 	h.broadcast <- data
 	MarketDataMessages.Inc()
 	// Delta encoding
-	delta := marketdata.ComputeDelta(prev, curr)
+	delta := ComputeDelta(prev, curr)
 	if delta != nil {
-		if b, err := marketdata.EncodeOrderBookDelta(delta); err == nil {
+		if b, err := EncodeOrderBookDelta(delta); err == nil {
 			h.BroadcastDeltaMarketData(b)
 		}
 	}
 	// Binary snapshot
-	if b, err := marketdata.EncodeOrderBookSnapshot(curr); err == nil {
+	if b, err := EncodeOrderBookSnapshot(curr); err == nil {
 		h.BroadcastBinaryMarketData(b)
 	}
 	// FIX gateway broadcast (if enabled)
@@ -405,7 +404,7 @@ func FetchMissedMessages(rdb *redis.Client, stream string, lastID string, count 
 }
 
 // Stub for FIX gateway integration
-var fixGateway *marketdata.FIXGateway
+var fixGateway *FIXGateway
 
 // In main or setup, initialize fixGateway and start it as needed
 // fixGateway = marketdata.NewFIXGateway()

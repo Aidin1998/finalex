@@ -8,21 +8,23 @@ import (
 
 // User represents a user in the system
 type User struct {
-	ID             uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
-	Email          string    `json:"email" gorm:"uniqueIndex"`
-	Username       string    `json:"username" gorm:"uniqueIndex"`
-	PasswordHash   string    `json:"-" gorm:"column:password_hash"`
-	FirstName      string    `json:"first_name"`
-	LastName       string    `json:"last_name"`
-	KYCStatus      string    `json:"kyc_status"`               // pending, approved, rejected
-	Role           string    `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
-	MFAEnabled     bool      `json:"mfa_enabled"`
-	TOTPSecret     string    `json:"-" gorm:"column:totp_secret"`
-	LastLogin      time.Time `json:"last_login"`
-	LastMFA        time.Time `json:"last_mfa"`
-	TrustedDevices string    `json:"trusted_devices" gorm:"type:text"` // JSON array of device fingerprints
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID              uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid"`
+	Email           string     `json:"email" gorm:"uniqueIndex"`
+	Username        string     `json:"username" gorm:"uniqueIndex"`
+	PasswordHash    string     `json:"-" gorm:"column:password_hash"`
+	FirstName       string     `json:"first_name"`
+	LastName        string     `json:"last_name"`
+	KYCStatus       string     `json:"kyc_status"`               // pending, approved, rejected
+	Role            string     `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
+	MFAEnabled      bool       `json:"mfa_enabled"`
+	TOTPSecret      string     `json:"-" gorm:"column:totp_secret"`
+	LastLogin       time.Time  `json:"last_login"`
+	LastMFA         time.Time  `json:"last_mfa"`
+	TrustedDevices  string     `json:"trusted_devices" gorm:"type:text"`         // JSON array of device fingerprints
+	ParentAccountID *uuid.UUID `json:"parent_account_id" gorm:"type:uuid;index"` // for sub-account linkage
+	RBAC            string     `json:"rbac" gorm:"type:text"`                    // JSON: roles/permissions
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // Account represents a user's account for a specific currency
@@ -298,4 +300,26 @@ type KYCDocument struct {
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// InstitutionalAccount represents a master account for institutions
+// Supports sub-accounts, RBAC, and config
+// Each sub-account is a User with ParentAccountID set
+
+type InstitutionalAccount struct {
+	ID           uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
+	Name         string    `json:"name"`
+	MasterUserID uuid.UUID `json:"master_user_id" gorm:"type:uuid;index"`
+	Config       string    `json:"config" gorm:"type:text"` // JSON: limits, fee tiers, etc.
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AuditLog for institutional actions
+type AuditLog struct {
+	ID        uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
+	UserID    uuid.UUID `json:"user_id" gorm:"type:uuid;index"`
+	Action    string    `json:"action"`
+	Details   string    `json:"details" gorm:"type:text"`
+	CreatedAt time.Time `json:"created_at"`
 }

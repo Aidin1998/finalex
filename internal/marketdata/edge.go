@@ -1,10 +1,10 @@
 package marketdata
 
 import (
+	"context"
 	"net/http"
 	"sync"
 
-	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -14,12 +14,6 @@ type EdgeNode struct {
 	upgrader websocket.Upgrader
 	clients  map[*Client]struct{}
 	mu       sync.RWMutex
-}
-
-type Client struct {
-	conn *websocket.Conn
-	send chan []byte
-	// Add fields for subscriptions, auth, etc.
 }
 
 func NewEdgeNode() *EdgeNode {
@@ -43,28 +37,22 @@ func (e *EdgeNode) ServeWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // Add method to subscribe to distribution tier (e.g., via PubSubBackend)
-func (e *EdgeNode) SubscribeAndServe(pubsub marketdata.PubSubBackend) {
+func (e *EdgeNode) SubscribeAndServe(pubsub PubSubBackend) {
 	// Example: subscribe to orderbook/ticker/trade/candle channels
-	go func() {
-		ch := pubsub.Subscribe("ticker")
-		for msg := range ch {
-			// Optionally decode, delta-encode, or binary-encode
-			for client := range e.clients {
-				select {
-				case client.send <- msg:
-				default:
-					// Backpressure: drop or disconnect slow clients
-				}
+	handler := func(msg []byte) {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		for client := range e.clients {
+			select {
+			case client.send <- msg:
+			default:
+				// Backpressure: drop or disconnect slow clients
 			}
 		}
-	}()
-	// Repeat for other channels as needed
-}
-
-func (c *Client) writePump() {
-	for msg := range c.send {
-		c.conn.WriteMessage(websocket.BinaryMessage, msg)
 	}
+	// Subscribe to ticker channel
+	_ = pubsub.Subscribe(context.Background(), "ticker", handler)
+	// Repeat for other channels as needed
 }
 
 // Prometheus metrics for connections

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,8 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/database"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
+	"github.com/Aidin1998/pincex_unified/internal/kyc"
+	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
@@ -22,6 +25,19 @@ import (
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
+
+// --- STUB KYC PROVIDER ---
+type stubKYCProvider struct{}
+
+func (s *stubKYCProvider) StartVerification(userID string, data *kyc.KYCData) (string, error) {
+	return "stub-session", nil
+}
+func (s *stubKYCProvider) GetStatus(sessionID string) (kyc.KYCStatus, error) {
+	return kyc.KYCStatusPending, nil
+}
+func (s *stubKYCProvider) WebhookHandler(w http.ResponseWriter, r *http.Request) {}
+
+// ---
 
 func main() {
 	// Load environment variables
@@ -88,12 +104,19 @@ func main() {
 		zapLogger.Fatal("Failed to create bookkeeper service", zap.Error(err))
 	}
 
-	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc)
+	// Create a stub KYC service (replace with real provider as needed)
+	kycProvider := &stubKYCProvider{}
+	kycService := kyc.NewKYCService(kycProvider)
+
+	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc, kycService)
 	if err != nil {
 		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
 	}
 
-	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db)
+	// Create a Redis pubsub backend for marketfeeds (replace with config as needed)
+	pubsub := marketdata.NewRedisPubSub("localhost:6379")
+
+	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db, pubsub)
 	if err != nil {
 		zapLogger.Fatal("Failed to create market feeds service", zap.Error(err))
 	}
@@ -103,6 +126,18 @@ func main() {
 	if err != nil {
 		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
 	}
+
+	// Create API server
+	apiServer := api.NewServer(
+		zapLogger,
+		identitiesSvc,
+		bookkeeperSvc,
+		fiatSvc,
+		marketfeedsSvc,
+		tradingSvc,
+		kycService, // kycProvider
+		pubsub,     // walletService (placeholder, replace with real wallet service)
+	)
 
 	// Schedule DB pool metrics collection every 30s
 	tickerDB := time.NewTicker(30 * time.Second)
@@ -122,18 +157,6 @@ func main() {
 			}
 		}
 	}()
-
-	// Create API server
-	apiServer := api.NewServer(
-		zapLogger,
-		identitiesSvc,
-		bookkeeperSvc,
-		fiatSvc,
-		marketfeedsSvc,
-		tradingSvc,
-		nil, // kycProvider
-		nil, // walletService
-	)
 
 	// Start services
 	if err := identitiesSvc.Start(); err != nil {
