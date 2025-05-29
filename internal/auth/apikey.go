@@ -1,0 +1,240 @@
+package auth
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// CreateAPIKey creates a new API key for a user
+func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name string, permissions []string, expiresAt *time.Time) (*APIKey, error) {
+	// Validate permissions
+	if err := s.validatePermissions(permissions); err != nil {
+		return nil, fmt.Errorf("invalid permissions: %w", err)
+	}
+
+	// Generate API key and secret
+	keyID := uuid.New()
+	apiKeyString, err := generateSecureKey(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate API key: %w", err)
+	}
+
+	apiSecret, err := generateSecureKey(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate API secret: %w", err)
+	}
+
+	// Create the full API key (key:secret)
+	fullAPIKey := fmt.Sprintf("%s:%s", apiKeyString, apiSecret)
+	keyHash := hashAPIKey(fullAPIKey)
+
+	// Create API key record
+	apiKey := &APIKey{
+		ID:          keyID,
+		UserID:      userID,
+		Name:        name,
+		KeyHash:     keyHash,
+		Permissions: permissions,
+		ExpiresAt:   expiresAt,
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	// Save to database
+	if err := s.db.Create(apiKey).Error; err != nil {
+		return nil, fmt.Errorf("failed to create API key: %w", err)
+	}
+
+	// Return the API key with the actual key value (only shown once)
+	apiKey.KeyHash = fullAPIKey // Temporarily set for return
+	s.logger.Info("API key created",
+		zap.String("user_id", userID.String()),
+		zap.String("key_id", keyID.String()),
+		zap.String("name", name),
+	)
+
+	return apiKey, nil
+}
+
+// ValidateAPIKey validates an API key and returns claims
+func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*APIKeyClaims, error) {
+	// Apply rate limiting
+	if s.rateLimiter != nil {
+		allowed, err := s.rateLimiter.Allow(ctx, "api_key_validation", 1000, time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("rate limiter error: %w", err)
+		}
+		if !allowed {
+			return nil, fmt.Errorf("rate limit exceeded")
+		}
+	}
+
+	// Hash the provided API key
+	keyHash := hashAPIKey(apiKey)
+
+	// Find the API key in database
+	var dbKey APIKey
+	err := s.db.Where("key_hash = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)",
+		keyHash, true, time.Now()).First(&dbKey).Error
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired API key")
+	}
+
+	// Update last used timestamp
+	s.db.Model(&dbKey).Update("last_used_at", time.Now())
+
+	return &APIKeyClaims{
+		KeyID:       dbKey.ID,
+		UserID:      dbKey.UserID,
+		Permissions: dbKey.Permissions,
+	}, nil
+}
+
+// RevokeAPIKey revokes an API key
+func (s *Service) RevokeAPIKey(ctx context.Context, keyID uuid.UUID) error {
+	result := s.db.Model(&APIKey{}).Where("id = ?", keyID).Update("is_active", false)
+	if result.Error != nil {
+		return fmt.Errorf("failed to revoke API key: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("API key not found")
+	}
+	s.logger.Info("API key revoked",
+		zap.String("key_id", keyID.String()),
+	)
+
+	return nil
+}
+
+// ListAPIKeys lists all API keys for a user
+func (s *Service) ListAPIKeys(ctx context.Context, userID uuid.UUID) ([]*APIKey, error) {
+	var apiKeys []*APIKey
+	err := s.db.Where("user_id = ? AND is_active = ?", userID, true).
+		Select("id", "user_id", "name", "permissions", "last_used_at", "expires_at", "created_at", "updated_at").
+		Find(&apiKeys).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list API keys: %w", err)
+	}
+
+	return apiKeys, nil
+}
+
+// validatePermissions validates that the requested permissions are valid
+func (s *Service) validatePermissions(permissions []string) error {
+	validPermissions := map[string]bool{
+		"orders:read":       true,
+		"orders:write":      true,
+		"orders:delete":     true,
+		"trades:read":       true,
+		"trades:write":      true,
+		"accounts:read":     true,
+		"accounts:write":    true,
+		"users:read":        true,
+		"users:write":       true,
+		"users:delete":      true,
+		"system:admin":      true,
+		"marketdata:read":   true,
+		"wallets:read":      true,
+		"wallets:write":     true,
+		"deposits:read":     true,
+		"deposits:write":    true,
+		"withdrawals:read":  true,
+		"withdrawals:write": true,
+	}
+
+	for _, permission := range permissions {
+		if !validPermissions[permission] {
+			return fmt.Errorf("invalid permission: %s", permission)
+		}
+	}
+
+	return nil
+}
+
+// hashAPIKey creates a hash of an API key
+func hashAPIKey(apiKey string) string {
+	hash := sha256.Sum256([]byte(apiKey))
+	return hex.EncodeToString(hash[:])
+}
+
+// ValidateAPIKeySignature validates an API key signature for signed requests
+func (s *Service) ValidateAPIKeySignature(ctx context.Context, apiKey, signature, timestamp, method, path, body string) (*APIKeyClaims, error) {
+	// First validate the API key
+	claims, err := s.ValidateAPIKey(ctx, apiKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract secret from API key
+	parts := strings.Split(apiKey, ":")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid API key format")
+	}
+	secret := parts[1]
+
+	// Create signature payload
+	payload := fmt.Sprintf("%s%s%s%s%s", timestamp, method, path, body, timestamp)
+
+	// Calculate expected signature
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+	// Compare signatures
+	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+		return nil, fmt.Errorf("invalid signature")
+	}
+
+	// Validate timestamp (prevent replay attacks)
+	if err := s.validateTimestamp(timestamp); err != nil {
+		return nil, fmt.Errorf("invalid timestamp: %w", err)
+	}
+
+	return claims, nil
+}
+
+// validateTimestamp validates that the timestamp is within acceptable range
+func (s *Service) validateTimestamp(timestamp string) error {
+	// Parse timestamp
+	ts, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp format: %w", err)
+	}
+
+	// Check if timestamp is within 5 minutes of current time
+	now := time.Now()
+	diff := now.Sub(ts)
+	if diff < 0 {
+		diff = -diff
+	}
+
+	if diff > 5*time.Minute {
+		return fmt.Errorf("timestamp too old or too far in future")
+	}
+
+	return nil
+}
+
+// GenerateAPIKeyPair generates a new API key and secret pair
+func GenerateAPIKeyPair() (string, string, error) {
+	key, err := generateSecureKey(24)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate API key: %w", err)
+	}
+
+	secret, err := generateSecureKey(32)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate API secret: %w", err)
+	}
+
+	return key, secret, nil
+}

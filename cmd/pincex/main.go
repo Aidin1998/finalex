@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/config"
 	"github.com/Aidin1998/pincex_unified/internal/database"
@@ -21,6 +22,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/Aidin1998/pincex_unified/pkg/metrics"
+	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
@@ -94,8 +96,43 @@ func main() {
 	// Use failover-managed DB for services
 	db := failMgr.DB()
 
-	// Create services using failover DB
-	identitiesSvc, err := identities.NewService(zapLogger, db)
+	// Create Redis client for rate limiting
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.Redis.Address,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	// Test Redis connection
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		zapLogger.Warn("Redis connection failed, using in-memory rate limiter", zap.Error(err))
+	}
+
+	// Create rate limiter (Redis-based if available, in-memory as fallback)
+	var rateLimiter auth.RateLimiter
+	if redisClient.Ping(context.Background()).Err() == nil {
+		rateLimiter = auth.NewAdvancedRateLimiter(redisClient)
+	} else {
+		rateLimiter = auth.NewInMemoryRateLimiter()
+	}
+
+	// Create unified authentication service
+	authSvc, err := auth.NewAuthService(
+		zapLogger,
+		db,
+		cfg.JWT.Secret,
+		time.Duration(cfg.JWT.ExpirationHours)*time.Hour,
+		cfg.JWT.RefreshSecret,
+		time.Duration(cfg.JWT.RefreshExpHours)*time.Hour,
+		"pincex-exchange", // issuer
+		rateLimiter,
+	)
+	if err != nil {
+		zapLogger.Fatal("Failed to create auth service", zap.Error(err))
+	}
+
+	// Create services using failover DB and auth service
+	identitiesSvc, err := identities.NewService(zapLogger, db, authSvc)
 	if err != nil {
 		zapLogger.Fatal("Failed to create identities service", zap.Error(err))
 	}
@@ -117,6 +154,16 @@ func main() {
 	// Create a Redis pubsub backend for marketfeeds (replace with config as needed)
 	pubsub := marketdata.NewRedisPubSub("localhost:6379")
 
+	// Create marketdata WebSocket Hub with auth service integration
+	marketDataHub := marketdata.NewHub(authSvc)
+	go marketDataHub.Run()
+	zapLogger.Info("Marketdata WebSocket Hub started")
+
+	// Create market data distributor with Redis pubsub
+	marketDataDistributor := marketdata.NewMarketDataDistributor(marketDataHub, pubsub)
+	go marketDataDistributor.Start()
+	zapLogger.Info("Marketdata distributor started")
+
 	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db, pubsub)
 	if err != nil {
 		zapLogger.Fatal("Failed to create market feeds service", zap.Error(err))
@@ -131,11 +178,13 @@ func main() {
 	// Create API server
 	apiServer := server.NewServer(
 		zapLogger,
+		authSvc,
 		identitiesSvc,
 		bookkeeperSvc,
 		fiatSvc,
 		marketfeedsSvc,
 		tradingSvc,
+		marketDataHub,
 	)
 
 	// Schedule DB pool metrics collection every 30s

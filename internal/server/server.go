@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
+	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 
@@ -21,29 +23,35 @@ import (
 // Server represents the HTTP server
 type Server struct {
 	logger         *zap.Logger
+	authSvc        auth.AuthService
 	identitiesSvc  identities.IdentityService
 	bookkeeperSvc  bookkeeper.BookkeeperService
 	fiatSvc        fiat.FiatService
 	marketfeedsSvc marketfeeds.MarketFeedService
 	tradingSvc     trading.TradingService
+	marketDataHub  *marketdata.Hub
 }
 
 // NewServer creates a new HTTP server
 func NewServer(
 	logger *zap.Logger,
+	authSvc auth.AuthService,
 	identitiesSvc identities.IdentityService,
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	fiatSvc fiat.FiatService,
 	marketfeedsSvc marketfeeds.MarketFeedService,
 	tradingSvc trading.TradingService,
+	marketDataHub *marketdata.Hub,
 ) *Server {
 	return &Server{
 		logger:         logger,
+		authSvc:        authSvc,
 		identitiesSvc:  identitiesSvc,
 		bookkeeperSvc:  bookkeeperSvc,
 		fiatSvc:        fiatSvc,
 		marketfeedsSvc: marketfeedsSvc,
 		tradingSvc:     tradingSvc,
+		marketDataHub:  marketDataHub,
 	}
 }
 
@@ -62,6 +70,9 @@ func (s *Server) Router() *gin.Engine {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	// Add WebSocket route for market data
+	router.GET("/ws/marketdata", s.handleWebSocketMarketData)
 
 	// Add API routes
 	api := router.Group("/api")
@@ -177,8 +188,32 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Validate token
-		userID, err := s.identitiesSvc.ValidateToken(token)
+		// Remove "Bearer " prefix if present
+		if strings.HasPrefix(token, "Bearer ") {
+			token = token[7:]
+		}
+
+		var userID string
+		var err error
+
+		// Try unified auth service first
+		if s.authSvc != nil {
+			claims, authErr := s.authSvc.ValidateToken(c.Request.Context(), token)
+			if authErr == nil {
+				userID = claims.UserID.String()
+				// Set additional context from claims
+				c.Set("userEmail", claims.Email)
+				c.Set("userRole", claims.Role)
+				c.Set("userPermissions", claims.Permissions)
+				c.Set("sessionID", claims.SessionID.String())
+			} else {
+				err = authErr
+			}
+		} else {
+			// Fallback to identities service
+			userID, err = s.identitiesSvc.ValidateToken(token)
+		}
+
 		if err != nil {
 			s.writeError(c, fmt.Errorf("unauthorized: %w", err))
 			c.Abort()
@@ -416,4 +451,15 @@ func (s *Server) handleGetUser(c *gin.Context) {
 func (s *Server) handleUpdateUserKYC(c *gin.Context) {
 	// Implementation will be added in identities service
 	c.JSON(http.StatusOK, gin.H{"message": "user KYC updated"})
+}
+
+// handleWebSocketMarketData handles WebSocket connections for market data
+func (s *Server) handleWebSocketMarketData(c *gin.Context) {
+	if s.marketDataHub == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "market data service unavailable"})
+		return
+	}
+
+	// Upgrade to WebSocket using the marketdata Hub's ServeWS method
+	s.marketDataHub.ServeWS(c.Writer, c.Request)
 }

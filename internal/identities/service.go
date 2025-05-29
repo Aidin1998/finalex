@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ type IdentityService interface {
 type Service struct {
 	logger                 *zap.Logger
 	db                     *gorm.DB
+	authService            auth.AuthService
 	jwtSecret              string
 	jwtExpirationHours     int
 	refreshSecret          string
@@ -39,11 +41,12 @@ type Service struct {
 }
 
 // NewService creates a new IdentityService
-func NewService(logger *zap.Logger, db *gorm.DB) (IdentityService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, authService auth.AuthService) (IdentityService, error) {
 	// Create service
 	svc := &Service{
 		logger:                 logger,
 		db:                     db,
+		authService:            authService,
 		jwtSecret:              "your-secret-key", // Should be loaded from config
 		jwtExpirationHours:     24,
 		refreshSecret:          "your-refresh-secret-key", // Should be loaded from config
@@ -117,6 +120,32 @@ func (s *Service) Register(ctx context.Context, req *models.RegisterRequest) (*m
 
 // Login logs in a user
 func (s *Service) Login(ctx context.Context, req *models.LoginRequest) (*models.LoginResponse, error) {
+	// Use unified auth service if available
+	if s.authService != nil {
+		tokenPair, user, err := s.authService.AuthenticateUser(ctx, req.Login, req.Password)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check if 2FA is required
+		hasMFA, err := s.authService.CheckMFA(ctx, user.ID)
+		if err != nil {
+			s.logger.Warn("Failed to check MFA status", zap.Error(err))
+		} else if hasMFA {
+			return &models.LoginResponse{
+				Requires2FA: true,
+				UserID:      user.ID,
+			}, nil
+		}
+
+		return &models.LoginResponse{
+			User:        user,
+			Token:       tokenPair.AccessToken,
+			Requires2FA: false,
+		}, nil
+	}
+
+	// Fallback to legacy authentication
 	// Find user by email or username
 	var user models.User
 	if err := s.db.Where("email = ? OR username = ?", req.Login, req.Login).First(&user).Error; err != nil {
@@ -131,7 +160,7 @@ func (s *Service) Login(ctx context.Context, req *models.LoginRequest) (*models.
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Check if 2FA is enabled
+	// Check if 2FA is enabled (legacy)
 	if user.MFAEnabled {
 		return &models.LoginResponse{
 			Requires2FA: true,
@@ -139,7 +168,7 @@ func (s *Service) Login(ctx context.Context, req *models.LoginRequest) (*models.
 		}, nil
 	}
 
-	// Generate token
+	// Generate token (legacy)
 	token, err := s.generateToken(user.ID.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
@@ -399,6 +428,17 @@ func (s *Service) UpdateKYCStatus(ctx context.Context, userID string, status str
 
 // ValidateToken validates a JWT token
 func (s *Service) ValidateToken(tokenString string) (string, error) {
+	// Use unified auth service if available
+	if s.authService != nil {
+		ctx := context.Background()
+		claims, err := s.authService.ValidateToken(ctx, tokenString)
+		if err != nil {
+			return "", err
+		}
+		return claims.UserID.String(), nil
+	}
+
+	// Fallback to legacy token validation
 	// Parse token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method

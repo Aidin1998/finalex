@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
@@ -50,6 +51,7 @@ type Hub struct {
 	unregister      chan *Client
 	broadcastShards []chan []byte
 	outboundJobs    chan outboundJob // NEW
+	authService     auth.AuthService
 }
 
 const (
@@ -101,7 +103,7 @@ func init() {
 	)
 }
 
-func NewHub() *Hub {
+func NewHub(authService auth.AuthService) *Hub {
 	shards := make([]chan []byte, broadcastShards)
 	for i := range shards {
 		shards[i] = make(chan []byte, 1024)
@@ -112,6 +114,7 @@ func NewHub() *Hub {
 		unregister:      make(chan *Client),
 		broadcastShards: shards,
 		outboundJobs:    make(chan outboundJob, 4096),
+		authService:     authService,
 	}
 	hub.startOutboundWorkers()
 	return hub
@@ -279,16 +282,36 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		// Optionally store protocol in client struct
 	}
 	// Advanced connection management: auth, subscriptions, backpressure
-	// Example: check for auth token
+	// Check for auth token using the new unified auth service
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		token = r.Header.Get("Authorization")
+		// Remove "Bearer " prefix if present
+		if strings.HasPrefix(token, "Bearer ") {
+			token = token[7:]
+		}
 	}
-	if !validateToken(token) {
-		conn.WriteMessage(websocket.CloseMessage, []byte("unauthorized"))
-		conn.Close()
-		return
+
+	ctx := context.Background()
+	if h.authService != nil && token != "" {
+		claims, err := h.authService.ValidateToken(ctx, token)
+		if err != nil {
+			log.Printf("Token validation failed: %v", err)
+			conn.WriteMessage(websocket.CloseMessage, []byte("unauthorized"))
+			conn.Close()
+			return
+		}
+		// Store user information in client for potential use
+		client.channels["_userID"] = true // marker for authenticated user
+		log.Printf("Authenticated WebSocket connection for user: %s", claims.UserID)
+	} else if token == "" {
+		// For now, allow unauthenticated connections to public market data
+		// In production, you might want to require authentication
+		log.Println("Unauthenticated WebSocket connection allowed for public market data")
+	} else {
+		log.Println("Auth service not available, allowing connection")
 	}
+
 	h.register <- client
 	// --- Serve cached order book snapshot to new subscriber ---
 	symbol := r.URL.Query().Get("symbol")
@@ -303,12 +326,6 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	go client.writePump()
 	go client.readPump(h)
-}
-
-// validateToken is a stub for authentication
-func validateToken(token string) bool {
-	// TODO: Implement real token validation
-	return token != ""
 }
 
 func (c *Client) readPump(h *Hub) {
@@ -586,8 +603,8 @@ type TestServer struct {
 	mu       sync.RWMutex
 }
 
-func NewTestServer() *TestServer {
-	hub := NewHub()
+func NewTestServer(authService auth.AuthService) *TestServer {
+	hub := NewHub(authService)
 	go hub.Run()
 	return &TestServer{
 		hub:      hub,
