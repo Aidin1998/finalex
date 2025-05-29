@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -36,6 +37,11 @@ type Config struct {
 		ProviderAPIKey   string
 		DocumentBasePath string
 	}
+	Kafka struct {
+		Brokers             []string
+		EnableMessageQueue  bool
+		ConsumerGroupPrefix string
+	}
 }
 
 // LoadConfig loads the application configuration
@@ -54,6 +60,11 @@ func LoadConfig() (*Config, error) {
 	config.KYC.ProviderURL = "https://kyc-provider.example.com"
 	config.KYC.ProviderAPIKey = "your-kyc-provider-api-key"
 	config.KYC.DocumentBasePath = "/var/lib/pincex/kyc-documents"
+
+	// Kafka defaults
+	config.Kafka.Brokers = []string{"localhost:9092"}
+	config.Kafka.EnableMessageQueue = true
+	config.Kafka.ConsumerGroupPrefix = "pincex"
 
 	// Load configuration from environment variables
 	if port, err := strconv.Atoi(os.Getenv("SERVER_PORT")); err == nil {
@@ -105,6 +116,19 @@ func LoadConfig() (*Config, error) {
 
 	if kycDocumentBasePath := os.Getenv("KYC_DOCUMENT_BASE_PATH"); kycDocumentBasePath != "" {
 		config.KYC.DocumentBasePath = kycDocumentBasePath
+	}
+
+	// Load Kafka configuration from environment variables
+	if kafkaBrokers := os.Getenv("KAFKA_BROKERS"); kafkaBrokers != "" {
+		config.Kafka.Brokers = strings.Split(kafkaBrokers, ",")
+	}
+
+	if enableMQ := os.Getenv("ENABLE_MESSAGE_QUEUE"); enableMQ != "" {
+		config.Kafka.EnableMessageQueue = enableMQ == "true"
+	}
+
+	if groupPrefix := os.Getenv("KAFKA_GROUP_PREFIX"); groupPrefix != "" {
+		config.Kafka.ConsumerGroupPrefix = groupPrefix
 	}
 
 	// Load configuration from file
@@ -167,6 +191,18 @@ func LoadConfig() (*Config, error) {
 
 		if viper.IsSet("kyc.document_base_path") {
 			config.KYC.DocumentBasePath = viper.GetString("kyc.document_base_path")
+		}
+
+		if viper.IsSet("kafka.brokers") {
+			config.Kafka.Brokers = viper.GetStringSlice("kafka.brokers")
+		}
+
+		if viper.IsSet("kafka.enable_message_queue") {
+			config.Kafka.EnableMessageQueue = viper.GetBool("kafka.enable_message_queue")
+		}
+
+		if viper.IsSet("kafka.consumer_group_prefix") {
+			config.Kafka.ConsumerGroupPrefix = viper.GetString("kafka.consumer_group_prefix")
 		}
 	}
 

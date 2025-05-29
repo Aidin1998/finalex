@@ -19,12 +19,15 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
+	"github.com/Aidin1998/pincex_unified/internal/messaging"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/Aidin1998/pincex_unified/pkg/metrics"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
 	"github.com/Aidin1998/pincex_unified/internal/server"
 )
@@ -41,6 +44,74 @@ func (s *stubKYCProvider) GetStatus(sessionID string) (kyc.KYCStatus, error) {
 func (s *stubKYCProvider) WebhookHandler(w http.ResponseWriter, r *http.Request) {}
 
 // ---
+
+// messageTradingWrapper wraps messaging trading service to implement TradingService interface
+type messageTradingWrapper struct {
+	msgTradingService *messaging.TradingMessageService
+	db                *gorm.DB
+	logger            *zap.Logger
+}
+
+func (w *messageTradingWrapper) Start() error {
+	w.logger.Info("Message-driven trading service started")
+	return nil
+}
+
+func (w *messageTradingWrapper) Stop() error {
+	w.logger.Info("Message-driven trading service stopped")
+	return nil
+}
+
+func (w *messageTradingWrapper) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
+	// Use async order placement via messaging
+	if err := w.msgTradingService.AsyncPlaceOrder(ctx, order); err != nil {
+		return nil, err
+	}
+	// For now, return the order as accepted - in production you'd wait for confirmation
+	return order, nil
+}
+
+func (w *messageTradingWrapper) CancelOrder(ctx context.Context, orderID string) error {
+	// Use async order cancellation via messaging
+	return w.msgTradingService.AsyncCancelOrder(ctx, orderID, "", "user_request")
+}
+
+// Implement other TradingService methods as stubs or direct DB queries
+func (w *messageTradingWrapper) GetOrder(orderID string) (*models.Order, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) GetOrders(userID, symbol, status string, limit, offset string) ([]*models.Order, int64, error) {
+	return nil, 0, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) GetOrderBook(symbol string, depth int) (*models.OrderBookSnapshot, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) GetTradingPairs() ([]*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) GetTradingPair(symbol string) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) CreateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) UpdateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
+
+func (w *messageTradingWrapper) ListOrders(userID string, filter *models.OrderFilter) ([]*models.Order, error) {
+	return nil, fmt.Errorf("not implemented in messaging mode")
+}
 
 func main() {
 	// Load environment variables
@@ -168,6 +239,54 @@ func main() {
 	go marketDataHub.Run()
 	zapLogger.Info("Marketdata WebSocket Hub started")
 
+	// Initialize messaging system if enabled
+	var messagingFactory *messaging.MessagingFactory
+	var messageBus *messaging.MessageBus
+	var tradingSvc trading.TradingService
+
+	if cfg.Kafka.EnableMessageQueue {
+		zapLogger.Info("Initializing message queue system")
+
+		// Create messaging factory
+		messagingFactory = messaging.NewMessagingFactory(nil, zapLogger)
+
+		// Initialize message bus
+		var err error
+		messageBus, err = messagingFactory.CreateMessageBus()
+		if err != nil {
+			zapLogger.Fatal("Failed to create message bus", zap.Error(err))
+		}
+
+		// Create trading services with messaging
+		tradingServices, err := messagingFactory.CreateTradingServices(messageBus, bookkeeperSvc)
+		if err != nil {
+			zapLogger.Fatal("Failed to create trading services", zap.Error(err))
+		}
+
+		// Start message consumers
+		if err := messagingFactory.StartServices(tradingServices); err != nil {
+			zapLogger.Fatal("Failed to start messaging services", zap.Error(err))
+		}
+
+		zapLogger.Info("Message queue system initialized successfully")
+
+		// Create a wrapper that implements TradingService interface for message-driven operations
+		tradingSvc = &messageTradingWrapper{
+			msgTradingService: tradingServices.TradingService,
+			db:                crDB,
+			logger:            zapLogger,
+		}
+	} else {
+		zapLogger.Info("Using direct service calls (message queue disabled)")
+
+		// Trading service uses CockroachDB directly
+		var err error
+		tradingSvc, err = trading.NewService(zapLogger, crDB, bookkeeperSvc)
+		if err != nil {
+			zapLogger.Fatal("Failed to create trading service", zap.Error(err))
+		}
+	}
+
 	// Create market data distributor with Redis pubsub
 	marketDataDistributor := marketdata.NewMarketDataDistributor(marketDataHub, pubsub)
 	go marketDataDistributor.Start()
@@ -176,12 +295,6 @@ func main() {
 	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db, pubsub)
 	if err != nil {
 		zapLogger.Fatal("Failed to create market feeds service", zap.Error(err))
-	}
-
-	// Trading service uses CockroachDB directly
-	tradingSvc, err := trading.NewService(zapLogger, crDB, bookkeeperSvc)
-	if err != nil {
-		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
 	}
 
 	// Create API server
