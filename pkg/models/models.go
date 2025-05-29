@@ -16,6 +16,7 @@ type User struct {
 	LastName        string     `json:"last_name"`
 	KYCStatus       string     `json:"kyc_status"`               // pending, approved, rejected
 	Role            string     `json:"role" gorm:"default:user"` // user, admin, support, auditor, etc.
+	Tier            string     `json:"tier" gorm:"default:basic"` // basic, premium, vip - for rate limiting tiers
 	MFAEnabled      bool       `json:"mfa_enabled"`
 	TOTPSecret      string     `json:"-" gorm:"column:totp_secret"`
 	LastLogin       time.Time  `json:"last_login"`
@@ -322,4 +323,63 @@ type AuditLog struct {
 	Action    string    `json:"action"`
 	Details   string    `json:"details" gorm:"type:text"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// UserTier represents rate limiting tiers
+type UserTier string
+
+const (
+	TierBasic   UserTier = "basic"
+	TierPremium UserTier = "premium"
+	TierVIP     UserTier = "vip"
+)
+
+// TierRateLimits defines rate limits for each tier
+type TierRateLimits struct {
+	APICallsPerMinute    int `json:"api_calls_per_minute"`
+	OrdersPerMinute      int `json:"orders_per_minute"`
+	TradesPerMinute      int `json:"trades_per_minute"`
+	WithdrawalsPerDay    int `json:"withdrawals_per_day"`
+	LoginAttemptsPerHour int `json:"login_attempts_per_hour"`
+}
+
+// GetTierLimits returns rate limits for a specific tier
+func GetTierLimits(tier UserTier) TierRateLimits {
+	switch tier {
+	case TierBasic:
+		return TierRateLimits{
+			APICallsPerMinute:    10,
+			OrdersPerMinute:      5,
+			TradesPerMinute:      3,
+			WithdrawalsPerDay:    1,
+			LoginAttemptsPerHour: 5,
+		}
+	case TierPremium:
+		return TierRateLimits{
+			APICallsPerMinute:    100,
+			OrdersPerMinute:      50,
+			TradesPerMinute:      30,
+			WithdrawalsPerDay:    10,
+			LoginAttemptsPerHour: 10,
+		}
+	case TierVIP:
+		return TierRateLimits{
+			APICallsPerMinute:    1000,
+			OrdersPerMinute:      500,
+			TradesPerMinute:      300,
+			WithdrawalsPerDay:    100,
+			LoginAttemptsPerHour: 20,
+		}
+	default:
+		return GetTierLimits(TierBasic)
+	}
+}
+
+// RateLimitInfo contains detailed rate limit information
+type RateLimitInfo struct {
+	Limit     int           `json:"limit"`
+	Used      int           `json:"used"`
+	Remaining int           `json:"remaining"`
+	ResetAt   time.Time     `json:"reset_at"`
+	Window    time.Duration `json:"window"`
 }

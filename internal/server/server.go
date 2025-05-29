@@ -12,6 +12,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
 
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
@@ -22,14 +23,15 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	logger         *zap.Logger
-	authSvc        auth.AuthService
-	identitiesSvc  identities.IdentityService
-	bookkeeperSvc  bookkeeper.BookkeeperService
-	fiatSvc        fiat.FiatService
-	marketfeedsSvc marketfeeds.MarketFeedService
-	tradingSvc     trading.TradingService
-	marketDataHub  *marketdata.Hub
+	logger            *zap.Logger
+	authSvc           auth.AuthService
+	identitiesSvc     identities.IdentityService
+	bookkeeperSvc     bookkeeper.BookkeeperService
+	fiatSvc           fiat.FiatService
+	marketfeedsSvc    marketfeeds.MarketFeedService
+	tradingSvc        trading.TradingService
+	marketDataHub     *marketdata.Hub
+	tieredRateLimiter *auth.TieredRateLimiter
 }
 
 // NewServer creates a new HTTP server
@@ -42,16 +44,18 @@ func NewServer(
 	marketfeedsSvc marketfeeds.MarketFeedService,
 	tradingSvc trading.TradingService,
 	marketDataHub *marketdata.Hub,
+	tieredRateLimiter *auth.TieredRateLimiter,
 ) *Server {
 	return &Server{
-		logger:         logger,
-		authSvc:        authSvc,
-		identitiesSvc:  identitiesSvc,
-		bookkeeperSvc:  bookkeeperSvc,
-		fiatSvc:        fiatSvc,
-		marketfeedsSvc: marketfeedsSvc,
-		tradingSvc:     tradingSvc,
-		marketDataHub:  marketDataHub,
+		logger:            logger,
+		authSvc:           authSvc,
+		identitiesSvc:     identitiesSvc,
+		bookkeeperSvc:     bookkeeperSvc,
+		fiatSvc:           fiatSvc,
+		marketfeedsSvc:    marketfeedsSvc,
+		tradingSvc:        tradingSvc,
+		marketDataHub:     marketDataHub,
+		tieredRateLimiter: tieredRateLimiter,
 	}
 }
 
@@ -65,6 +69,11 @@ func (s *Server) Router() *gin.Engine {
 	router.Use(ginzap.RecoveryWithZap(s.logger, true))
 	router.Use(otelgin.Middleware("pincex"))
 	router.Use(cors.Default())
+
+	// Add tiered rate limiting middleware (if available)
+	if s.tieredRateLimiter != nil {
+		router.Use(s.tieredRateLimiter.Middleware())
+	}
 
 	// Add health check
 	router.GET("/health", func(c *gin.Context) {
@@ -141,6 +150,21 @@ func (s *Server) Router() *gin.Engine {
 				admin.GET("/users", s.handleGetUsers)
 				admin.GET("/users/:id", s.handleGetUser)
 				admin.PUT("/users/:id/kyc", s.handleUpdateUserKYC)
+				
+				// Rate limiting management endpoints
+				rateLimit := admin.Group("/rate-limits")
+				{
+					rateLimit.GET("/config", s.handleGetRateLimitConfig)
+					rateLimit.PUT("/config", s.handleUpdateRateLimitConfig)
+					rateLimit.POST("/emergency-mode", s.handleSetEmergencyMode)
+					rateLimit.PUT("/tiers/:tier", s.handleUpdateTierLimits)
+					rateLimit.PUT("/endpoints", s.handleUpdateEndpointConfig)
+					rateLimit.GET("/users/:userID/status", s.handleGetUserRateLimitStatus)
+					rateLimit.GET("/ips/:ip/status", s.handleGetIPRateLimitStatus)
+					rateLimit.DELETE("/users/:userID/:rateType", s.handleResetUserRateLimit)
+					rateLimit.DELETE("/ips/:ip/:endpoint", s.handleResetIPRateLimit)
+					rateLimit.POST("/cleanup", s.handleCleanupRateLimitData)
+				}
 			}
 		}
 	}
@@ -462,4 +486,221 @@ func (s *Server) handleWebSocketMarketData(c *gin.Context) {
 
 	// Upgrade to WebSocket using the marketdata Hub's ServeWS method
 	s.marketDataHub.ServeWS(c.Writer, c.Request)
+}
+
+// Rate limiting admin handlers
+
+// handleGetRateLimitConfig returns the current rate limiting configuration
+func (s *Server) handleGetRateLimitConfig(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	config := s.tieredRateLimiter.GetConfig()
+	c.JSON(http.StatusOK, config)
+}
+
+// handleUpdateRateLimitConfig updates the rate limiting configuration
+func (s *Server) handleUpdateRateLimitConfig(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	var config auth.RateLimitConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid configuration", "details": err.Error()})
+		return
+	}
+	
+	s.tieredRateLimiter.UpdateConfig(&config)
+	c.JSON(http.StatusOK, gin.H{"message": "Rate limit configuration updated"})
+}
+
+// handleSetEmergencyMode enables or disables emergency mode
+func (s *Server) handleSetEmergencyMode(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	var request struct {
+		Enabled bool `json:"enabled"`
+	}
+	
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+	
+	s.tieredRateLimiter.SetEmergencyMode(request.Enabled)
+	c.JSON(http.StatusOK, gin.H{"message": "Emergency mode updated", "enabled": request.Enabled})
+}
+
+// handleUpdateTierLimits updates rate limits for a specific tier
+func (s *Server) handleUpdateTierLimits(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	tierParam := c.Param("tier")
+	var limits auth.TierConfig
+	
+	if err := c.ShouldBindJSON(&limits); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limits", "details": err.Error()})
+		return
+	}
+	
+	// Validate tier
+	var tier models.UserTier
+	switch tierParam {
+	case "basic":
+		tier = models.TierBasic
+	case "premium":
+		tier = models.TierPremium
+	case "vip":
+		tier = models.TierVIP
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tier", "valid_tiers": []string{"basic", "premium", "vip"}})
+		return
+	}
+	
+	s.tieredRateLimiter.UpdateTierLimits(tier, limits)
+	c.JSON(http.StatusOK, gin.H{"message": "Tier limits updated", "tier": tierParam})
+}
+
+// handleUpdateEndpointConfig updates configuration for a specific endpoint
+func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	var request struct {
+		Endpoint string                `json:"endpoint"`
+		Config   auth.EndpointConfig   `json:"config"`
+	}
+	
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+	
+	if request.Endpoint == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Endpoint is required"})
+		return
+	}
+	
+	s.tieredRateLimiter.UpdateEndpointConfig(request.Endpoint, request.Config)
+	c.JSON(http.StatusOK, gin.H{"message": "Endpoint configuration updated", "endpoint": request.Endpoint})
+}
+
+// handleGetUserRateLimitStatus returns rate limit status for a specific user
+func (s *Server) handleGetUserRateLimitStatus(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	userID := c.Param("userID")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+	
+	status, err := s.tieredRateLimiter.GetUserRateLimitStatus(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user status", "details": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"user_id": userID, "status": status})
+}
+
+// handleGetIPRateLimitStatus returns rate limit status for a specific IP
+func (s *Server) handleGetIPRateLimitStatus(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	ip := c.Param("ip")
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "IP address is required"})
+		return
+	}
+	
+	status, err := s.tieredRateLimiter.GetIPRateLimitStatus(c.Request.Context(), ip)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get IP status", "details": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"ip": ip, "status": status})
+}
+
+// handleResetUserRateLimit resets rate limits for a specific user and rate type
+func (s *Server) handleResetUserRateLimit(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	userID := c.Param("userID")
+	rateType := c.Param("rateType")
+	
+	if userID == "" || rateType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID and rate type are required"})
+		return
+	}
+	
+	err := s.tieredRateLimiter.ResetUserRateLimit(c.Request.Context(), userID, rateType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset user rate limit", "details": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"message": "User rate limit reset", "user_id": userID, "rate_type": rateType})
+}
+
+// handleResetIPRateLimit resets rate limits for a specific IP and endpoint
+func (s *Server) handleResetIPRateLimit(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	ip := c.Param("ip")
+	endpoint := c.Param("endpoint")
+	
+	if ip == "" || endpoint == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "IP address and endpoint are required"})
+		return
+	}
+	
+	err := s.tieredRateLimiter.ResetIPRateLimit(c.Request.Context(), ip, endpoint)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset IP rate limit", "details": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"message": "IP rate limit reset", "ip": ip, "endpoint": endpoint})
+}
+
+// handleCleanupRateLimitData performs cleanup of expired rate limit data
+func (s *Server) handleCleanupRateLimitData(c *gin.Context) {
+	if s.tieredRateLimiter == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
+		return
+	}
+	
+	err := s.tieredRateLimiter.CleanupExpiredData(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup rate limit data", "details": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"message": "Rate limit data cleanup completed"})
 }

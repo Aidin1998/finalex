@@ -131,6 +131,15 @@ func main() {
 		zapLogger.Fatal("Failed to create auth service", zap.Error(err))
 	}
 
+	// Create user service adapter for tiered rate limiter
+	userService := auth.NewAuthUserService(db)
+
+	// Create tiered rate limiter
+	var tieredRateLimiter *auth.TieredRateLimiter
+	if redisClient.Ping(context.Background()).Err() == nil {
+		tieredRateLimiter = auth.NewTieredRateLimiter(redisClient, zapLogger, userService)
+	}
+
 	// Create services using failover DB and auth service
 	identitiesSvc, err := identities.NewService(zapLogger, db, authSvc)
 	if err != nil {
@@ -185,6 +194,7 @@ func main() {
 		marketfeedsSvc,
 		tradingSvc,
 		marketDataHub,
+		tieredRateLimiter,
 	)
 
 	// Schedule DB pool metrics collection every 30s

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -208,7 +209,7 @@ func (rl *AdvancedRateLimiter) GetRemainingRequests(ctx context.Context, key str
 }
 
 // GetRateLimitInfo returns detailed rate limit information
-func (rl *AdvancedRateLimiter) GetRateLimitInfo(ctx context.Context, key string, limit int, window time.Duration) (*RateLimitInfo, error) {
+func (rl *AdvancedRateLimiter) GetRateLimitInfo(ctx context.Context, key string, limit int, window time.Duration) (*models.RateLimitInfo, error) {
 	redisKey := fmt.Sprintf("rate_limit:%s", key)
 	now := time.Now()
 	windowStart := now.Add(-window)
@@ -238,22 +239,13 @@ func (rl *AdvancedRateLimiter) GetRateLimitInfo(ctx context.Context, key string,
 		resetTime = now.Add(window)
 	}
 
-	return &RateLimitInfo{
+	return &models.RateLimitInfo{
 		Limit:     limit,
 		Used:      currentCount,
 		Remaining: remaining,
 		ResetAt:   resetTime,
 		Window:    window,
 	}, nil
-}
-
-// RateLimitInfo contains detailed rate limit information
-type RateLimitInfo struct {
-	Limit     int           `json:"limit"`
-	Used      int           `json:"used"`
-	Remaining int           `json:"remaining"`
-	ResetAt   time.Time     `json:"reset_at"`
-	Window    time.Duration `json:"window"`
 }
 
 // CleanupRateLimitData removes old rate limit data
@@ -296,7 +288,7 @@ func NewUserRateLimiter(client *redis.Client) *UserRateLimiter {
 }
 
 // CheckUserRateLimit checks rate limits for a specific user and endpoint
-func (rl *UserRateLimiter) CheckUserRateLimit(ctx context.Context, userID, endpoint string) (bool, *RateLimitInfo, error) {
+func (rl *UserRateLimiter) CheckUserRateLimit(ctx context.Context, userID, endpoint string) (bool, *models.RateLimitInfo, error) {
 	// Define rate limits per endpoint
 	limits := map[string]RateLimit{
 		"login": {

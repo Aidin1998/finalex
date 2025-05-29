@@ -519,3 +519,23 @@ func generateSecureKey(length int) (string, error) {
 	}
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
+
+// AuthUserService adapts the auth service to work with tiered rate limiter
+type AuthUserService struct {
+	db *gorm.DB
+}
+
+// NewAuthUserService creates a new auth user service adapter
+func NewAuthUserService(db *gorm.DB) *AuthUserService {
+	return &AuthUserService{db: db}
+}
+
+// GetUserByID implements UserService interface
+func (aus *AuthUserService) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
+	var user models.User
+	err := aus.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
