@@ -6,30 +6,17 @@ package test
 import (
 	"context"
 	"math/rand"
-	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/testutil"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
-
-func percentile(latencies []time.Duration, p float64) time.Duration {
-	if len(latencies) == 0 {
-		return 0
-	}
-	sorted := make([]time.Duration, len(latencies))
-	copy(sorted, latencies)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	idx := int(float64(len(sorted))*p + 0.5)
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
-	}
-	return sorted[idx]
-}
 
 // BenchmarkMatchingEngineLatency measures the latency of the matching engine's ProcessOrder method under high concurrency.
 func BenchmarkMatchingEngineLatency(b *testing.B) {
@@ -46,7 +33,7 @@ func BenchmarkMatchingEngineLatency(b *testing.B) {
 	var mu sync.Mutex
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			order := &engine.Order{
+			order := &model.Order{
 				ID:        uuid.New(),
 				UserID:    users[rand.Intn(userCount)],
 				Pair:      pair,
@@ -82,9 +69,9 @@ func BenchmarkMatchingEngineLatency(b *testing.B) {
 		}
 	}
 	avg := total / time.Duration(len(latencies))
-	p50 := percentile(latencies, 0.50)
-	p95 := percentile(latencies, 0.95)
-	p99 := percentile(latencies, 0.99)
+	p50 := testutil.Percentile(latencies, 0.50)
+	p95 := testutil.Percentile(latencies, 0.95)
+	p99 := testutil.Percentile(latencies, 0.99)
 	tps := float64(len(latencies)) / b.Elapsed().Seconds()
 	b.Logf("Matching engine latency: min=%v avg=%v max=%v p50=%v p95=%v p99=%v ops=%d", min, avg, max, p50, p95, p99, len(latencies))
 	b.Logf("TPS: %.2f, Total Time: %v", tps, b.Elapsed())

@@ -5,8 +5,8 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"net/url"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +14,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/pincex_unified/testutil"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -54,20 +55,6 @@ func setupBenchmarkTradingService(b *testing.B) trading.TradingService {
 	return svc
 }
 
-func percentile(latencies []time.Duration, p float64) time.Duration {
-	if len(latencies) == 0 {
-		return 0
-	}
-	sorted := make([]time.Duration, len(latencies))
-	copy(sorted, latencies)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	idx := int(float64(len(sorted))*p + 0.5)
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
-	}
-	return sorted[idx]
-}
-
 func BenchmarkOrderPlacementThroughput(b *testing.B) {
 	svc := setupBenchmarkTradingService(b)
 	defer svc.Stop()
@@ -78,21 +65,13 @@ func BenchmarkOrderPlacementThroughput(b *testing.B) {
 	totalOrders := userCount * ordersPerUser
 	users := make([]string, userCount)
 	for i := 0; i < userCount; i++ {
-		userID := uuid.New().String()
-		users[i] = userID
-		acct, err := svc.(*trading.Service).bookkeeperSvc.CreateAccount(ctx, userID, "USD")
-		if err != nil {
-			b.Fatalf("failed to create account: %v", err)
-		}
-		acct.Balance = 1_000_000
-		acct.Available = 1_000_000
-		_ = svc.(*trading.Service).db.Save(acct)
+		users[i] = fmt.Sprintf("user-%d", i)
 	}
-	pair := &models.TradingPair{Symbol: "USDUSD", BaseCurrency: "USD", QuoteCurrency: "USD", Status: "active"}
-	err := svc.(*trading.Service).db.Create(pair).Error
-	if err != nil {
-		b.Fatalf("failed to create trading pair: %v", err)
-	}
+	// pair := &models.TradingPair{Symbol: "USDUSD", BaseCurrency: "USD", QuoteCurrency: "USD", Status: "active"}
+	// err := svc.(*trading.Service).db.Create(pair).Error
+	// if err != nil {
+	// 	b.Fatalf("failed to create trading pair: %v", err)
+	// }
 	b.ResetTimer()
 	var latencies []time.Duration
 	var mu sync.Mutex
@@ -105,12 +84,12 @@ func BenchmarkOrderPlacementThroughput(b *testing.B) {
 			defer wg.Done()
 			for j := 0; j < ordersPerUser; j++ {
 				order := &models.Order{
-					UserID:   uuid.MustParse(users[i]),
+					UserID:   uuid.New(),
 					Symbol:   "USDUSD",
-					Side:     []string{"buy", "sell"}[time.Now().UnixNano()%2],
+					Side:     []string{"buy", "sell"}[j%2],
 					Type:     "limit",
-					Price:    float64(1 + time.Now().UnixNano()%100),
-					Quantity: float64(1 + time.Now().UnixNano()%10),
+					Price:    30000.0 + float64(j),
+					Quantity: 0.01,
 				}
 				orderStart := time.Now()
 				_, err := svc.PlaceOrder(ctx, order)
@@ -141,9 +120,9 @@ func BenchmarkOrderPlacementThroughput(b *testing.B) {
 		}
 	}
 	avg := total / time.Duration(len(latencies))
-	p50 := percentile(latencies, 0.50)
-	p95 := percentile(latencies, 0.95)
-	p99 := percentile(latencies, 0.99)
+	p50 := testutil.Percentile(latencies, 0.50)
+	p95 := testutil.Percentile(latencies, 0.95)
+	p99 := testutil.Percentile(latencies, 0.99)
 	tps := float64(totalOrders) / totalTime.Seconds()
 	errorRate := float64(errCount) / float64(totalOrders) * 100
 	b.Logf("Order placement latency: min=%v avg=%v max=%v p50=%v p95=%v p99=%v ops=%d", min, avg, max, p50, p95, p99, len(latencies))

@@ -23,7 +23,7 @@ func TestSecurity_Attacks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, tc.endpoint, strings.NewReader(tc.attack))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			rw := httptest.NewRecorder()
+			// rw := httptest.NewRecorder() // Remove unused variable
 			// TODO: Route to real handler or mock
 			// For now, simulate safe handling
 			isSafe := !strings.Contains(tc.attack, "DROP TABLE") && !strings.Contains(tc.attack, "<script>") && !strings.Contains(tc.attack, "169.254.169.254")

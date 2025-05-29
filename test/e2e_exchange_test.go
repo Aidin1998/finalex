@@ -52,5 +52,5 @@ func TestE2E_ExchangeLifecycle(t *testing.T) {
 	totalTime := time.Since(start)
 	tps := float64(totalOrders) / totalTime.Seconds()
 	t.Logf("E2E: users=%d orders=%d tps=%.2f total_time=%v", userCount, totalOrders, tps, totalTime)
-	t.Log("E2E_METRICS: pass users=1000 orders=10000 tps=%.2f", tps)
+	t.Logf("E2E_METRICS: pass users=1000 orders=10000 tps=%.2f", tps)
 }

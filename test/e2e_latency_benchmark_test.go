@@ -8,31 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"sort"
-
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/pincex_unified/testutil"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
-
-func percentile(latencies []time.Duration, p float64) time.Duration {
-	if len(latencies) == 0 {
-		return 0
-	}
-	sorted := make([]time.Duration, len(latencies))
-	copy(sorted, latencies)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	idx := int(float64(len(sorted))*p + 0.5)
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
-	}
-	return sorted[idx]
-}
 
 // BenchmarkEndToEndTransactionLatency measures the time from order submission to market data update and balance update.
 func BenchmarkEndToEndTransactionLatency(b *testing.B) {
@@ -75,6 +60,7 @@ func BenchmarkEndToEndTransactionLatency(b *testing.B) {
 	ch := mdSrv.Subscribe("BTCUSD")
 	b.ResetTimer()
 	latencies := make([]time.Duration, 0, b.N)
+	startTime := time.Now()
 	for i := 0; i < b.N; i++ {
 		order := &models.Order{
 			UserID:   uuid.MustParse(userID),
@@ -106,6 +92,7 @@ func BenchmarkEndToEndTransactionLatency(b *testing.B) {
 		latencies = append(latencies, latency)
 		b.Logf("End-to-end latency: %v", latency)
 	}
+	totalTime := time.Since(startTime)
 	b.StopTimer()
 	// Report stats
 	var total time.Duration
@@ -120,9 +107,9 @@ func BenchmarkEndToEndTransactionLatency(b *testing.B) {
 		}
 	}
 	avg := total / time.Duration(len(latencies))
-	p50 := percentile(latencies, 0.50)
-	p95 := percentile(latencies, 0.95)
-	p99 := percentile(latencies, 0.99)
+	p50 := testutil.Percentile(latencies, 0.50)
+	p95 := testutil.Percentile(latencies, 0.95)
+	p99 := testutil.Percentile(latencies, 0.99)
 	tps := float64(len(latencies)) / float64(totalTime.Seconds())
 	b.Logf("E2E latency: min=%v avg=%v max=%v p50=%v p95=%v p99=%v ops=%d", min, avg, max, p50, p95, p99, len(latencies))
 	b.Logf("TPS: %.2f, Total Time: %v", tps, totalTime)
