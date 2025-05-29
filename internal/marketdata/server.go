@@ -47,9 +47,13 @@ type Hub struct {
 	register        chan *Client
 	unregister      chan *Client
 	broadcastShards []chan []byte
+	outboundJobs    chan outboundJob // NEW
 }
 
-const broadcastShards = 8 // Tune as needed for core count and workload
+const (
+	broadcastShards     = 8  // Tune as needed for core count and workload
+	outboundWorkerCount = 32 // Tune for hardware/concurrency
+)
 
 var (
 	MarketDataConnections = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -84,12 +88,15 @@ func NewHub() *Hub {
 	for i := range shards {
 		shards[i] = make(chan []byte, 1024)
 	}
-	return &Hub{
+	hub := &Hub{
 		clients:         sync.Map{},
 		register:        make(chan *Client),
 		unregister:      make(chan *Client),
 		broadcastShards: shards,
+		outboundJobs:    make(chan outboundJob, 4096),
 	}
+	hub.startOutboundWorkers()
+	return hub
 }
 
 // hashMessageShard returns the shard index for a message (round-robin fallback)
@@ -165,7 +172,7 @@ func (h *Hub) Run() {
 						h.clients.Range(func(key, _ interface{}) bool {
 							client := key.(*Client)
 							select {
-							case client.send <- joinBatch(finalBatch):
+							case h.outboundJobs <- outboundJob{client: client, message: joinBatch(finalBatch)}:
 							default:
 								// Backpressure: drop or disconnect slow clients
 								close(client.send)
@@ -298,6 +305,29 @@ func (c *Client) readPump(h *Hub) {
 	}
 }
 
+type outboundJob struct {
+	client  *Client
+	message []byte
+}
+
+func (h *Hub) startOutboundWorkers() {
+	jobs := make(chan outboundJob, 4096)
+	// Start workers
+	for i := 0; i < outboundWorkerCount; i++ {
+		go func() {
+			for job := range jobs {
+				job.client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				w, err := job.client.conn.NextWriter(websocket.TextMessage)
+				if err == nil {
+					w.Write(job.message)
+					w.Close()
+				}
+			}
+		}()
+	}
+	h.outboundJobs = jobs
+}
+
 func (c *Client) writePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
@@ -306,18 +336,6 @@ func (c *Client) writePump() {
 	}()
 	for {
 		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-			w.Close()
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {

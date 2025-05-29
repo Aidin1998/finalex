@@ -68,3 +68,21 @@ var (
 func init() {
 	prometheus.MustRegister(ActiveConnections)
 }
+
+type EdgeConn struct {
+	// Placeholder for real outbound WebSocket/TCP connection (e.g., *websocket.Conn)
+}
+
+var edgeConnPool = sync.Pool{
+	New: func() interface{} { return &EdgeConn{} },
+}
+
+// AcquireEdgeConn gets a connection from the pool (or creates new)
+func AcquireEdgeConn() *EdgeConn {
+	return edgeConnPool.Get().(*EdgeConn)
+}
+
+// ReleaseEdgeConn returns a connection to the pool
+func ReleaseEdgeConn(conn *EdgeConn) {
+	edgeConnPool.Put(conn)
+}

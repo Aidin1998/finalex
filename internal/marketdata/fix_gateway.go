@@ -1,5 +1,9 @@
 package marketdata
 
+import (
+	"sync"
+)
+
 // --- FIX 4.4/5.0 Protocol Gateway for Institutions ---
 // Use QuickFIX/Go or similar for real implementation
 // - Market data: MarketDataSnapshotFullRefresh, MarketDataIncrementalRefresh
@@ -25,13 +29,48 @@ package marketdata
 
 // "github.com/quickfixgo/quickfix"
 
+type FIXSession struct {
+	// Placeholder for real FIX session/connection object
+	// e.g., quickfix.SessionID, net.Conn, etc.
+}
+
 type FIXGateway struct {
+	sessionPool    sync.Pool
+	activeSessions []*FIXSession
+	mu             sync.Mutex
 	// Add fields for session management, config, etc.
 	// engine *quickfix.Engine // placeholder for real FIX engine
 }
 
 func NewFIXGateway() *FIXGateway {
-	return &FIXGateway{}
+	return &FIXGateway{
+		sessionPool: sync.Pool{
+			New: func() interface{} { return &FIXSession{} },
+		},
+		activeSessions: make([]*FIXSession, 0),
+	}
+}
+
+// Acquire a session from the pool (or create new)
+func (f *FIXGateway) acquireSession() *FIXSession {
+	sess := f.sessionPool.Get().(*FIXSession)
+	f.mu.Lock()
+	f.activeSessions = append(f.activeSessions, sess)
+	f.mu.Unlock()
+	return sess
+}
+
+// Release a session back to the pool
+func (f *FIXGateway) releaseSession(sess *FIXSession) {
+	f.mu.Lock()
+	for i, s := range f.activeSessions {
+		if s == sess {
+			f.activeSessions = append(f.activeSessions[:i], f.activeSessions[i+1:]...)
+			break
+		}
+	}
+	f.mu.Unlock()
+	f.sessionPool.Put(sess)
 }
 
 func (f *FIXGateway) Start() error {
