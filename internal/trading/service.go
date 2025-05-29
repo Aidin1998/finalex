@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/trading/config"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
+	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
@@ -51,13 +53,27 @@ type Service struct {
 
 // NewService creates a new trading service
 func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService) (TradingService, error) {
-	// Create trading engine
-	// TODO: Provide real orderRepo, tradeRepo, config, eventJournal as needed
-	var orderRepo model2.Repository = nil             // Replace with actual repo
-	var tradeRepo engine.TradeRepository = nil        // Replace with actual repo
-	var config *engine.Config = nil                   // Replace with actual config
-	var eventJournal *eventjournal.EventJournal = nil // Replace with actual journal if needed
-	tradingEngine := engine.NewMatchingEngine(orderRepo, tradeRepo, logger.Sugar(), config, eventJournal)
+	// Initialize repositories
+	orderRepo := repository.NewGormRepository(db, logger)
+	tradeRepo := repository.NewGormTradeRepository(db, logger)
+
+	// Load configuration
+	config := config.DefaultTradingConfig()
+
+	// Initialize event journal
+	eventJournal, err := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/events.log")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create event journal: %w", err)
+	}
+
+	// Create trading engine with all components
+	tradingEngine := engine.NewMatchingEngine(
+		orderRepo,
+		tradeRepo,
+		logger.Sugar(),
+		config.Engine,
+		eventJournal,
+	)
 
 	// Create service
 	svc := &Service{

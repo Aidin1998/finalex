@@ -81,6 +81,13 @@ type Order struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	FilledAt    *time.Time `json:"filled_at"`
 
+	// Additional fields for trading engine
+	FilledQuantity  float64    `json:"filled_quantity" validate:"min=0"`
+	StopPrice       *float64   `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
+	AveragePrice    *float64   `json:"average_price,omitempty" validate:"omitempty,gt=0"`
+	DisplayQuantity *float64   `json:"display_quantity,omitempty" validate:"omitempty,gt=0"` // for iceberg orders
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`                                 // for GTD orders
+
 	// Advanced order fields
 	TriggerPrice   *float64   `json:"trigger_price,omitempty" validate:"omitempty,gt=0"`   // for stop/triggered orders
 	TrailingOffset *float64   `json:"trailing_offset,omitempty" validate:"omitempty,gt=0"` // for trailing stops
@@ -103,6 +110,7 @@ type Trade struct {
 	Quantity       float64   `json:"quantity" validate:"required,gt=0"`
 	Fee            float64   `json:"fee" validate:"min=0"`
 	FeeCurrency    string    `json:"fee_currency" validate:"required,currency_code"`
+	IsMaker        bool      `json:"is_maker"` // whether this trade was maker or taker
 	CreatedAt      time.Time `json:"created_at"`
 }
 
