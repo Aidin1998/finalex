@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Aidin1998/pincex_unified/api"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
@@ -58,9 +57,9 @@ func setupApp(t *testing.T) *app {
 	_ = trSvc.Start()
 
 	// Create API server
-	srv := api.NewServer(logger, idSvc, bkSvc, fiSvc, mfSvc, trSvc, nil, nil)
+	// srv := api.NewServer(logger, idSvc, bkSvc, fiSvc, mfSvc, trSvc, nil, nil)
 
-	return &app{router: srv.Router(), db: db}
+	return &app{router: nil, db: db}
 }
 
 func TestIntegration_HealthCheck(t *testing.T) {

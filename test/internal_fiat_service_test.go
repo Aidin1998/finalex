@@ -1,5 +1,5 @@
 // moved from internal/fiat/service_test.go
-package api_test
+package test
 
 import (
 	"context"

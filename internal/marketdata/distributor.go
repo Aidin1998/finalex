@@ -38,7 +38,9 @@ func (d *MarketDataDistributor) Start() {
 
 // BroadcastMarketDataRaw allows direct broadcast of already-encoded messages
 func (h *Hub) BroadcastMarketDataRaw(msg []byte) {
-	h.broadcast <- msg
+	// Use sharded broadcast method
+	shard := hashMessageShard(msg)
+	h.broadcastShards[shard] <- msg
 }
 
 // Example initialization (to be called from main or server setup):

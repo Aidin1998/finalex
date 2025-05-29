@@ -43,12 +43,13 @@ type Client struct {
 
 // Hub manages all clients and broadcasts
 type Hub struct {
-	clients    sync.Map // *Client -> struct{}
-	register   chan *Client
-	unregister chan *Client
-	broadcast  chan []byte
-	mu         sync.RWMutex // for legacy code, not used for clients
+	clients         sync.Map // *Client -> struct{}
+	register        chan *Client
+	unregister      chan *Client
+	broadcastShards []chan []byte
 }
+
+const broadcastShards = 8 // Tune as needed for core count and workload
 
 var (
 	MarketDataConnections = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -79,19 +80,71 @@ func init() {
 }
 
 func NewHub() *Hub {
-	return &Hub{
-		clients:    sync.Map{},
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		broadcast:  make(chan []byte, 1024),
+	shards := make([]chan []byte, broadcastShards)
+	for i := range shards {
+		shards[i] = make(chan []byte, 1024)
 	}
+	return &Hub{
+		clients:         sync.Map{},
+		register:        make(chan *Client),
+		unregister:      make(chan *Client),
+		broadcastShards: shards,
+	}
+}
+
+// hashMessageShard returns the shard index for a message (round-robin fallback)
+var broadcastShardCounter uint64
+
+func hashMessageShard(msg []byte) int {
+	// Simple round-robin for now; can use hash(msg) for more even distribution
+	return int(atomic.AddUint64(&broadcastShardCounter, 1) % uint64(broadcastShards))
 }
 
 func (h *Hub) Run() {
 	batchInterval := 10 * time.Millisecond // tune as needed
-	var batch [][]byte
-	ticker := time.NewTicker(batchInterval)
-	defer ticker.Stop()
+	var batchs [broadcastShards][][]byte
+	tickers := make([]*time.Ticker, broadcastShards)
+	for i := range tickers {
+		tickers[i] = time.NewTicker(batchInterval)
+	}
+	defer func() {
+		for _, t := range tickers {
+			t.Stop()
+		}
+	}()
+
+	// Start a goroutine per shard for broadcasting
+	for shard := 0; shard < broadcastShards; shard++ {
+		go func(shard int) {
+			for {
+				select {
+				case message := <-h.broadcastShards[shard]:
+					batchs[shard] = append(batchs[shard], message)
+				case <-tickers[shard].C:
+					if len(batchs[shard]) > 0 {
+						batched := batchs[shard]
+						batchs[shard] = nil
+						start := time.Now()
+						h.clients.Range(func(key, _ interface{}) bool {
+							client := key.(*Client)
+							select {
+							case client.send <- joinBatch(batched):
+							default:
+								// Backpressure: drop or disconnect slow clients
+								close(client.send)
+								h.clients.Delete(client)
+							}
+							return true
+						})
+						MarketDataMessages.Add(float64(len(batched)))
+						MarketDataBroadcastLatency.Observe(time.Since(start).Seconds())
+					}
+				}
+			}
+		}(shard)
+	}
+
+	// Main event loop for registration/unregistration
 	for {
 		select {
 		case client := <-h.register:
@@ -101,27 +154,6 @@ func (h *Hub) Run() {
 			h.clients.Delete(client)
 			close(client.send)
 			MarketDataConnections.Dec()
-		case message := <-h.broadcast:
-			batch = append(batch, message)
-		case <-ticker.C:
-			if len(batch) > 0 {
-				batched := batch
-				batch = nil
-				start := time.Now()
-				h.clients.Range(func(key, _ interface{}) bool {
-					client := key.(*Client)
-					select {
-					case client.send <- joinBatch(batched):
-					default:
-						// Backpressure: drop or disconnect slow clients
-						close(client.send)
-						h.clients.Delete(client)
-					}
-					return true
-				})
-				MarketDataMessages.Add(float64(len(batched)))
-				MarketDataBroadcastLatency.Observe(time.Since(start).Seconds())
-			}
 		}
 	}
 }
@@ -258,21 +290,24 @@ func (c *Client) writePump() {
 	}
 }
 
-// BroadcastMarketData broadcasts a market data message to all clients
+// BroadcastMarketData broadcasts a market data message to all clients (sharded)
 func (h *Hub) BroadcastMarketData(msg MarketDataMessage) {
 	data, _ := json.Marshal(msg)
-	h.broadcast <- data
+	shard := hashMessageShard(data)
+	h.broadcastShards[shard] <- data
 }
 
-// BroadcastBinaryMarketData broadcasts a binary-encoded market data message to all clients
+// BroadcastBinaryMarketData broadcasts a binary-encoded market data message to all clients (sharded)
 func (h *Hub) BroadcastBinaryMarketData(data []byte) {
-	h.broadcast <- data
+	shard := hashMessageShard(data)
+	h.broadcastShards[shard] <- data
 	MarketDataBinaryMessages.Inc()
 }
 
-// BroadcastDeltaMarketData broadcasts a delta-encoded market data message to all clients
+// BroadcastDeltaMarketData broadcasts a delta-encoded market data message to all clients (sharded)
 func (h *Hub) BroadcastDeltaMarketData(data []byte) {
-	h.broadcast <- data
+	shard := hashMessageShard(data)
+	h.broadcastShards[shard] <- data
 	MarketDataDeltaMessages.Inc()
 }
 
@@ -281,7 +316,7 @@ func (h *Hub) BroadcastOrderBook(prev, curr *OrderBookSnapshot) {
 	// JSON broadcast (default)
 	msg := MarketDataMessage{Type: MsgOrderBook, Data: curr}
 	data, _ := json.Marshal(msg)
-	h.broadcast <- data
+	h.broadcastShards[0] <- data
 	MarketDataMessages.Inc()
 	// Delta encoding
 	delta := ComputeDelta(prev, curr)
@@ -417,3 +452,42 @@ var fixGateway *FIXGateway
 // 4. Per-stream subscriptions: already supported via client.channels
 // 5. Backpressure: drop or disconnect slow clients
 // 6. End-to-end latency monitoring: Prometheus histogram
+
+// --- Test Server for Benchmarks ---
+type TestServer struct {
+	hub      *Hub
+	channels map[string]chan interface{}
+	mu       sync.RWMutex
+}
+
+func NewTestServer() *TestServer {
+	hub := NewHub()
+	go hub.Run()
+	return &TestServer{
+		hub:      hub,
+		channels: make(map[string]chan interface{}),
+	}
+}
+
+func (s *TestServer) Subscribe(symbol string) <-chan interface{} {
+	ch := make(chan interface{}, 1024)
+	s.mu.Lock()
+	s.channels[symbol] = ch
+	s.mu.Unlock()
+	return ch
+}
+
+func (s *TestServer) PublishOrderBookUpdate(symbol string) {
+	msg := MarketDataMessage{Type: MsgOrderBook, Data: symbol, Timestamp: time.Now()}
+	s.hub.BroadcastMarketData(msg)
+	s.mu.RLock()
+	ch, ok := s.channels[symbol]
+	s.mu.RUnlock()
+	if ok {
+		ch <- msg
+	}
+}
+
+func (s *TestServer) Stop() {
+	// No-op for now
+}

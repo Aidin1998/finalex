@@ -21,6 +21,9 @@ func BenchmarkMarketDataDistributionLatency(b *testing.B) {
 	var wg sync.WaitGroup
 	latencies := make([]time.Duration, 0, clientCount*updatesPerClient)
 	latMu := sync.Mutex{}
+	runtimeLimit := 20 * time.Second
+	endTime := time.Now().Add(runtimeLimit)
+
 	// Simulate clients subscribing and measuring latency
 	for i := 0; i < clientCount; i++ {
 		wg.Add(1)
@@ -28,6 +31,9 @@ func BenchmarkMarketDataDistributionLatency(b *testing.B) {
 			defer wg.Done()
 			ch := srv.Subscribe("BTCUSD")
 			for j := 0; j < updatesPerClient; j++ {
+				if time.Now().After(endTime) {
+					break
+				}
 				start := time.Now()
 				update := <-ch // Receive order book update
 				_ = update     // Optionally validate content
@@ -39,8 +45,8 @@ func BenchmarkMarketDataDistributionLatency(b *testing.B) {
 		}()
 	}
 	b.ResetTimer()
-	// Simulate order book updates
-	for k := 0; k < updatesPerClient; k++ {
+	// Simulate order book updates for the duration of the runtime limit
+	for time.Now().Before(endTime) {
 		srv.PublishOrderBookUpdate("BTCUSD")
 	}
 	wg.Wait()

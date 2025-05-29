@@ -1,5 +1,5 @@
 // moved from internal/marketfeeds/service_test.go
-package api_test
+package test
 
 import (
 	"context"
