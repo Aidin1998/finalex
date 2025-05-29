@@ -42,7 +42,7 @@ func newTestUserService() *testUserService {
 			},
 			"premium-user": {
 				ID:    models.NewUUID(),
-				Email: "premium@test.com", 
+				Email: "premium@test.com",
 				Tier:  models.TierPremium,
 			},
 			"vip-user": {
@@ -91,7 +91,7 @@ func main() {
 	// Migrate models
 	err = db.AutoMigrate(
 		&models.User{},
-		&models.Account{}, 
+		&models.Account{},
 		&models.Transaction{},
 		&models.TradingPair{},
 		&models.Order{},
@@ -214,7 +214,7 @@ func testRateLimitEndpoint(url, method, authToken string, requests int) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	fmt.Printf("📈 Results: %d successful, %d rate limited out of %d requests\n", 
+	fmt.Printf("📈 Results: %d successful, %d rate limited out of %d requests\n",
 		successCount, rateLimitedCount, requests)
 }
 
@@ -278,7 +278,7 @@ func testRateLimitConfig(baseURL string) {
 	// Test emergency mode endpoint
 	emergencyData := map[string]bool{"enabled": true}
 	jsonData, _ := json.Marshal(emergencyData)
-	resp, err = http.Post(baseURL+"/api/v1/admin/rate-limits/emergency-mode", 
+	resp, err = http.Post(baseURL+"/api/v1/admin/rate-limits/emergency-mode",
 		"application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Printf("❌ Failed to test emergency mode: %v\n", err)

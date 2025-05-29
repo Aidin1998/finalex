@@ -9,15 +9,56 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // CreateAPIKey creates a new API key for a user
 func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name string, permissions []string, expiresAt *time.Time) (*APIKey, error) {
+	// Validate and sanitize API key name
+	if name == "" {
+		return nil, fmt.Errorf("API key name cannot be empty")
+	}
+
+	if len(name) > 100 {
+		return nil, fmt.Errorf("API key name too long (max 100 characters)")
+	}
+
+	// Check for malicious content in name
+	if validation.ContainsSQLInjection(name) || validation.ContainsXSS(name) {
+		s.logger.Warn("Malicious content detected in API key name",
+			zap.String("name", name),
+			zap.String("user_id", userID.String()))
+		return nil, fmt.Errorf("API key name contains invalid characters")
+	}
+	// Sanitize the name
+	cleanName := validation.SanitizeInput(name)
+
+	// Validate user ID
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("invalid user ID")
+	}
+
 	// Validate permissions
+	if len(permissions) == 0 {
+		return nil, fmt.Errorf("at least one permission must be specified")
+	}
+
 	if err := s.validatePermissions(permissions); err != nil {
 		return nil, fmt.Errorf("invalid permissions: %w", err)
+	}
+
+	// Rate limiting for API key creation
+	if s.rateLimiter != nil {
+		allowed, err := s.rateLimiter.Allow(ctx, fmt.Sprintf("api_key_creation:%s", userID.String()), 10, time.Hour)
+		if err != nil {
+			s.logger.Error("Rate limiter error during API key creation", zap.Error(err))
+		} else if !allowed {
+			s.logger.Warn("API key creation rate limit exceeded",
+				zap.String("user_id", userID.String()))
+			return nil, fmt.Errorf("too many API key creation attempts, please try again later")
+		}
 	}
 
 	// Generate API key and secret
@@ -35,12 +76,11 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name strin
 	// Create the full API key (key:secret)
 	fullAPIKey := fmt.Sprintf("%s:%s", apiKeyString, apiSecret)
 	keyHash := hashAPIKey(fullAPIKey)
-
 	// Create API key record
 	apiKey := &APIKey{
 		ID:          keyID,
 		UserID:      userID,
-		Name:        name,
+		Name:        cleanName, // Use sanitized name
 		KeyHash:     keyHash,
 		Permissions: permissions,
 		ExpiresAt:   expiresAt,
@@ -53,13 +93,12 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name strin
 	if err := s.db.Create(apiKey).Error; err != nil {
 		return nil, fmt.Errorf("failed to create API key: %w", err)
 	}
-
 	// Return the API key with the actual key value (only shown once)
 	apiKey.KeyHash = fullAPIKey // Temporarily set for return
 	s.logger.Info("API key created",
 		zap.String("user_id", userID.String()),
 		zap.String("key_id", keyID.String()),
-		zap.String("name", name),
+		zap.String("name", cleanName), // Use sanitized name in logging
 	)
 
 	return apiKey, nil

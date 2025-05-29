@@ -14,6 +14,7 @@ import (
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -122,10 +123,189 @@ func toAPIOrder(o *model2.Order) *models.Order {
 
 // PlaceOrder places an order
 func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
+	// 1. Input validation and sanitization
+	if order == nil {
+		return nil, fmt.Errorf("order cannot be nil")
+	}
+
+	// Validate and sanitize symbol/trading pair
+	if order.Symbol == "" {
+		return nil, fmt.Errorf("trading symbol is required")
+	}
+
+	// Check for malicious content in symbol
+	if validation.ContainsSQLInjection(order.Symbol) || validation.ContainsXSS(order.Symbol) {
+		s.logger.Warn("Malicious content detected in trading symbol",
+			zap.String("symbol", order.Symbol),
+			zap.String("user_id", order.UserID.String()))
+		return nil, fmt.Errorf("invalid trading symbol")
+	}
+
+	// Sanitize and validate symbol
+	cleanSymbol := validation.SanitizeInput(order.Symbol)
+	if !validation.IsValidTradingPair(cleanSymbol) {
+		return nil, fmt.Errorf("invalid trading pair format")
+	}
+	order.Symbol = cleanSymbol
+
+	// Validate user ID
+	if order.UserID == uuid.Nil {
+		return nil, fmt.Errorf("user ID is required")
+	}
+
+	// Validate and sanitize side
+	if order.Side == "" {
+		return nil, fmt.Errorf("order side is required")
+	}
+
+	if validation.ContainsSQLInjection(order.Side) || validation.ContainsXSS(order.Side) {
+		s.logger.Warn("Malicious content detected in order side",
+			zap.String("side", order.Side),
+			zap.String("user_id", order.UserID.String()))
+		return nil, fmt.Errorf("invalid order side")
+	}
+
+	cleanSide := strings.ToUpper(validation.SanitizeInput(order.Side))
+	if cleanSide != "BUY" && cleanSide != "SELL" {
+		return nil, fmt.Errorf("order side must be 'buy' or 'sell'")
+	}
+	order.Side = cleanSide
+
+	// Validate and sanitize order type
+	if order.Type == "" {
+		return nil, fmt.Errorf("order type is required")
+	}
+
+	if validation.ContainsSQLInjection(order.Type) || validation.ContainsXSS(order.Type) {
+		s.logger.Warn("Malicious content detected in order type",
+			zap.String("type", order.Type),
+			zap.String("user_id", order.UserID.String()))
+		return nil, fmt.Errorf("invalid order type")
+	}
+
+	cleanType := strings.ToUpper(validation.SanitizeInput(order.Type))
+	validTypes := map[string]bool{
+		"LIMIT": true, "MARKET": true, "STOP_LIMIT": true,
+		"IOC": true, "FOK": true, "GTD": true,
+	}
+	if !validTypes[cleanType] {
+		return nil, fmt.Errorf("unsupported order type: %s", cleanType)
+	}
+	order.Type = cleanType
+
+	// Validate quantity
+	if order.Quantity <= 0 {
+		return nil, fmt.Errorf("order quantity must be positive")
+	}
+	if order.Quantity > 1000000 { // 1M quantity limit
+		return nil, fmt.Errorf("order quantity exceeds maximum limit of 1,000,000")
+	}
+
+	// Validate price for limit orders
+	if (cleanType == "LIMIT" || cleanType == "STOP_LIMIT") && order.Price <= 0 {
+		return nil, fmt.Errorf("price must be positive for limit orders")
+	}
+	if order.Price > 1000000000 { // 1B price limit
+		return nil, fmt.Errorf("order price exceeds maximum limit")
+	}
+
+	// Validate time in force
+	if order.TimeInForce != "" {
+		if validation.ContainsSQLInjection(order.TimeInForce) || validation.ContainsXSS(order.TimeInForce) {
+			s.logger.Warn("Malicious content detected in time in force",
+				zap.String("time_in_force", order.TimeInForce),
+				zap.String("user_id", order.UserID.String()))
+			return nil, fmt.Errorf("invalid time in force")
+		}
+
+		cleanTIF := strings.ToUpper(validation.SanitizeInput(order.TimeInForce))
+		validTIF := map[string]bool{"GTC": true, "IOC": true, "FOK": true, "GTD": true}
+		if !validTIF[cleanTIF] {
+			return nil, fmt.Errorf("unsupported time in force: %s", cleanTIF)
+		}
+		order.TimeInForce = cleanTIF
+	} else {
+		order.TimeInForce = "GTC" // Default to Good Till Cancelled
+	}
+
+	// Rate limiting for order placement
+	// Note: Rate limiter would need to be added to service struct
+	// userKey := fmt.Sprintf("order_placement:%s", order.UserID.String())
+	// Allow 100 orders per minute per user
+
+	// 2. Business logic validation - check funds availability
+	if cleanSide == "BUY" {
+		// For buy orders, check quote currency balance
+		quoteCurrency := "USD" // This should be extracted from symbol properly
+		if len(cleanSymbol) > 3 {
+			quoteCurrency = cleanSymbol[strings.Index(cleanSymbol, "/")+1:]
+		}
+
+		// Calculate required funds (price * quantity + fees)
+		requiredFunds := order.Price * order.Quantity * 1.001 // Add 0.1% for fees
+
+		// Check available balance through bookkeeper
+		if s.bookkeeperSvc != nil {
+			account, err := s.bookkeeperSvc.GetAccount(ctx, order.UserID.String(), quoteCurrency)
+			if err != nil {
+				s.logger.Error("Failed to get account", zap.Error(err))
+				return nil, fmt.Errorf("failed to verify funds")
+			}
+
+			if account.Available < requiredFunds {
+				return nil, fmt.Errorf("insufficient funds: required %.8f %s, available %.8f %s",
+					requiredFunds, quoteCurrency, account.Available, quoteCurrency)
+			}
+		}
+	} else {
+		// For sell orders, check base currency balance
+		baseCurrency := "BTC" // This should be extracted from symbol properly
+		if strings.Contains(cleanSymbol, "/") {
+			baseCurrency = cleanSymbol[:strings.Index(cleanSymbol, "/")]
+		} else if len(cleanSymbol) >= 6 {
+			baseCurrency = cleanSymbol[:3]
+		}
+
+		if s.bookkeeperSvc != nil {
+			account, err := s.bookkeeperSvc.GetAccount(ctx, order.UserID.String(), baseCurrency)
+			if err != nil {
+				s.logger.Error("Failed to get account", zap.Error(err))
+				return nil, fmt.Errorf("failed to verify funds")
+			}
+
+			if account.Available < order.Quantity {
+				return nil, fmt.Errorf("insufficient funds: required %.8f %s, available %.8f %s",
+					order.Quantity, baseCurrency, account.Available, baseCurrency)
+			}
+		}
+	}
+
+	// 3. Generate order ID and set initial status
 	order.ID = uuid.New()
-	order.Status = "filled"
+	order.Status = "NEW"
+	order.CreatedAt = time.Now()
+	order.UpdatedAt = time.Now()
+
+	// 4. Convert to internal model and process through engine
 	modelOrder := toModelOrder(order)
+	if modelOrder == nil {
+		return nil, fmt.Errorf("failed to convert order to internal model")
+	}
+
+	// Log order placement for audit
+	s.logger.Info("Processing order placement",
+		zap.String("order_id", order.ID.String()),
+		zap.String("user_id", order.UserID.String()),
+		zap.String("symbol", order.Symbol),
+		zap.String("side", order.Side),
+		zap.String("type", order.Type),
+		zap.Float64("price", order.Price),
+		zap.Float64("quantity", order.Quantity))
+
+	// 5. Store in test order store (stub - replace with proper engine processing)
 	testOrderStore[order.ID.String()] = modelOrder
+	order.Status = "OPEN" // Update status after successful processing
+
 	return order, nil
 }
 

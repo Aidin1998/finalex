@@ -2,11 +2,14 @@ package fiat
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -274,18 +277,140 @@ func (s *Service) FailWithdrawal(ctx context.Context, transactionID string) erro
 
 // isSupportedFiatCurrency returns true if the currency is supported
 func isSupportedFiatCurrency(currency string) bool {
-	// TODO: Add actual currency validation
-	return currency != "" // support any non-empty currency
+	supportedCurrencies := map[string]bool{
+		"USD": true, "EUR": true, "GBP": true, "JPY": true, "CAD": true,
+		"AUD": true, "CHF": true, "CNY": true, "SEK": true, "NZD": true,
+		"MXN": true, "SGD": true, "HKD": true, "NOK": true, "TRY": true,
+		"RUB": true, "INR": true, "BRL": true, "ZAR": true, "KRW": true,
+	}
+
+	// Validate and sanitize currency code
+	if err := validation.ValidateCurrency(currency); err != nil {
+		return false
+	}
+
+	return supportedCurrencies[strings.ToUpper(currency)]
 }
 
 // isSupportedProvider returns true if the provider is supported
 func isSupportedProvider(provider string) bool {
-	// TODO: Add actual provider validation
-	return provider != "" // support any non-empty provider
+	supportedProviders := map[string]bool{
+		"stripe":    true,
+		"plaid":     true,
+		"dwolla":    true,
+		"wise":      true,
+		"revolut":   true,
+		"paypal":    true,
+		"adyen":     true,
+		"checkout":  true,
+		"square":    true,
+		"braintree": true,
+	}
+
+	// Validate and sanitize provider name
+	sanitized := validation.SanitizeInput(provider)
+	if len(sanitized) == 0 || len(sanitized) > 50 {
+		return false
+	}
+
+	// Check for SQL injection and XSS
+	if validation.ContainsSQLInjection(provider) || validation.ContainsXSS(provider) {
+		return false
+	}
+
+	return supportedProviders[strings.ToLower(sanitized)]
 }
 
 // validateBankDetails validates bank details map
 func validateBankDetails(details map[string]interface{}) error {
-	// TODO: Add actual validation logic
+	if details == nil {
+		return errors.New("bank details cannot be nil")
+	}
+
+	// Required fields
+	requiredFields := []string{"account_number", "routing_number", "account_type", "bank_name"}
+	for _, field := range requiredFields {
+		if _, exists := details[field]; !exists {
+			return fmt.Errorf("required field '%s' is missing", field)
+		}
+	}
+
+	// Validate account number
+	if accountNum, ok := details["account_number"].(string); ok {
+		if err := validation.ValidateBankAccount(accountNum); err != nil {
+			return fmt.Errorf("invalid account number: %v", err)
+		}
+	} else {
+		return errors.New("account_number must be a string")
+	}
+
+	// Validate routing number
+	if routingNum, ok := details["routing_number"].(string); ok {
+		if err := validation.ValidateRoutingNumber(routingNum); err != nil {
+			return fmt.Errorf("invalid routing number: %v", err)
+		}
+	} else {
+		return errors.New("routing_number must be a string")
+	}
+
+	// Validate account type
+	if accountType, ok := details["account_type"].(string); ok {
+		validTypes := map[string]bool{"checking": true, "savings": true, "business": true}
+		sanitized := validation.SanitizeInput(accountType)
+		if !validTypes[strings.ToLower(sanitized)] {
+			return errors.New("account_type must be 'checking', 'savings', or 'business'")
+		}
+	} else {
+		return errors.New("account_type must be a string")
+	}
+
+	// Validate bank name
+	if bankName, ok := details["bank_name"].(string); ok {
+		sanitized := validation.SanitizeInput(bankName)
+		if len(sanitized) == 0 || len(sanitized) > 100 {
+			return errors.New("bank_name must be between 1 and 100 characters")
+		}
+
+		// Check for malicious content
+		if validation.ContainsSQLInjection(bankName) || validation.ContainsXSS(bankName) {
+			return errors.New("bank_name contains invalid characters")
+		}
+	} else {
+		return errors.New("bank_name must be a string")
+	}
+
+	// Validate optional IBAN if provided
+	if iban, exists := details["iban"]; exists {
+		if ibanStr, ok := iban.(string); ok && ibanStr != "" {
+			if err := validation.ValidateIBAN(ibanStr); err != nil {
+				return fmt.Errorf("invalid IBAN: %v", err)
+			}
+		}
+	}
+
+	// Validate optional BIC if provided
+	if bic, exists := details["bic"]; exists {
+		if bicStr, ok := bic.(string); ok && bicStr != "" {
+			if err := validation.ValidateBIC(bicStr); err != nil {
+				return fmt.Errorf("invalid BIC: %v", err)
+			}
+		}
+	}
+
+	// Validate optional beneficiary name
+	if beneficiary, exists := details["beneficiary_name"]; exists {
+		if beneficiaryStr, ok := beneficiary.(string); ok {
+			sanitized := validation.SanitizeInput(beneficiaryStr)
+			if len(sanitized) == 0 || len(sanitized) > 100 {
+				return errors.New("beneficiary_name must be between 1 and 100 characters")
+			}
+
+			// Check for malicious content
+			if validation.ContainsSQLInjection(beneficiaryStr) || validation.ContainsXSS(beneficiaryStr) {
+				return errors.New("beneficiary_name contains invalid characters")
+			}
+		}
+	}
+
 	return nil
 }

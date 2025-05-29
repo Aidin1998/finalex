@@ -50,11 +50,11 @@ func NewTieredRateLimiterWithConfig(redisClient *redis.Client, logger *zap.Logge
 
 // EndpointConfig defines rate limiting configuration for an endpoint
 type EndpointConfig struct {
-	Name           string
-	RequiresAuth   bool
-	UserRateType   string // api_calls, orders, trades, withdrawals, login_attempts
-	IPRateLimit    IPRateLimit
-	CustomLimits   map[models.UserTier]int // Override default tier limits if needed
+	Name         string
+	RequiresAuth bool
+	UserRateType string // api_calls, orders, trades, withdrawals, login_attempts
+	IPRateLimit  IPRateLimit
+	CustomLimits map[models.UserTier]int // Override default tier limits if needed
 }
 
 // IPRateLimit defines IP-based rate limiting
@@ -66,11 +66,11 @@ type IPRateLimit struct {
 
 // RateLimitResult contains the result of a rate limit check
 type RateLimitResult struct {
-	Allowed       bool                 `json:"allowed"`
-	UserLimit     *models.RateLimitInfo `json:"user_limit,omitempty"`
-	IPLimit       *models.RateLimitInfo `json:"ip_limit,omitempty"`
-	RetryAfter    *time.Duration       `json:"retry_after,omitempty"`
-	LimitType     string               `json:"limit_type,omitempty"` // "user", "ip", "both"
+	Allowed    bool                  `json:"allowed"`
+	UserLimit  *models.RateLimitInfo `json:"user_limit,omitempty"`
+	IPLimit    *models.RateLimitInfo `json:"ip_limit,omitempty"`
+	RetryAfter *time.Duration        `json:"retry_after,omitempty"`
+	LimitType  string                `json:"limit_type,omitempty"` // "user", "ip", "both"
 }
 
 // Default endpoint configurations
@@ -103,7 +103,7 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 			Window:            time.Minute,
 		},
 	},
-	
+
 	// Authentication endpoints
 	"POST:/api/v1/identities/login": {
 		Name:         "login",
@@ -124,7 +124,7 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 			Window:            time.Minute,
 		},
 	},
-	
+
 	// Trading endpoints
 	"POST:/api/v1/trading/orders": {
 		Name:         "place_order",
@@ -156,7 +156,7 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 			Window:            time.Minute,
 		},
 	},
-	
+
 	// Account endpoints
 	"GET:/api/v1/accounts": {
 		Name:         "get_accounts",
@@ -168,7 +168,7 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 			Window:            time.Minute,
 		},
 	},
-	
+
 	// Fiat endpoints
 	"POST:/api/v1/fiat/withdraw": {
 		Name:         "fiat_withdraw",
@@ -180,7 +180,7 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 			Window:            time.Minute,
 		},
 	},
-	
+
 	// Default for unmatched endpoints
 	"*": {
 		Name:         "default",
@@ -198,17 +198,17 @@ var defaultEndpointConfigs = map[string]EndpointConfig{
 func (trl *TieredRateLimiter) CheckRateLimit(ctx context.Context, userID, endpoint, clientIP string) (*RateLimitResult, error) {
 	// Get endpoint configuration
 	config := trl.getEndpointConfig(endpoint)
-	
+
 	result := &RateLimitResult{
 		Allowed: true,
 	}
-	
+
 	// Check IP rate limit first
 	ipAllowed, ipInfo, err := trl.checkIPRateLimit(ctx, clientIP, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check IP rate limit: %w", err)
 	}
-	
+
 	result.IPLimit = ipInfo
 	if !ipAllowed {
 		result.Allowed = false
@@ -218,14 +218,14 @@ func (trl *TieredRateLimiter) CheckRateLimit(ctx context.Context, userID, endpoi
 			result.RetryAfter = &retryAfter
 		}
 	}
-	
+
 	// Check user rate limit if authentication is required
 	if config.RequiresAuth && userID != "" {
 		userAllowed, userInfo, err := trl.checkUserRateLimit(ctx, userID, config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check user rate limit: %w", err)
 		}
-		
+
 		result.UserLimit = userInfo
 		if !userAllowed {
 			result.Allowed = false
@@ -234,7 +234,7 @@ func (trl *TieredRateLimiter) CheckRateLimit(ctx context.Context, userID, endpoi
 			} else {
 				result.LimitType = "user"
 			}
-			
+
 			if userInfo != nil && userInfo.ResetAt.After(time.Now()) {
 				userRetryAfter := time.Until(userInfo.ResetAt)
 				if result.RetryAfter == nil || userRetryAfter > *result.RetryAfter {
@@ -243,7 +243,7 @@ func (trl *TieredRateLimiter) CheckRateLimit(ctx context.Context, userID, endpoi
 			}
 		}
 	}
-	
+
 	return result, nil
 }
 
@@ -252,25 +252,25 @@ func (trl *TieredRateLimiter) checkIPRateLimit(ctx context.Context, clientIP str
 	if config.IPRateLimit.RequestsPerMinute <= 0 {
 		return true, nil, nil
 	}
-	
+
 	// Normalize IP (remove port if present)
 	if host, _, err := net.SplitHostPort(clientIP); err == nil {
 		clientIP = host
 	}
-	
+
 	key := fmt.Sprintf("%s:ip_rate_limit:%s:%s", trl.config.RedisKeyPrefix, clientIP, config.Name)
 	limiter := NewAdvancedRateLimiter(trl.redisClient)
-	
+
 	allowed, err := limiter.Allow(ctx, key, config.IPRateLimit.RequestsPerMinute, config.IPRateLimit.Window)
 	if err != nil {
 		return false, nil, err
 	}
-	
+
 	info, err := limiter.GetRateLimitInfo(ctx, key, config.IPRateLimit.RequestsPerMinute, config.IPRateLimit.Window)
 	if err != nil {
 		return allowed, nil, err
 	}
-	
+
 	return allowed, info, nil
 }
 
@@ -279,26 +279,26 @@ func (trl *TieredRateLimiter) checkUserRateLimit(ctx context.Context, userID str
 	if config.UserRateType == "" {
 		return true, nil, nil
 	}
-	
+
 	// Get user information to determine tier
 	user, err := trl.userService.GetUserByID(ctx, userID)
 	if err != nil {
 		trl.logger.Warn("Failed to get user for rate limiting, using basic tier", zap.String("user_id", userID), zap.Error(err))
 		user = &models.User{Tier: string(models.TierBasic)}
 	}
-	
+
 	userTier := models.UserTier(user.Tier)
 	if userTier == "" {
 		userTier = models.TierBasic
 	}
-	
+
 	// Get effective tier limits (considering emergency mode)
 	tierLimits := trl.config.GetEffectiveLimits(userTier)
-	
+
 	// Get the specific limit for this rate type
 	var limit int
 	var window time.Duration
-	
+
 	// Check if there's a custom limit for this tier and endpoint
 	if customLimit, exists := config.CustomLimits[userTier]; exists {
 		limit = customLimit
@@ -326,24 +326,24 @@ func (trl *TieredRateLimiter) checkUserRateLimit(ctx context.Context, userID str
 			window = time.Minute
 		}
 	}
-	
+
 	if limit <= 0 {
 		return true, nil, nil
 	}
-	
+
 	key := fmt.Sprintf("%s:user_rate_limit:%s:%s", trl.config.RedisKeyPrefix, userID, config.UserRateType)
 	limiter := NewAdvancedRateLimiter(trl.redisClient)
-	
+
 	allowed, err := limiter.Allow(ctx, key, limit, window)
 	if err != nil {
 		return false, nil, err
 	}
-	
+
 	info, err := limiter.GetRateLimitInfo(ctx, key, limit, window)
 	if err != nil {
 		return allowed, nil, err
 	}
-	
+
 	return allowed, info, nil
 }
 
@@ -362,31 +362,31 @@ func (trl *TieredRateLimiter) getEndpointConfig(endpoint string) EndpointConfig 
 			},
 		}
 	}
-	
+
 	// Try exact match first from config
 	if config, exists := trl.config.EndpointConfigs[endpoint]; exists {
 		return config
 	}
-	
+
 	// Try wildcard matches from config
 	for pattern, config := range trl.config.EndpointConfigs {
 		if trl.matchEndpoint(pattern, endpoint) {
 			return config
 		}
 	}
-	
+
 	// Fall back to default endpoint configs
 	if config, exists := defaultEndpointConfigs[endpoint]; exists {
 		return config
 	}
-	
+
 	// Try wildcard matches in default configs
 	for pattern, config := range defaultEndpointConfigs {
 		if trl.matchEndpoint(pattern, endpoint) {
 			return config
 		}
 	}
-	
+
 	// Return default config with default IP limits
 	return EndpointConfig{
 		Name:         "default",
@@ -401,13 +401,13 @@ func (trl *TieredRateLimiter) matchEndpoint(pattern, endpoint string) bool {
 	if pattern == "*" {
 		return true
 	}
-	
+
 	if strings.Contains(pattern, "*") {
 		// Simple wildcard matching
 		prefix := strings.Split(pattern, "*")[0]
 		return strings.HasPrefix(endpoint, prefix)
 	}
-	
+
 	return pattern == endpoint
 }
 
@@ -415,10 +415,10 @@ func (trl *TieredRateLimiter) matchEndpoint(pattern, endpoint string) bool {
 func (trl *TieredRateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
-		
+
 		// Get client IP
 		clientIP := c.ClientIP()
-		
+
 		// Get user ID from context (set by auth middleware)
 		userID := ""
 		if userIDVal, exists := c.Get("userID"); exists {
@@ -426,10 +426,10 @@ func (trl *TieredRateLimiter) Middleware() gin.HandlerFunc {
 				userID = uid
 			}
 		}
-		
+
 		// Build endpoint key
 		endpoint := fmt.Sprintf("%s:%s", c.Request.Method, c.Request.URL.Path)
-		
+
 		// Check rate limits
 		result, err := trl.CheckRateLimit(ctx, userID, endpoint, clientIP)
 		if err != nil {
@@ -438,10 +438,10 @@ func (trl *TieredRateLimiter) Middleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		
+
 		// Set rate limit headers
 		trl.setRateLimitHeaders(c, result)
-		
+
 		// Check if request is allowed
 		if !result.Allowed {
 			status := http.StatusTooManyRequests
@@ -449,17 +449,17 @@ func (trl *TieredRateLimiter) Middleware() gin.HandlerFunc {
 				"error":      "Rate limit exceeded",
 				"limit_type": result.LimitType,
 			}
-			
+
 			if result.RetryAfter != nil {
 				c.Header("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())))
 				response["retry_after_seconds"] = int(result.RetryAfter.Seconds())
 			}
-			
+
 			c.JSON(status, response)
 			c.Abort()
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -471,7 +471,7 @@ func (trl *TieredRateLimiter) setRateLimitHeaders(c *gin.Context, result *RateLi
 		c.Header("X-RateLimit-User-Remaining", strconv.Itoa(result.UserLimit.Remaining))
 		c.Header("X-RateLimit-User-Reset", strconv.FormatInt(result.UserLimit.ResetAt.Unix(), 10))
 	}
-	
+
 	if result.IPLimit != nil {
 		c.Header("X-RateLimit-IP-Limit", strconv.Itoa(result.IPLimit.Limit))
 		c.Header("X-RateLimit-IP-Remaining", strconv.Itoa(result.IPLimit.Remaining))
@@ -515,47 +515,47 @@ func (trl *TieredRateLimiter) GetUserRateLimitStatus(ctx context.Context, userID
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
-	
+
 	userTier := models.UserTier(user.Tier)
 	if userTier == "" {
 		userTier = models.TierBasic
 	}
-	
+
 	tierLimits := trl.config.GetEffectiveLimits(userTier)
 	limiter := NewAdvancedRateLimiter(trl.redisClient)
-	
+
 	status := make(map[string]*models.RateLimitInfo)
-	
+
 	// Check API calls
 	key := fmt.Sprintf("%s:user_rate_limit:%s:api_calls", trl.config.RedisKeyPrefix, userID)
 	if info, err := limiter.GetRateLimitInfo(ctx, key, tierLimits.APICallsPerMinute, time.Minute); err == nil {
 		status["api_calls"] = info
 	}
-	
+
 	// Check orders
 	key = fmt.Sprintf("%s:user_rate_limit:%s:orders", trl.config.RedisKeyPrefix, userID)
 	if info, err := limiter.GetRateLimitInfo(ctx, key, tierLimits.OrdersPerMinute, time.Minute); err == nil {
 		status["orders"] = info
 	}
-	
+
 	// Check trades
 	key = fmt.Sprintf("%s:user_rate_limit:%s:trades", trl.config.RedisKeyPrefix, userID)
 	if info, err := limiter.GetRateLimitInfo(ctx, key, tierLimits.TradesPerMinute, time.Minute); err == nil {
 		status["trades"] = info
 	}
-	
+
 	// Check withdrawals
 	key = fmt.Sprintf("%s:user_rate_limit:%s:withdrawals", trl.config.RedisKeyPrefix, userID)
 	if info, err := limiter.GetRateLimitInfo(ctx, key, tierLimits.WithdrawalsPerDay, 24*time.Hour); err == nil {
 		status["withdrawals"] = info
 	}
-	
+
 	// Check login attempts
 	key = fmt.Sprintf("%s:user_rate_limit:%s:login_attempts", trl.config.RedisKeyPrefix, userID)
 	if info, err := limiter.GetRateLimitInfo(ctx, key, tierLimits.LoginAttemptsPerHour, time.Hour); err == nil {
 		status["login_attempts"] = info
 	}
-	
+
 	return status, nil
 }
 
@@ -565,10 +565,10 @@ func (trl *TieredRateLimiter) GetIPRateLimitStatus(ctx context.Context, clientIP
 	if host, _, err := net.SplitHostPort(clientIP); err == nil {
 		clientIP = host
 	}
-	
+
 	limiter := NewAdvancedRateLimiter(trl.redisClient)
 	status := make(map[string]*models.RateLimitInfo)
-	
+
 	// Check common endpoint patterns
 	endpoints := []struct {
 		name   string
@@ -578,7 +578,7 @@ func (trl *TieredRateLimiter) GetIPRateLimitStatus(ctx context.Context, clientIP
 		{"trading_pairs", trl.config.EndpointConfigs["GET:/api/v1/trading/pairs"]},
 		{"login", trl.config.EndpointConfigs["POST:/api/v1/identities/login"]},
 	}
-	
+
 	for _, endpoint := range endpoints {
 		if endpoint.config.IPRateLimit.RequestsPerMinute > 0 {
 			key := fmt.Sprintf("%s:ip_rate_limit:%s:%s", trl.config.RedisKeyPrefix, clientIP, endpoint.config.Name)
@@ -587,7 +587,7 @@ func (trl *TieredRateLimiter) GetIPRateLimitStatus(ctx context.Context, clientIP
 			}
 		}
 	}
-	
+
 	return status, nil
 }
 
@@ -598,7 +598,7 @@ func (trl *TieredRateLimiter) ResetUserRateLimit(ctx context.Context, userID, ra
 	if err != nil {
 		return fmt.Errorf("failed to reset user rate limit: %w", err)
 	}
-	
+
 	trl.logger.Info("User rate limit reset", zap.String("user_id", userID), zap.String("rate_type", rateType))
 	return nil
 }
@@ -609,13 +609,13 @@ func (trl *TieredRateLimiter) ResetIPRateLimit(ctx context.Context, clientIP, en
 	if host, _, err := net.SplitHostPort(clientIP); err == nil {
 		clientIP = host
 	}
-	
+
 	key := fmt.Sprintf("%s:ip_rate_limit:%s:%s", trl.config.RedisKeyPrefix, clientIP, endpoint)
 	err := trl.redisClient.Del(ctx, key).Err()
 	if err != nil {
 		return fmt.Errorf("failed to reset IP rate limit: %w", err)
 	}
-	
+
 	trl.logger.Info("IP rate limit reset", zap.String("client_ip", clientIP), zap.String("endpoint", endpoint))
 	return nil
 }
@@ -627,7 +627,7 @@ func (trl *TieredRateLimiter) CleanupExpiredData(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired data: %w", err)
 	}
-	
+
 	trl.logger.Info("Rate limit data cleanup completed")
 	return nil
 }

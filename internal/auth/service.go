@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -338,29 +339,88 @@ func (s *Service) RevokeAllTokens(ctx context.Context, userID uuid.UUID) error {
 
 // AuthenticateUser authenticates a user with email and password
 func (s *Service) AuthenticateUser(ctx context.Context, email, password string) (*TokenPair, *models.User, error) {
-	// Find user by email
+	// Validate email input
+	if err := validation.ValidateEmail(email); err != nil {
+		s.logger.Warn("Invalid email provided during authentication",
+			zap.String("error", err.Error()),
+			zap.String("raw_email", email))
+		return nil, nil, fmt.Errorf("invalid email format")
+	}
+
+	// Sanitize email
+	cleanEmail := validation.SanitizeInput(email)
+	cleanEmail = strings.TrimSpace(strings.ToLower(cleanEmail))
+
+	// Validate password (basic checks to prevent malicious input)
+	if password == "" {
+		return nil, nil, fmt.Errorf("password cannot be empty")
+	}
+
+	if len(password) > 128 {
+		return nil, nil, fmt.Errorf("password too long")
+	}
+
+	// Check for SQL injection and XSS patterns in password
+	if validation.ContainsSQLInjection(password) || validation.ContainsXSS(password) {
+		s.logger.Warn("Malicious content detected in password during authentication",
+			zap.String("email", cleanEmail))
+		return nil, nil, fmt.Errorf("invalid credentials")
+	}
+
+	// Apply rate limiting for authentication attempts
+	if s.rateLimiter != nil {
+		allowed, err := s.rateLimiter.Allow(ctx, fmt.Sprintf("auth:%s", cleanEmail), 5, time.Hour)
+		if err != nil {
+			s.logger.Error("Rate limiter error during authentication", zap.Error(err))
+		} else if !allowed {
+			s.logger.Warn("Authentication rate limit exceeded",
+				zap.String("email", cleanEmail))
+			return nil, nil, fmt.Errorf("too many authentication attempts, please try again later")
+		}
+	}
+
+	// Find user by email using parameterized query
 	var user models.User
-	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+	if err := s.db.Where("email = ?", cleanEmail).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			s.logger.Warn("Authentication attempt with non-existent email",
+				zap.String("email", cleanEmail))
 			return nil, nil, fmt.Errorf("invalid credentials")
 		}
-		return nil, nil, fmt.Errorf("failed to find user: %w", err)
+		s.logger.Error("Database error during user lookup",
+			zap.Error(err),
+			zap.String("email", cleanEmail))
+		return nil, nil, fmt.Errorf("authentication failed")
 	}
 
 	// Check password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		s.logger.Warn("Failed password verification",
+			zap.String("email", cleanEmail),
+			zap.String("user_id", user.ID.String()))
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
+
+	// Log successful authentication
+	s.logger.Info("Successful authentication",
+		zap.String("email", cleanEmail),
+		zap.String("user_id", user.ID.String()))
 
 	// Create session
 	session, err := s.CreateSession(ctx, user.ID, "")
 	if err != nil {
+		s.logger.Error("Failed to create session after authentication",
+			zap.Error(err),
+			zap.String("user_id", user.ID.String()))
 		return nil, nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
 	// Generate token pair
 	tokenPair, err := s.generateTokenPair(user, session.ID)
 	if err != nil {
+		s.logger.Error("Failed to generate tokens after authentication",
+			zap.Error(err),
+			zap.String("user_id", user.ID.String()))
 		return nil, nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
 

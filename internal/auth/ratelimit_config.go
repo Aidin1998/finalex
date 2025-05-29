@@ -9,23 +9,23 @@ import (
 // RateLimitConfig represents configurable rate limiting settings
 type RateLimitConfig struct {
 	// Global settings
-	Enabled                bool          `json:"enabled" yaml:"enabled"`
-	RedisKeyPrefix         string        `json:"redis_key_prefix" yaml:"redis_key_prefix"`
-	CleanupInterval        time.Duration `json:"cleanup_interval" yaml:"cleanup_interval"`
-	MaxDataAge             time.Duration `json:"max_data_age" yaml:"max_data_age"`
-	
+	Enabled         bool          `json:"enabled" yaml:"enabled"`
+	RedisKeyPrefix  string        `json:"redis_key_prefix" yaml:"redis_key_prefix"`
+	CleanupInterval time.Duration `json:"cleanup_interval" yaml:"cleanup_interval"`
+	MaxDataAge      time.Duration `json:"max_data_age" yaml:"max_data_age"`
+
 	// Tier configurations
-	TierConfigs            map[models.UserTier]TierConfig `json:"tier_configs" yaml:"tier_configs"`
-	
+	TierConfigs map[models.UserTier]TierConfig `json:"tier_configs" yaml:"tier_configs"`
+
 	// Endpoint configurations
-	EndpointConfigs        map[string]EndpointConfig `json:"endpoint_configs" yaml:"endpoint_configs"`
-	
+	EndpointConfigs map[string]EndpointConfig `json:"endpoint_configs" yaml:"endpoint_configs"`
+
 	// Default IP rate limits
-	DefaultIPLimits        IPRateLimit `json:"default_ip_limits" yaml:"default_ip_limits"`
-	
+	DefaultIPLimits IPRateLimit `json:"default_ip_limits" yaml:"default_ip_limits"`
+
 	// Emergency settings
-	EmergencyMode          bool `json:"emergency_mode" yaml:"emergency_mode"`
-	EmergencyLimits        TierConfig `json:"emergency_limits" yaml:"emergency_limits"`
+	EmergencyMode   bool       `json:"emergency_mode" yaml:"emergency_mode"`
+	EmergencyLimits TierConfig `json:"emergency_limits" yaml:"emergency_limits"`
 }
 
 // TierConfig represents configuration for a user tier
@@ -40,11 +40,11 @@ type TierConfig struct {
 // GetDefaultRateLimitConfig returns the default rate limiting configuration
 func GetDefaultRateLimitConfig() *RateLimitConfig {
 	return &RateLimitConfig{
-		Enabled:        true,
-		RedisKeyPrefix: "pincex_rate_limit",
+		Enabled:         true,
+		RedisKeyPrefix:  "pincex_rate_limit",
 		CleanupInterval: 1 * time.Hour,
-		MaxDataAge:     7 * 24 * time.Hour, // 7 days
-		
+		MaxDataAge:      7 * 24 * time.Hour, // 7 days
+
 		TierConfigs: map[models.UserTier]TierConfig{
 			models.TierBasic: {
 				APICallsPerMinute:    10,
@@ -68,7 +68,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 				LoginAttemptsPerHour: 20,
 			},
 		},
-		
+
 		EndpointConfigs: map[string]EndpointConfig{
 			// Public endpoints
 			"GET:/api/v1/market/prices": {
@@ -98,7 +98,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					Window:            time.Minute,
 				},
 			},
-			
+
 			// Authentication endpoints
 			"POST:/api/v1/identities/login": {
 				Name:         "login",
@@ -119,7 +119,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					Window:            time.Minute,
 				},
 			},
-			
+
 			// Trading endpoints
 			"POST:/api/v1/trading/orders": {
 				Name:         "place_order",
@@ -151,7 +151,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					Window:            time.Minute,
 				},
 			},
-			
+
 			// Account endpoints
 			"GET:/api/v1/accounts": {
 				Name:         "get_accounts",
@@ -163,7 +163,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					Window:            time.Minute,
 				},
 			},
-			
+
 			// Fiat endpoints
 			"POST:/api/v1/fiat/withdraw": {
 				Name:         "fiat_withdraw",
@@ -175,7 +175,7 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					Window:            time.Minute,
 				},
 			},
-			
+
 			// Admin endpoints - stricter limits
 			"POST:/api/v1/admin/*": {
 				Name:         "admin_operations",
@@ -193,13 +193,13 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 				},
 			},
 		},
-		
+
 		DefaultIPLimits: IPRateLimit{
 			RequestsPerMinute: 20,
 			BurstLimit:        10,
 			Window:            time.Minute,
 		},
-		
+
 		EmergencyMode: false,
 		EmergencyLimits: TierConfig{
 			APICallsPerMinute:    1,
