@@ -24,7 +24,7 @@ func setupMarketfeedsTestDB(t *testing.T) *gorm.DB {
 func TestGetMarketPricesEmpty(t *testing.T) {
 	db := setupMarketfeedsTestDB(t)
 	logger := zap.NewNop() // Use a no-op logger
-	svc, err := marketfeeds.NewService(logger, db)
+	svc, err := marketfeeds.NewService(logger, db, nil)
 	assert.NoError(t, err)
 
 	// Start service to initialize internal state
@@ -43,7 +43,7 @@ func TestGetMarketPricesWithPair(t *testing.T) {
 	_ = db.Create(pair)
 
 	logger := zap.NewNop()
-	svc, err := marketfeeds.NewService(logger, db)
+	svc, err := marketfeeds.NewService(logger, db, nil)
 	assert.NoError(t, err)
 
 	err = svc.Start()

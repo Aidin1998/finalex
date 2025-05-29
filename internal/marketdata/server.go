@@ -124,11 +124,48 @@ func (h *Hub) Run() {
 					if len(batchs[shard]) > 0 {
 						batched := batchs[shard]
 						batchs[shard] = nil
+						// --- COALESCING LOGIC START ---
+						latestBySymbol := make(map[string][]byte)
+						for _, msg := range batched {
+							var parsed map[string]interface{}
+							if err := json.Unmarshal(msg, &parsed); err == nil {
+								typeVal, _ := parsed["type"].(string)
+								if typeVal == MsgOrderBook || typeVal == MsgOrderBookDelta {
+									// Try to extract symbol from data
+									if data, ok := parsed["data"].(map[string]interface{}); ok {
+										if symbol, ok := data["Symbol"].(string); ok {
+											latestBySymbol[symbol] = msg
+											continue
+										}
+									}
+									// Fallback: if data is just a symbol string (e.g., test server)
+									if symbol, ok := parsed["data"].(string); ok {
+										latestBySymbol[symbol] = msg
+										continue
+									}
+								}
+							}
+						}
+						// Compose final batch: all coalesced order book updates, plus all non-orderbook messages
+						finalBatch := make([][]byte, 0, len(latestBySymbol)+len(batched))
+						for _, msg := range latestBySymbol {
+							finalBatch = append(finalBatch, msg)
+						}
+						for _, msg := range batched {
+							var parsed map[string]interface{}
+							if err := json.Unmarshal(msg, &parsed); err == nil {
+								typeVal, _ := parsed["type"].(string)
+								if typeVal == MsgOrderBook || typeVal == MsgOrderBookDelta {
+									continue // already included
+								}
+							}
+							finalBatch = append(finalBatch, msg)
+						}
 						start := time.Now()
 						h.clients.Range(func(key, _ interface{}) bool {
 							client := key.(*Client)
 							select {
-							case client.send <- joinBatch(batched):
+							case client.send <- joinBatch(finalBatch):
 							default:
 								// Backpressure: drop or disconnect slow clients
 								close(client.send)
@@ -136,7 +173,7 @@ func (h *Hub) Run() {
 							}
 							return true
 						})
-						MarketDataMessages.Add(float64(len(batched)))
+						MarketDataMessages.Add(float64(len(finalBatch)))
 						MarketDataBroadcastLatency.Observe(time.Since(start).Seconds())
 					}
 				}

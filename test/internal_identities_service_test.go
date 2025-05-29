@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupTestDB(t *testing.T) *gorm.DB {
+func setupIdentitiesTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
 	assert.NoError(t, db.AutoMigrate(&models.User{}))
@@ -21,7 +21,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestRegisterAndLogin(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupIdentitiesTestDB(t)
 	logger := zap.NewNop()
 	svc, err := identities.NewService(logger, db)
 	assert.NoError(t, err)

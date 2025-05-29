@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupTestDB(t *testing.T) *gorm.DB {
+func setupTradingTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
 	// Migrate models
@@ -24,7 +24,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestTradingServicePlaceAndCancelOrder(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupTradingTestDB(t)
 	logger := zap.NewNop()
 
 	// Set up bookkeeper and initial account and funds
