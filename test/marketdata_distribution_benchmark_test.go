@@ -4,6 +4,7 @@
 package test
 
 import (
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -64,5 +65,25 @@ func BenchmarkMarketDataDistributionLatency(b *testing.B) {
 		}
 	}
 	avg := total / time.Duration(len(latencies))
-	b.Logf("Market data distribution latency: min=%v avg=%v max=%v samples=%d", min, avg, max, len(latencies))
+	p50 := percentile(latencies, 0.50)
+	p95 := percentile(latencies, 0.95)
+	p99 := percentile(latencies, 0.99)
+	tps := float64(len(latencies)) / runtimeLimit.Seconds()
+	b.Logf("Market data distribution latency: min=%v avg=%v max=%v p50=%v p95=%v p99=%v samples=%d", min, avg, max, p50, p95, p99, len(latencies))
+	b.Logf("TPS: %.2f, Total Time: %v", tps, runtimeLimit)
+	b.Logf("SUMMARY: samples=%d tps=%.2f avg_latency_ms=%.2f p95_latency_ms=%.2f", len(latencies), tps, avg.Seconds()*1000, p95.Seconds()*1000)
+}
+
+func percentile(latencies []time.Duration, p float64) time.Duration {
+	if len(latencies) == 0 {
+		return 0
+	}
+	sorted := make([]time.Duration, len(latencies))
+	copy(sorted, latencies)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	idx := int(float64(len(sorted))*p + 0.5)
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }

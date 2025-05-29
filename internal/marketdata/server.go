@@ -1,10 +1,12 @@
 package marketdata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,10 +79,26 @@ var (
 		Name: "marketdata_delta_messages_total",
 		Help: "Total number of delta-encoded market data messages broadcasted.",
 	})
+	MarketDataOutboundQueueLen = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "marketdata_outbound_queue_length",
+		Help: "Current length of the outbound jobs queue.",
+	})
+	MarketDataDroppedMessages = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "marketdata_dropped_messages_total",
+		Help: "Total number of dropped market data messages due to backpressure.",
+	})
+	MarketDataGoroutines = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "marketdata_goroutines",
+		Help: "Current number of goroutines in the market data server.",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(MarketDataConnections, MarketDataMessages, MarketDataBroadcastLatency, MarketDataBinaryMessages, MarketDataDeltaMessages)
+	prometheus.MustRegister(
+		MarketDataConnections, MarketDataMessages, MarketDataBroadcastLatency,
+		MarketDataBinaryMessages, MarketDataDeltaMessages,
+		MarketDataOutboundQueueLen, MarketDataDroppedMessages, MarketDataGoroutines,
+	)
 }
 
 func NewHub() *Hub {
@@ -117,6 +135,15 @@ func (h *Hub) Run() {
 	defer func() {
 		for _, t := range tickers {
 			t.Stop()
+		}
+	}()
+
+	// Start a goroutine to monitor goroutine count and outbound queue length
+	go func() {
+		for {
+			MarketDataGoroutines.Set(float64(runtime.NumGoroutine()))
+			MarketDataOutboundQueueLen.Set(float64(len(h.outboundJobs)))
+			time.Sleep(1 * time.Second)
 		}
 	}()
 
@@ -175,6 +202,7 @@ func (h *Hub) Run() {
 							case h.outboundJobs <- outboundJob{client: client, message: joinBatch(finalBatch)}:
 							default:
 								// Backpressure: drop or disconnect slow clients
+								MarketDataDroppedMessages.Inc()
 								close(client.send)
 								h.clients.Delete(client)
 							}
@@ -262,6 +290,17 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.register <- client
+	// --- Serve cached order book snapshot to new subscriber ---
+	symbol := r.URL.Query().Get("symbol")
+	if symbol != "" {
+		if jsonData, _, ok := GetCachedOrderBookSnapshot(symbol); ok {
+			select {
+			case client.send <- jsonData:
+			default:
+				// If client is slow, drop the snapshot
+			}
+		}
+	}
 	go client.writePump()
 	go client.readPump(h)
 }
@@ -316,11 +355,17 @@ func (h *Hub) startOutboundWorkers() {
 	for i := 0; i < outboundWorkerCount; i++ {
 		go func() {
 			for job := range jobs {
+				// --- Backpressure: if client write blocks or fails, disconnect client ---
 				job.client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				w, err := job.client.conn.NextWriter(websocket.TextMessage)
 				if err == nil {
-					w.Write(job.message)
+					_, err = w.Write(job.message)
 					w.Close()
+				}
+				if err != nil {
+					// Disconnect and clean up slow or dead client
+					close(job.client.send)
+					h.clients.Delete(job.client)
 				}
 			}
 		}()
@@ -366,12 +411,35 @@ func (h *Hub) BroadcastDeltaMarketData(data []byte) {
 	MarketDataDeltaMessages.Inc()
 }
 
+// --- Order Book Snapshot Cache for New Subscribers ---
+var (
+	orderBookJSONCache   sync.Map // symbol -> []byte
+	orderBookBinaryCache sync.Map // symbol -> []byte
+	orderBookBufferPool  = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
+)
+
+// CacheOrderBookSnapshot stores the latest encoded snapshot for a symbol
+func CacheOrderBookSnapshot(symbol string, jsonData, binaryData []byte) {
+	orderBookJSONCache.Store(symbol, jsonData)
+	orderBookBinaryCache.Store(symbol, binaryData)
+}
+
+// GetCachedOrderBookSnapshot returns the cached JSON and binary snapshot for a symbol
+func GetCachedOrderBookSnapshot(symbol string) (jsonData, binaryData []byte, ok bool) {
+	j, okj := orderBookJSONCache.Load(symbol)
+	b, okb := orderBookBinaryCache.Load(symbol)
+	if okj && okb {
+		return j.([]byte), b.([]byte), true
+	}
+	return nil, nil, false
+}
+
 // Add support for multi-format broadcast (JSON, binary, delta)
 func (h *Hub) BroadcastOrderBook(prev, curr *OrderBookSnapshot) {
 	// JSON broadcast (default)
 	msg := MarketDataMessage{Type: MsgOrderBook, Data: curr}
-	data, _ := json.Marshal(msg)
-	h.broadcastShards[0] <- data
+	jsonData, _ := json.Marshal(msg)
+	h.broadcastShards[0] <- jsonData
 	MarketDataMessages.Inc()
 	// Delta encoding
 	delta := ComputeDelta(prev, curr)
@@ -381,9 +449,12 @@ func (h *Hub) BroadcastOrderBook(prev, curr *OrderBookSnapshot) {
 		}
 	}
 	// Binary snapshot
-	if b, err := EncodeOrderBookSnapshot(curr); err == nil {
-		h.BroadcastBinaryMarketData(b)
+	binaryData, _ := EncodeOrderBookSnapshot(curr)
+	if binaryData != nil {
+		h.BroadcastBinaryMarketData(binaryData)
 	}
+	// Cache the latest encoded snapshots for new subscribers
+	CacheOrderBookSnapshot(curr.Symbol, jsonData, binaryData)
 	// FIX gateway broadcast (if enabled)
 	if fixGateway != nil {
 		_ = fixGateway.BroadcastMarketDataFIX(curr)

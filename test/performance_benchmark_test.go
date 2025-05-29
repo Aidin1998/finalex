@@ -6,6 +6,7 @@ package test
 import (
 	"context"
 	"net/url"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -53,12 +54,28 @@ func setupBenchmarkTradingService(b *testing.B) trading.TradingService {
 	return svc
 }
 
+func percentile(latencies []time.Duration, p float64) time.Duration {
+	if len(latencies) == 0 {
+		return 0
+	}
+	sorted := make([]time.Duration, len(latencies))
+	copy(sorted, latencies)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	idx := int(float64(len(sorted))*p + 0.5)
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
+
 func BenchmarkOrderPlacementThroughput(b *testing.B) {
 	svc := setupBenchmarkTradingService(b)
 	defer svc.Stop()
 	ctx := context.Background()
 	// Setup: create users, accounts, and trading pair
-	userCount := 100
+	userCount := 10000 // Increased user base for heavy load
+	ordersPerUser := 10
+	totalOrders := userCount * ordersPerUser
 	users := make([]string, userCount)
 	for i := 0; i < userCount; i++ {
 		userID := uuid.New().String()
@@ -79,29 +96,38 @@ func BenchmarkOrderPlacementThroughput(b *testing.B) {
 	b.ResetTimer()
 	var latencies []time.Duration
 	var mu sync.Mutex
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			userID := users[time.Now().UnixNano()%int64(userCount)]
-			order := &models.Order{
-				UserID:   uuid.MustParse(userID),
-				Symbol:   "USDUSD",
-				Side:     []string{"buy", "sell"}[time.Now().UnixNano()%2],
-				Type:     "limit",
-				Price:    float64(1 + time.Now().UnixNano()%100),
-				Quantity: float64(1 + time.Now().UnixNano()%10),
+	errCount := 0
+	start := time.Now()
+	wg := sync.WaitGroup{}
+	wg.Add(userCount)
+	for i := 0; i < userCount; i++ {
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < ordersPerUser; j++ {
+				order := &models.Order{
+					UserID:   uuid.MustParse(users[i]),
+					Symbol:   "USDUSD",
+					Side:     []string{"buy", "sell"}[time.Now().UnixNano()%2],
+					Type:     "limit",
+					Price:    float64(1 + time.Now().UnixNano()%100),
+					Quantity: float64(1 + time.Now().UnixNano()%10),
+				}
+				orderStart := time.Now()
+				_, err := svc.PlaceOrder(ctx, order)
+				latency := time.Since(orderStart)
+				mu.Lock()
+				latencies = append(latencies, latency)
+				if err != nil {
+					errCount++
+				}
+				mu.Unlock()
 			}
-			start := time.Now()
-			_, err := svc.PlaceOrder(ctx, order)
-			latency := time.Since(start)
-			if err != nil {
-				b.Errorf("order placement failed: %v", err)
-			}
-			mu.Lock()
-			latencies = append(latencies, latency)
-			mu.Unlock()
-		}
-	})
+		}(i)
+	}
+	wg.Wait()
+	totalTime := time.Since(start)
 	b.StopTimer()
+
 	// Report stats
 	var total time.Duration
 	min, max := time.Hour, time.Duration(0)
@@ -115,7 +141,15 @@ func BenchmarkOrderPlacementThroughput(b *testing.B) {
 		}
 	}
 	avg := total / time.Duration(len(latencies))
-	b.Logf("Order placement latency: min=%v avg=%v max=%v ops=%d", min, avg, max, len(latencies))
+	p50 := percentile(latencies, 0.50)
+	p95 := percentile(latencies, 0.95)
+	p99 := percentile(latencies, 0.99)
+	tps := float64(totalOrders) / totalTime.Seconds()
+	errorRate := float64(errCount) / float64(totalOrders) * 100
+	b.Logf("Order placement latency: min=%v avg=%v max=%v p50=%v p95=%v p99=%v ops=%d", min, avg, max, p50, p95, p99, len(latencies))
+	b.Logf("TPS: %.2f, Error Rate: %.2f%%, Total Time: %v", tps, errorRate, totalTime)
+	// Output summary for CI/CD and dashboards
+	b.Logf("SUMMARY: total_orders=%d tps=%.2f avg_latency_ms=%.2f p95_latency_ms=%.2f error_rate=%.2f%%", totalOrders, tps, avg.Seconds()*1000, p95.Seconds()*1000, errorRate)
 }
 
 // Benchmark WebSocket throughput and latency under load
