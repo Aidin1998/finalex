@@ -31,6 +31,7 @@ func (a *PriceFeedAdapter) GetLastPrice(pair string) (decimal.Decimal, error) {
 // Constants for Order types, sides, statuses, and time in force options
 const (
 	// Order types
+	OrderTypeUnknown   = "UNKNOWN"
 	OrderTypeLimit     = "LIMIT"
 	OrderTypeMarket    = "MARKET"
 	OrderTypeStopLimit = "STOP_LIMIT"
@@ -49,6 +50,7 @@ const (
 	OrderSideSell = "SELL"
 
 	// Order statuses
+	OrderStatusNew             = "NEW"
 	OrderStatusPendingNew      = "PENDING_NEW"
 	OrderStatusOpen            = "OPEN"
 	OrderStatusPartiallyFilled = "PARTIALLY_FILLED"
