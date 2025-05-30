@@ -28,9 +28,39 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
-	"github.com/tidwall/btree"
 )
+
+// TraceIDKey is the context key for trace ID propagation
+const TraceIDKey = "trace_id"
+
+// TraceIDFromContext extracts the trace ID from context, or generates one if missing
+func TraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(TraceIDKey); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return uuid.New().String()
+}
+
+// recordLatencyCheckpoint records a latency checkpoint with trace ID, stage, and timestamp
+func recordLatencyCheckpoint(ctx context.Context, logger *zap.Logger, stage string, extra map[string]interface{}) {
+	traceID := TraceIDFromContext(ctx)
+	ts := time.Now().UTC()
+	fields := []zap.Field{
+		zap.String("trace_id", traceID),
+		zap.String("stage", stage),
+		zap.Time("timestamp", ts),
+	}
+	for k, v := range extra {
+		fields = append(fields, zap.Any(k, v))
+	}
+	logger.Info("latency_checkpoint", fields...)
+	// TODO: Write to time-series DB (Prometheus/Tempo/Influx) here
+}
 
 // --- Efficient Serialization: Buffer Pool ---
 var marketDataBufferPool = sync.Pool{

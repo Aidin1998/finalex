@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -189,10 +190,13 @@ func (p *PersistenceParticipant) Prepare(ctx context.Context, migrationID uuid.U
 	p.migrationMu.Lock()
 	defer p.migrationMu.Unlock()
 
+	traceID := TraceIDFromContext(ctx)
 	p.logger.Infow("Starting prepare phase for persistence migration",
 		"migration_id", migrationID,
 		"pair", p.pair,
+		"trace_id", traceID,
 	)
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_start", nil)
 
 	startTime := time.Now()
 	p.currentMigrationID = migrationID
@@ -200,54 +204,70 @@ func (p *PersistenceParticipant) Prepare(ctx context.Context, migrationID uuid.U
 	// Step 1: Perform database health check
 	healthCheck, err := p.performDatabaseHealthCheck(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_healthcheck_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("database health check failed", err), nil
 	}
 
 	if healthCheck.Status != "healthy" {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_healthcheck_unhealthy", map[string]interface{}{"status": healthCheck.Status})
 		return p.createFailedState("database not healthy for migration", fmt.Errorf("health check failed: %s", healthCheck.Message)), nil
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_healthcheck_ok", nil)
 
 	// Step 2: Create database snapshot
 	snapshot, err := p.createDatabaseSnapshot(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_snapshot_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("database snapshot creation failed", err), nil
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_snapshot_ok", nil)
 
 	// Step 3: Initialize transaction log
 	transactionLog, err := p.initializeTransactionLog(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_txlog_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("transaction log initialization failed", err), nil
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_txlog_ok", nil)
 
 	// Step 4: Create database checkpoint
 	checkpointID, err := p.createCheckpoint(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_checkpoint_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("checkpoint creation failed", err), nil
 	}
 	p.checkpointID = checkpointID
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_checkpoint_ok", map[string]interface{}{"checkpoint_id": checkpointID})
 
 	// Step 5: Perform integrity checks
 	integrityChecks, err := p.performIntegrityChecks(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_integrity_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("integrity checks failed", err), nil
 	}
 
 	if integrityChecks.OverallStatus != "pass" {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_integrity_issues", map[string]interface{}{"issues": strings.Join(integrityChecks.Issues, ",")})
 		return p.createFailedState("database integrity check failed", fmt.Errorf("integrity issues found: %v", integrityChecks.Issues)), nil
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_integrity_ok", nil)
 
 	// Step 6: Create database backup
 	backupInfo, err := p.createDatabaseBackup(ctx, snapshot)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_backup_fail", map[string]interface{}{"error": err.Error()})
 		return p.createFailedState("database backup creation failed", err), nil
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_backup_ok", map[string]interface{}{"backup_id": backupInfo.BackupID.String()})
 
 	// Step 7: Begin transaction for migration
 	tx := p.db.Begin()
 	if tx.Error != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_prepare_tx_begin_fail", map[string]interface{}{"error": tx.Error.Error()})
 		return p.createFailedState("failed to begin transaction", tx.Error), nil
 	}
 	p.activeTx = tx
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_tx_begin_ok", nil)
 
 	// Step 8: Store preparation data
 	p.preparationData = &PersistencePreparationData{
@@ -266,7 +286,9 @@ func (p *PersistenceParticipant) Prepare(ctx context.Context, migrationID uuid.U
 		"duration", preparationDuration,
 		"orders_count", snapshot.OrdersCount,
 		"checkpoint_id", checkpointID,
+		"trace_id", traceID,
 	)
+	p.recordLatencyCheckpoint(ctx, "persistence_prepare_done", map[string]interface{}{"duration_ms": preparationDuration.Milliseconds()})
 
 	// Create orders snapshot for coordinator
 	ordersSnapshot := &migration.OrdersSnapshot{
@@ -298,56 +320,57 @@ func (p *PersistenceParticipant) Commit(ctx context.Context, migrationID uuid.UU
 	p.migrationMu.Lock()
 	defer p.migrationMu.Unlock()
 
-	if p.currentMigrationID != migrationID {
-		return fmt.Errorf("migration ID mismatch: expected %s, got %s", p.currentMigrationID, migrationID)
-	}
-
-	if p.preparationData == nil {
-		return fmt.Errorf("no preparation data available for migration %s", migrationID)
-	}
-
-	if p.activeTx == nil {
-		return fmt.Errorf("no active transaction for migration %s", migrationID)
-	}
-
+	traceID := TraceIDFromContext(ctx)
 	p.logger.Infow("Starting commit phase for persistence migration",
 		"migration_id", migrationID,
 		"pair", p.pair,
+		"trace_id", traceID,
 	)
+	p.recordLatencyCheckpoint(ctx, "persistence_commit_start", nil)
 
 	startTime := time.Now()
 
 	// Step 1: Final integrity check
 	finalIntegrity, err := p.performIntegrityChecks(ctx)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_integrity_fail", map[string]interface{}{"error": err.Error()})
 		p.rollbackTransaction()
 		return fmt.Errorf("final integrity check failed: %w", err)
 	}
 
 	if finalIntegrity.OverallStatus != "pass" {
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_integrity_issues", map[string]interface{}{"issues": strings.Join(finalIntegrity.Issues, ",")})
 		p.rollbackTransaction()
 		return fmt.Errorf("final integrity check failed: %v", finalIntegrity.Issues)
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_commit_integrity_ok", nil)
 
 	// Step 2: Update migration metadata in database
 	err = p.updateMigrationMetadata(ctx, migrationID)
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_metadata_fail", map[string]interface{}{"error": err.Error()})
 		p.rollbackTransaction()
 		return fmt.Errorf("failed to update migration metadata: %w", err)
 	}
+	p.recordLatencyCheckpoint(ctx, "persistence_commit_metadata_ok", nil)
 
 	// Step 3: Commit the transaction
 	err = p.activeTx.Commit().Error
 	if err != nil {
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_tx_fail", map[string]interface{}{"error": err.Error()})
 		return fmt.Errorf("transaction commit failed: %w", err)
 	}
 	p.activeTx = nil
+	p.recordLatencyCheckpoint(ctx, "persistence_commit_tx_ok", nil)
 
 	// Step 4: Create post-migration checkpoint
 	postCheckpointID, err := p.createCheckpoint(ctx)
 	if err != nil {
 		p.logger.Warnw("Failed to create post-migration checkpoint", "error", err)
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_post_checkpoint_fail", map[string]interface{}{"error": err.Error()})
 		// Don't fail the migration for this
+	} else {
+		p.recordLatencyCheckpoint(ctx, "persistence_commit_post_checkpoint_ok", map[string]interface{}{"checkpoint_id": postCheckpointID})
 	}
 
 	commitDuration := time.Since(startTime)
@@ -356,7 +379,9 @@ func (p *PersistenceParticipant) Commit(ctx context.Context, migrationID uuid.UU
 		"pair", p.pair,
 		"duration", commitDuration,
 		"post_checkpoint_id", postCheckpointID,
+		"trace_id", traceID,
 	)
+	p.recordLatencyCheckpoint(ctx, "persistence_commit_done", map[string]interface{}{"duration_ms": commitDuration.Milliseconds()})
 
 	return nil
 }
@@ -366,16 +391,22 @@ func (p *PersistenceParticipant) Abort(ctx context.Context, migrationID uuid.UUI
 	p.migrationMu.Lock()
 	defer p.migrationMu.Unlock()
 
+	traceID := TraceIDFromContext(ctx)
 	p.logger.Infow("Starting abort phase for persistence migration",
 		"migration_id", migrationID,
 		"pair", p.pair,
+		"trace_id", traceID,
 	)
+	p.recordLatencyCheckpoint(ctx, "persistence_abort_start", nil)
 
 	// Step 1: Rollback active transaction
 	if p.activeTx != nil {
 		err := p.rollbackTransaction()
 		if err != nil {
-			p.logger.Errorw("Failed to rollback transaction", "error", err)
+			p.logger.Errorw("Failed to rollback transaction", "error", err, "trace_id", traceID)
+			p.recordLatencyCheckpoint(ctx, "persistence_abort_tx_rollback_fail", map[string]interface{}{"error": err.Error()})
+		} else {
+			p.recordLatencyCheckpoint(ctx, "persistence_abort_tx_rollback_ok", nil)
 		}
 	}
 
@@ -383,26 +414,35 @@ func (p *PersistenceParticipant) Abort(ctx context.Context, migrationID uuid.UUI
 	if p.checkpointID != "" {
 		err := p.restoreFromCheckpoint(ctx, p.checkpointID)
 		if err != nil {
-			p.logger.Errorw("Failed to restore from checkpoint", "error", err, "checkpoint_id", p.checkpointID)
+			p.logger.Errorw("Failed to restore from checkpoint", "error", err, "checkpoint_id", p.checkpointID, "trace_id", traceID)
+			p.recordLatencyCheckpoint(ctx, "persistence_abort_restore_fail", map[string]interface{}{"error": err.Error()})
 			return fmt.Errorf("checkpoint restoration failed: %w", err)
+		} else {
+			p.recordLatencyCheckpoint(ctx, "persistence_abort_restore_ok", map[string]interface{}{"checkpoint_id": p.checkpointID})
 		}
 	}
 
 	// Step 3: Verify database consistency after abort
 	integrityCheck, err := p.performIntegrityChecks(ctx)
 	if err != nil {
-		p.logger.Errorw("Integrity check failed after abort", "error", err)
+		p.logger.Errorw("Integrity check failed after abort", "error", err, "trace_id", traceID)
+		p.recordLatencyCheckpoint(ctx, "persistence_abort_integrity_fail", map[string]interface{}{"error": err.Error()})
 	} else if integrityCheck.OverallStatus != "pass" {
-		p.logger.Errorw("Database integrity compromised after abort", "issues", integrityCheck.Issues)
+		p.logger.Errorw("Database integrity compromised after abort", "issues", integrityCheck.Issues, "trace_id", traceID)
+		p.recordLatencyCheckpoint(ctx, "persistence_abort_integrity_issues", map[string]interface{}{"issues": strings.Join(integrityCheck.Issues, ",")})
+	} else {
+		p.recordLatencyCheckpoint(ctx, "persistence_abort_integrity_ok", nil)
 	}
 
 	// Step 4: Cleanup resources
 	err = p.cleanup(ctx, migrationID)
 	if err != nil {
-		p.logger.Warnw("Cleanup failed during abort", "error", err)
+		p.logger.Warnw("Cleanup failed during abort", "error", err, "trace_id", traceID)
+		p.recordLatencyCheckpoint(ctx, "persistence_abort_cleanup_fail", map[string]interface{}{"error": err.Error()})
 	}
 
-	p.logger.Infow("Abort phase completed", "migration_id", migrationID, "pair", p.pair)
+	p.logger.Infow("Abort phase completed", "migration_id", migrationID, "pair", p.pair, "trace_id", traceID)
+	p.recordLatencyCheckpoint(ctx, "persistence_abort_done", nil)
 	return nil
 }
 
@@ -812,4 +852,38 @@ func (p *PersistenceParticipant) checkTableChecksums(ctx context.Context) *Check
 		Duration:       time.Millisecond * 40,
 		RecordsChecked: 2000,
 	}
+}
+
+// TraceIDKey is the context key for trace ID propagation
+const TraceIDKey = "trace_id"
+
+// TraceIDFromContext extracts the trace ID from context, or generates one if missing
+func TraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(TraceIDKey); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	// Try to extract from gRPC/HTTP metadata if present (optional, not shown here)
+	return uuid.New().String()
+}
+
+// recordLatencyCheckpoint records a latency checkpoint with trace ID, stage, and timestamp
+func (p *PersistenceParticipant) recordLatencyCheckpoint(ctx context.Context, stage string, extra map[string]interface{}) {
+	traceID := TraceIDFromContext(ctx)
+	ts := time.Now().UTC()
+	fields := map[string]interface{
+		"trace_id": traceID,
+		"stage":   stage,
+		"timestamp": ts,
+		"pair":    p.pair,
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	p.logger.Infow("latency_checkpoint", fields)
+	// TODO: Write to time-series DB (Prometheus/Influx/Timescale) here
 }

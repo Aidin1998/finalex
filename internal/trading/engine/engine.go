@@ -916,6 +916,67 @@ func (rl *RateLimiter) SetCapacity(capacity int) {
 	}
 }
 
+// TraceIDKey is the context key for trace ID propagation
+const TraceIDKey = "trace_id"
+
+// TraceIDFromContext extracts the trace ID from context, or generates one if missing
+func TraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v := ctx.Value(TraceIDKey); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return uuid.New().String()
+}
+
+// recordLatencyCheckpoint records a latency checkpoint with trace ID, stage, and timestamp
+func recordLatencyCheckpoint(ctx context.Context, logger *zap.Logger, stage string, extra map[string]interface{}) {
+	traceID := TraceIDFromContext(ctx)
+	ts := time.Now().UTC()
+	fields := []zap.Field{
+		zap.String("trace_id", traceID),
+		zap.String("stage", stage),
+		zap.Time("timestamp", ts),
+	}
+	for k, v := range extra {
+		fields = append(fields, zap.Any(k, v))
+	}
+	logger.Info("latency_checkpoint", fields...)
+	// TODO: Write to time-series DB (Prometheus/Tempo/Influx) here
+}
+
+// Example: Instrument MatchOrders with trace ID and latency checkpoints
+func (e *Engine) MatchOrders(ctx context.Context, logger *zap.Logger) error {
+	recordLatencyCheckpoint(ctx, logger, "engine_match_start", nil)
+	// ...existing match logic...
+	recordLatencyCheckpoint(ctx, logger, "engine_match_done", nil)
+	return nil
+}
+
+// Example: Instrument TradeGeneration with trace ID and latency checkpoints
+func (e *Engine) GenerateTrade(ctx context.Context, trade *model.Trade, logger *zap.Logger) error {
+	recordLatencyCheckpoint(ctx, logger, "engine_trade_generation", map[string]interface{}{"trade_id": trade.ID})
+	// ...existing trade generation logic...
+	return nil
+}
+
+// Example: Instrument SettlementInitiation with trace ID and latency checkpoints
+func (e *Engine) InitiateSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
+	recordLatencyCheckpoint(ctx, logger, "engine_settlement_initiation", map[string]interface{}{"settlement_id": settlementID})
+	// ...existing settlement initiation logic...
+	return nil
+}
+
+// Example: Instrument SettlementConfirmation with trace ID and latency checkpoints
+func (e *Engine) ConfirmSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
+	recordLatencyCheckpoint(ctx, logger, "engine_settlement_confirmation", map[string]interface{}{"settlement_id": settlementID})
+	// ...existing settlement confirmation logic...
+	return nil
+}
+
 // --- Prometheus Metrics for Async Operations ---
 var (
 	asyncJobLatency = prometheus.NewHistogramVec(
@@ -1346,5 +1407,3 @@ func (me *MatchingEngine) initializeObjectPools(logger *zap.SugaredLogger) {
 		)
 	}
 }
-
-// ...existing code after ProcessOrder (other methods, etc)...

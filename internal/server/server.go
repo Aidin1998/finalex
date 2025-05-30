@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/auth"
@@ -15,6 +17,7 @@ import (
 	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
+	"github.com/google/uuid"
 
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
@@ -408,8 +411,29 @@ func (s *Server) handleGetTradingPair(c *gin.Context) {
 
 // handlePlaceOrder handles placing an order
 func (s *Server) handlePlaceOrder(c *gin.Context) {
-	// Implementation will be added in trading service
-	c.JSON(http.StatusOK, gin.H{"message": "order placed"})
+	// Generate or extract trace ID
+	traceID := c.GetHeader("X-Trace-Id")
+	if traceID == "" {
+		traceID = uuid.New().String()
+	}
+	c.Set("trace_id", traceID)
+
+	// Record API gateway receipt checkpoint
+	ts := time.Now().UTC()
+	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "api_gateway_receipt"), zap.Time("timestamp", ts))
+	// TODO: Write to time-series DB (Prometheus/Influx/Timescale) here
+
+	// Pass trace ID downstream (e.g., via context, headers, or order struct)
+	ctx := context.WithValue(c.Request.Context(), "trace_id", traceID)
+
+	// For demonstration, simulate validation and order book insertion
+	validationTime := time.Now().UTC()
+	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "validation_completion"), zap.Time("timestamp", validationTime))
+	orderbookTime := time.Now().UTC()
+	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "orderbook_insertion"), zap.Time("timestamp", orderbookTime))
+
+	// Respond with trace ID for client-side correlation
+	c.JSON(http.StatusOK, gin.H{"message": "order placed", "trace_id": traceID})
 }
 
 // handleGetOrders handles getting orders
