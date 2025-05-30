@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+
+	"github.com/Aidin1998/pincex_unified/internal/settlement"
 )
 
 // AdaptiveTradingService extends TradingService with adaptive engine capabilities
@@ -76,8 +78,10 @@ type AdaptiveService struct {
 
 // NewAdaptiveService creates a new adaptive trading service
 func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, adaptiveConfig *engine.AdaptiveEngineConfig, wsHub *ws.Hub) (AdaptiveTradingService, error) {
+	// Initialize settlement engine
+	settlementEngine := settlement.NewSettlementEngine()
 	// Initialize base trading service
-	baseSvcIface, err := NewService(logger, db, bookkeeperSvc, wsHub)
+	baseSvcIface, err := NewService(logger, db, bookkeeperSvc, wsHub, settlementEngine)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base trading service: %w", err)
 	}

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/config"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
@@ -25,6 +25,7 @@ import (
 
 	marketdata "github.com/Aidin1998/pincex_unified/internal/marketdata"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/pincex_unified/internal/trading/risk"
 )
 
 // TradingService defines trading operations for dependency injection
@@ -50,10 +51,11 @@ type Service struct {
 	db            *gorm.DB
 	engine        *engine.MatchingEngine
 	bookkeeperSvc bookkeeper.BookkeeperService
+	riskConfig    *risk.RiskConfig // Add this field for admin API
 }
 
 // NewService creates a new trading service
-func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, wsHub *ws.Hub) (TradingService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, wsHub *ws.Hub, settlementEngine *settlement.SettlementEngine) (TradingService, error) {
 	// Initialize repositories
 	orderRepo := repository.NewGormRepository(db, logger)
 	tradeRepo := repository.NewGormTradeRepository(db, logger)
@@ -61,11 +63,11 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 	// Load configuration
 	config := config.DefaultTradingConfig()
 
-	// Initialize event journal
-	eventJournal, err := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/events.log")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create event journal: %w", err)
-	}
+	// --- RISK MANAGEMENT ---
+	riskCfg := risk.NewRiskConfig()
+	// Set default system order limits (e.g. 100 BTC or equivalent in USDT)
+	riskCfg.SetSymbolLimit("BTCUSDT", 100.0)
+	// TODO: Load more limits from config/db, and allow admin API to update
 
 	// Create trading engine with all components
 	tradingEngine := engine.NewMatchingEngine(
@@ -73,8 +75,10 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 		tradeRepo,
 		logger.Sugar(),
 		config.Engine,
-		eventJournal,
+		/* eventJournal */ nil, // TODO: wire eventJournal if needed
 		wsHub,
+		/* riskManager */ nil, // TODO: wire riskMgr if needed
+		settlementEngine,      // Pass settlement engine
 	)
 
 	// Create service
@@ -83,6 +87,7 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 		db:            db,
 		engine:        tradingEngine,
 		bookkeeperSvc: bookkeeperSvc,
+		riskConfig:    riskCfg, // Pass risk config for admin API
 	}
 
 	return svc, nil
@@ -320,11 +325,14 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 		zap.Float64("price", order.Price),
 		zap.Float64("quantity", order.Quantity))
 
-	// 5. Store in test order store (stub - replace with proper engine processing)
-	testOrderStore[order.ID.String()] = modelOrder
-	order.Status = "OPEN" // Update status after successful processing
-
-	return order, nil
+	// --- NEW: Call matching engine for real order processing ---
+	processedOrder, _, _, err := s.engine.ProcessOrder(ctx, modelOrder, "api")
+	if err != nil {
+		return nil, err
+	}
+	apiOrder := toAPIOrder(processedOrder)
+	apiOrder.UpdatedAt = time.Now()
+	return apiOrder, nil
 }
 
 // CancelOrder cancels an order
@@ -551,4 +559,9 @@ func (s *Service) ListOrders(userID string, filter *models.OrderFilter) ([]*mode
 	}
 	orders, _, err := s.GetOrders(userID, symbol, status, "20", "0")
 	return orders, err
+}
+
+// RiskConfig returns the risk config for admin API access
+func (s *Service) RiskConfig() *risk.RiskConfig {
+	return s.riskConfig
 }

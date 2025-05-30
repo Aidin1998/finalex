@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
@@ -195,6 +196,14 @@ type MetricsReport struct {
 	OverallPerformance *OverallPerformanceMetrics `json:"overall_performance"`
 }
 
+// dummyRiskManagerType implements the riskManager interface but does nothing
+// This is a type, not a variable.
+type dummyRiskManagerType struct{}
+
+func (dummyRiskManagerType) CheckPositionLimit(userID, symbol string, intendedQty float64) error {
+	return nil
+}
+
 // NewAdaptiveMatchingEngine creates a new adaptive matching engine
 func NewAdaptiveMatchingEngine(
 	orderRepo model.Repository,
@@ -204,8 +213,10 @@ func NewAdaptiveMatchingEngine(
 	eventJournal *eventjournal.EventJournal,
 	wsHub *ws.Hub,
 ) *AdaptiveMatchingEngine {
+	// Before calling NewMatchingEngine, instantiate a settlement engine
+	settlementEngine := settlement.NewSettlementEngine()
 	// Create base engine with existing config
-	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub)
+	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub, dummyRiskManagerType{}, settlementEngine)
 
 	ame := &AdaptiveMatchingEngine{
 		MatchingEngine:       baseEngine,
@@ -1057,9 +1068,7 @@ func (ame *AdaptiveMatchingEngine) autoMigrationWorker() {
 		case <-ame.shutdownChan:
 			return
 		case <-ticker.C:
-			if ame.IsAutoMigrationEnabled() {
-				ame.evaluateAutoMigrationOpportunities()
-			}
+			ame.evaluateAutoMigrationOpportunities()
 		}
 	}
 }

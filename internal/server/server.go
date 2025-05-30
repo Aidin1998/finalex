@@ -156,6 +156,18 @@ func (s *Server) Router() *gin.Engine {
 				admin.GET("/users/:id", s.handleGetUser)
 				admin.PUT("/users/:id/kyc", s.handleUpdateUserKYC)
 
+				// --- RISK MANAGEMENT ENDPOINTS ---
+				risk := admin.Group("/risk")
+				{
+					risk.GET("/limits", s.handleGetRiskLimits)
+					risk.POST("/limits", s.handleCreateRiskLimit)
+					risk.PUT("/limits/:symbol", s.handleUpdateRiskLimit)
+					risk.DELETE("/limits/:symbol", s.handleDeleteRiskLimit)
+					risk.GET("/exemptions", s.handleGetRiskExemptions)
+					risk.POST("/exemptions", s.handleCreateRiskExemption)
+					risk.DELETE("/exemptions/:userID", s.handleDeleteRiskExemption)
+				}
+
 				// Rate limiting management endpoints
 				rateLimit := admin.Group("/rate-limits")
 				{
@@ -707,4 +719,116 @@ func (s *Server) handleCleanupRateLimitData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rate limit data cleanup completed"})
+}
+
+// --- RISK MANAGEMENT ADMIN HANDLERS ---
+func (s *Server) handleGetRiskLimits(c *gin.Context) {
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	limits := map[string]float64{}
+	for symbol := range riskCfg.SymbolLimits {
+		limits[symbol] = riskCfg.GetSymbolLimit(symbol)
+	}
+	c.JSON(http.StatusOK, gin.H{"limits": limits})
+}
+
+func (s *Server) handleCreateRiskLimit(c *gin.Context) {
+	type req struct {
+		Symbol string  `json:"symbol"`
+		Limit  float64 `json:"limit"`
+	}
+	var body req
+	if err := c.ShouldBindJSON(&body); err != nil || body.Symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "symbol and limit required"})
+		return
+	}
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	riskCfg.SetSymbolLimit(body.Symbol, body.Limit)
+	c.JSON(http.StatusOK, gin.H{"message": "risk limit set", "symbol": body.Symbol, "limit": body.Limit})
+}
+
+func (s *Server) handleUpdateRiskLimit(c *gin.Context) {
+	symbol := c.Param("symbol")
+	type req struct {
+		Limit float64 `json:"limit"`
+	}
+	var body req
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "limit required"})
+		return
+	}
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	riskCfg.SetSymbolLimit(symbol, body.Limit)
+	c.JSON(http.StatusOK, gin.H{"message": "risk limit updated", "symbol": symbol, "limit": body.Limit})
+}
+
+func (s *Server) handleDeleteRiskLimit(c *gin.Context) {
+	symbol := c.Param("symbol")
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	riskCfg.SetSymbolLimit(symbol, 0)
+	c.JSON(http.StatusOK, gin.H{"message": "risk limit deleted", "symbol": symbol})
+}
+
+func (s *Server) handleGetRiskExemptions(c *gin.Context) {
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	exempt := make([]string, 0, len(riskCfg.ExemptAccounts))
+	for user := range riskCfg.ExemptAccounts {
+		exempt = append(exempt, user)
+	}
+	c.JSON(http.StatusOK, gin.H{"exempt_accounts": exempt})
+}
+
+func (s *Server) handleCreateRiskExemption(c *gin.Context) {
+	type req struct {
+		AccountID string `json:"account_id"`
+	}
+	var body req
+	if err := c.ShouldBindJSON(&body); err != nil || body.AccountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "account_id required"})
+		return
+	}
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	riskCfg.AddExemptAccount(body.AccountID)
+	c.JSON(http.StatusOK, gin.H{"message": "risk exemption added", "account_id": body.AccountID})
+}
+
+func (s *Server) handleDeleteRiskExemption(c *gin.Context) {
+	userID := c.Param("userID")
+	svc, ok := s.tradingSvc.(*trading.Service)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "trading service unavailable"})
+		return
+	}
+	riskCfg := svc.RiskConfig()
+	riskCfg.RemoveExemptAccount(userID)
+	c.JSON(http.StatusOK, gin.H{"message": "risk exemption removed", "account_id": userID})
 }

@@ -30,6 +30,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Aidin1998/pincex_unified/internal/server"
+	"github.com/Aidin1998/pincex_unified/internal/settlement"
 )
 
 // --- STUB KYC PROVIDER ---
@@ -174,6 +175,10 @@ func main() {
 	// Use shard 0 as default DB for other services
 	db := dbutil.GetDBForKey(0)
 
+	// --- Settlement Engine Initialization ---
+	settlementEngine := settlement.NewSettlementEngine()
+	// --- End Settlement Engine Initialization ---
+
 	// Simple Redis client for rate limiting
 	simpleRedis := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Address,
@@ -228,7 +233,7 @@ func main() {
 	zapLogger.Info("WebSocket Hub created with 16 shards and 1000 message replay buffer")
 
 	// Initialize trading service (direct mode)
-	tradingSvc, err := trading.NewService(zapLogger, db, bookkeeperSvc, wsHub)
+	tradingSvc, err := trading.NewService(zapLogger, db, bookkeeperSvc, wsHub, settlementEngine)
 	if err != nil {
 		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
 	}

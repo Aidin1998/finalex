@@ -149,8 +149,12 @@ func main() {
 
 	// Run rate limiting tests
 	runRateLimitTests(testServer.URL)
+
+	// Run risk admin API tests
+	runRiskAdminApiTests(testServer.URL)
 }
 
+// --- Rate Limiting Tests ---
 func runRateLimitTests(baseURL string) {
 	fmt.Println("\n📊 Running Rate Limiting Tests...")
 
@@ -292,6 +296,106 @@ func testRateLimitConfig(baseURL string) {
 		fmt.Printf("✅ Emergency mode endpoint properly protected\n")
 	} else {
 		fmt.Printf("📋 Emergency mode response: %d\n", resp.StatusCode)
+	}
+}
+
+// --- Risk Admin API Tests ---
+func runRiskAdminApiTests(baseURL string) {
+	fmt.Println("\n🔒 Running Risk Admin API Endpoint Tests...")
+
+	// 1. Check endpoints exist and are protected
+	testEndpointExists(baseURL+"/api/v1/admin/risk/limits", "GET")
+	testEndpointExists(baseURL+"/api/v1/admin/risk/limits", "POST")
+	testEndpointExists(baseURL+"/api/v1/admin/risk/limits/BTCUSDT", "PUT")
+	testEndpointExists(baseURL+"/api/v1/admin/risk/limits/BTCUSDT", "DELETE")
+
+	testEndpointExists(baseURL+"/api/v1/admin/risk/exemptions", "GET")
+	testEndpointExists(baseURL+"/api/v1/admin/risk/exemptions", "POST")
+	testEndpointExists(baseURL+"/api/v1/admin/risk/exemptions/user-123", "DELETE")
+
+	// 2. Try CRUD operations (should get 401/403 if unauthenticated)
+	testRiskLimitCRUD(baseURL)
+	testRiskExemptionCRUD(baseURL)
+
+	fmt.Println("\n✅ Risk admin API endpoint tests completed!")
+}
+
+func testRiskLimitCRUD(baseURL string) {
+	fmt.Println("\n- Testing risk limit CRUD endpoints...")
+	// POST create limit
+	limit := map[string]interface{}{"symbol": "BTCUSDT", "limit": 42.0}
+	jsonData, _ := json.Marshal(limit)
+	resp, err := http.Post(baseURL+"/api/v1/admin/risk/limits", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("❌ POST risk limit failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		fmt.Printf("✅ POST /risk/limits properly protected\n")
+	} else {
+		fmt.Printf("⚠️  POST /risk/limits returned status %d\n", resp.StatusCode)
+	}
+
+	// PUT update limit
+	req, _ := http.NewRequest("PUT", baseURL+"/api/v1/admin/risk/limits/BTCUSDT", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("❌ PUT risk limit failed: %v\n", err)
+		return
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode == http.StatusUnauthorized || resp2.StatusCode == http.StatusForbidden {
+		fmt.Printf("✅ PUT /risk/limits properly protected\n")
+	} else {
+		fmt.Printf("⚠️  PUT /risk/limits returned status %d\n", resp2.StatusCode)
+	}
+
+	// DELETE limit
+	req, _ = http.NewRequest("DELETE", baseURL+"/api/v1/admin/risk/limits/BTCUSDT", nil)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("❌ DELETE risk limit failed: %v\n", err)
+		return
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode == http.StatusUnauthorized || resp3.StatusCode == http.StatusForbidden {
+		fmt.Printf("✅ DELETE /risk/limits properly protected\n")
+	} else {
+		fmt.Printf("⚠️  DELETE /risk/limits returned status %d\n", resp3.StatusCode)
+	}
+}
+
+func testRiskExemptionCRUD(baseURL string) {
+	fmt.Println("\n- Testing risk exemption CRUD endpoints...")
+	// POST add exemption
+	ex := map[string]interface{}{"account_id": "user-123"}
+	jsonData, _ := json.Marshal(ex)
+	resp, err := http.Post(baseURL+"/api/v1/admin/risk/exemptions", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("❌ POST risk exemption failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		fmt.Printf("✅ POST /risk/exemptions properly protected\n")
+	} else {
+		fmt.Printf("⚠️  POST /risk/exemptions returned status %d\n", resp.StatusCode)
+	}
+
+	// DELETE exemption
+	req, _ := http.NewRequest("DELETE", baseURL+"/api/v1/admin/risk/exemptions/user-123", nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("❌ DELETE risk exemption failed: %v\n", err)
+		return
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode == http.StatusUnauthorized || resp2.StatusCode == http.StatusForbidden {
+		fmt.Printf("✅ DELETE /risk/exemptions properly protected\n")
+	} else {
+		fmt.Printf("⚠️  DELETE /risk/exemptions returned status %d\n", resp2.StatusCode)
 	}
 }
 

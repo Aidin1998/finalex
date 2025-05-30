@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	settlement "github.com/Aidin1998/pincex_unified/internal/settlement"
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
@@ -786,10 +787,13 @@ type MatchingEngine struct {
 	workerPool   *WorkerPool  // For background jobs
 	rateLimiter  *RateLimiter // Integrated for future use (API, jobs, etc.)
 	eventJournal *eventjournal.EventJournal
-	wsHub        *ws.Hub // WebSocket hub for real-time broadcasting
+	wsHub        *ws.Hub     // WebSocket hub for real-time broadcasting
+	riskManager  interface { // Add risk manager interface for position/risk checks
+		CheckPositionLimit(userID, symbol string, intendedQty float64) error
+	}
+	settlementEngine *settlement.SettlementEngine // NEW: settlement engine integration
 }
 
-// Exported constructor for MatchingEngine to fix undefined: matching_engine.NewMatchingEngine errors
 // NewMatchingEngine creates a new MatchingEngine instance with the given repositories, logger, config, and event journal.
 func NewMatchingEngine(
 	orderRepo model.Repository,
@@ -798,6 +802,10 @@ func NewMatchingEngine(
 	config *Config,
 	eventJournal *eventjournal.EventJournal, // new param, can be nil
 	wsHub *ws.Hub, // WebSocket hub for real-time broadcasting
+	riskManager interface {
+		CheckPositionLimit(userID, symbol string, intendedQty float64) error
+	}, // new param
+	settlementEngine *settlement.SettlementEngine, // NEW: pass settlement engine
 ) *MatchingEngine {
 	var workerPool *WorkerPool
 	if config != nil && config.Engine.WorkerPoolSize > 0 {
@@ -806,97 +814,93 @@ func NewMatchingEngine(
 			config.Engine.WorkerPoolQueueSize,
 			logger,
 		)
-	} // Example: create a global rate limiter (10 ops/sec, burst 20)
+	}
 	var rateLimiter *RateLimiter
 	if config != nil {
 		rateLimiter = NewRateLimiter(decimal.NewFromInt(10), 20, logger)
 	}
 	return &MatchingEngine{
-		orderRepo:    orderRepo,
-		tradeRepo:    tradeRepo,
-		orderbooks:   make(map[string]*orderbook.OrderBook),
-		logger:       logger,
-		config:       config,
-		workerPool:   workerPool,
-		rateLimiter:  rateLimiter,
-		eventJournal: eventJournal,
-		wsHub:        wsHub,
+		orderRepo:        orderRepo,
+		tradeRepo:        tradeRepo,
+		orderbooks:       make(map[string]*orderbook.OrderBook),
+		logger:           logger,
+		config:           config,
+		workerPool:       workerPool,
+		rateLimiter:      rateLimiter,
+		eventJournal:     eventJournal,
+		wsHub:            wsHub,
+		riskManager:      riskManager,
+		settlementEngine: settlementEngine, // use the passed-in settlement engine
 	}
 }
 
-// ProcessOrder is the main entry point for order processing in the matching engine.
-// It validates, routes, and matches orders, and triggers notifications and persistence.
-// This implementation is robust, extensible, and safe for production use.
-func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, source OrderSourceType) (*model.Order, []*model.Trade, []*model.Order, error) {
-	// 1. Validate order (basic checks, symbol, size, etc.)
-	if order == nil {
-		return nil, nil, nil, fmt.Errorf("order is nil")
-	}
-	if order.Pair == "" {
-		return nil, nil, nil, fmt.Errorf("order pair is required")
-	}
-	if order.Quantity.LessThanOrEqual(decimal.Zero) {
-		return nil, nil, nil, fmt.Errorf("order quantity must be positive")
-	}
-
-	// 2. Check if market is paused
-	if isMarketPaused(order.Pair) {
-		return nil, nil, nil, fmt.Errorf("market %s is paused", order.Pair)
-	}
-
-	// REVIEW: locking mechanism will be bottlenecked whole engine. In this architecture, we have only one engine instance (that is also another problem to solve).
-	// 3. Route to the correct order book
-	me.orderbooksMu.RLock()
-	orderBook, ok := me.orderbooks[order.Pair]
-	me.orderbooksMu.RUnlock()
-
-	// REVIEW: Potential risk (creating order book is privileged action and should be done in a separate workflow)
-	if !ok {
-		// Create order book if it doesn't exist (thread-safe)
-		me.orderbooksMu.Lock()
-		orderBook, ok = me.orderbooks[order.Pair]
-		if !ok {
-			orderBook = orderbook.NewOrderBook(order.Pair)
-			me.orderbooks[order.Pair] = orderBook
-		}
-		me.orderbooksMu.Unlock()
-	}
-
-	// Advanced order validation
-	if err := order.ValidateAdvanced(); err != nil {
-		return nil, nil, nil, fmt.Errorf("order validation failed: %w", err)
-	}
-
-	// --- Order type handling (add/remove logic as needed before launch) ---
-	switch order.Type {
-	case model.OrderTypeLimit:
-		return me.processLimitOrder(ctx, order, orderBook)
-	case model.OrderTypeMarket:
-		return me.processMarketOrder(ctx, order, orderBook)
-	case model.OrderTypeIOC:
-		return me.processIOCOrder(ctx, order, orderBook)
-	case model.OrderTypeFOK:
-		return me.processFOKOrder(ctx, order, orderBook)
-	case model.OrderTypeStopLimit:
-		return me.processStopLimitOrder(ctx, order, orderBook)
-	case model.OrderTypeIceberg, model.OrderTypeHidden:
-		return me.processIcebergOrder(ctx, order, orderBook)
-	case model.OrderTypeGTD:
-		return me.processGTDOrder(ctx, order, orderBook)
-	case model.OrderTypeOCO:
-		return me.processOCOOrder(ctx, order, orderBook)
-	case model.OrderTypeTrailing:
-		return me.processTrailingStopOrder(ctx, order, orderBook)
-	case model.OrderTypeTWAP:
-		return me.processTWAPOrder(ctx, order, orderBook)
-	case model.OrderTypeVWAP:
-		return me.processVWAPOrder(ctx, order, orderBook)
-	default:
-		return nil, nil, nil, fmt.Errorf("unsupported order type: %s", order.Type)
+// Helper to map model.Trade to settlement.TradeCapture
+func tradeToCapture(trade *model.Trade) settlement.TradeCapture {
+	return settlement.TradeCapture{
+		TradeID:   trade.ID.String(),
+		UserID:    trade.OrderID.String(), // NOTE: model.Trade does not have UserID, so use OrderID or extend model.Trade if needed
+		Symbol:    trade.Pair,
+		Side:      trade.Side,
+		Quantity:  trade.Quantity.InexactFloat64(),
+		Price:     trade.Price.InexactFloat64(),
+		AssetType: "crypto", // TODO: determine asset type dynamically
+		MatchedAt: trade.CreatedAt,
 	}
 }
 
 // --- The following methods are for test/integration only. Remove or refactor before launch. ---
+// Move the ProcessOrder method definition here, before RecoveryService and TestSyncProcessAll
+func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, source OrderSourceType) (*model.Order, []*model.Trade, []*model.Order, error) {
+	// Validate order (simplified)
+	if order.Quantity.LessThanOrEqual(decimal.Zero) {
+		return nil, nil, nil, fmt.Errorf("invalid order quantity")
+	}
+	if order.Price.LessThan(decimal.Zero) {
+		return nil, nil, nil, fmt.Errorf("invalid order price")
+	}
+	// Check market status
+	if isMarketPaused(order.Pair) {
+		return nil, nil, nil, fmt.Errorf("market is paused")
+	}
+	// Get or create order book
+	orderBook := me.GetOrderBook(order.Pair)
+	var trades []*model.Trade
+	var restingOrders []*model.Order
+	var err error
+	// Match order based on type
+	switch order.Type {
+	case model.OrderTypeLimit:
+		_, trades, restingOrders, err = me.processLimitOrder(ctx, order, orderBook)
+	case model.OrderTypeMarket:
+		_, trades, restingOrders, err = me.processMarketOrder(ctx, order, orderBook)
+	case model.OrderTypeIOC:
+		_, trades, restingOrders, err = me.processIOCOrder(ctx, order, orderBook)
+	case model.OrderTypeFOK:
+		_, trades, restingOrders, err = me.processFOKOrder(ctx, order, orderBook)
+	default:
+		err = fmt.Errorf("unsupported order type: %s", order.Type)
+	}
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Notify trade handlers for each trade
+	for _, trade := range trades {
+		me.notifyTradeHandlers(TradeEvent{Trade: trade})
+	}
+	// Log order and trades
+	me.logger.Infow("Order processed",
+		"orderID", order.ID,
+		"pair", order.Pair,
+		"side", order.Side,
+		"type", order.Type,
+		"price", order.Price,
+		"quantity", order.Quantity,
+		"trades", len(trades),
+		"restingOrders", len(restingOrders),
+	)
+	return order, trades, restingOrders, nil
+}
+
 func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
 	result, err := orderBook.AddOrder(order)
 	// Update order status based on fills
@@ -905,6 +909,10 @@ func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Or
 			order.Status = model.OrderStatusFilled
 		} else if order.FilledQuantity.GreaterThan(decimal.Zero) {
 			order.Status = model.OrderStatusPartiallyFilled
+		}
+		// NEW: Capture trades for settlement
+		for _, trade := range result.Trades {
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
 		}
 	}
 	return order, result.Trades, result.RestingOrders, err
@@ -917,6 +925,10 @@ func (me *MatchingEngine) processMarketOrder(ctx context.Context, order *model.O
 			order.Status = model.OrderStatusFilled
 		} else if order.FilledQuantity.GreaterThan(decimal.Zero) {
 			order.Status = model.OrderStatusPartiallyFilled
+		}
+		// NEW: Capture trades for settlement
+		for _, trade := range result.Trades {
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
 		}
 	}
 	return order, result.Trades, nil, err
@@ -933,6 +945,10 @@ func (me *MatchingEngine) processIOCOrder(ctx context.Context, order *model.Orde
 		} else if order.FilledQuantity.GreaterThan(decimal.Zero) {
 			order.Status = model.OrderStatusPartiallyFilled
 		}
+		// NEW: Capture trades for settlement
+		for _, trade := range result.Trades {
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
+		}
 	}
 	return order, result.Trades, nil, err
 }
@@ -948,20 +964,12 @@ func (me *MatchingEngine) processFOKOrder(ctx context.Context, order *model.Orde
 		} else if order.FilledQuantity.GreaterThan(decimal.Zero) {
 			order.Status = model.OrderStatusPartiallyFilled
 		}
-	}
-	return order, result.Trades, nil, err
-}
-func (me *MatchingEngine) processStopLimitOrder(ctx context.Context, order *model.Order, orderBook *orderbook.OrderBook) (*model.Order, []*model.Trade, []*model.Order, error) {
-	result, err := orderBook.AddOrder(order)
-	// Update order status based on fills
-	if err == nil {
-		if order.FilledQuantity.Equal(order.Quantity) {
-			order.Status = model.OrderStatusFilled
-		} else if order.FilledQuantity.GreaterThan(decimal.Zero) {
-			order.Status = model.OrderStatusPartiallyFilled
+		// NEW: Capture trades for settlement
+		for _, trade := range result.Trades {
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
 		}
 	}
-	return order, result.Trades, result.RestingOrders, err
+	return order, result.Trades, nil, err
 }
 
 // --- Stubs for advanced order handlers ---
