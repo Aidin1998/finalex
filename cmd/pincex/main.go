@@ -252,7 +252,7 @@ func main() {
 	}
 
 	// Update transaction suite with fiat service
-	transactionSuite.FiatXA = transaction.NewFiatXAResource(db, fiatSvc, zapLogger)
+	transactionSuite.FiatXA = transaction.NewFiatXAResource(fiatSvc, db, zapLogger, "main")
 
 	// Create WebSocket Hub for high-performance real-time data
 	wsHub := ws.NewHub(16, 1000) // 16 shards, 1000 message replay buffer

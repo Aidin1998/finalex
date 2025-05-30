@@ -241,12 +241,26 @@ func NewEventJournal(log *zap.SugaredLogger, journalPath string) (*EventJournal,
 		return nil, fmt.Errorf("failed to open journal file: %w", err)
 	}
 
-	return &EventJournal{
+	ej := &EventJournal{
 		filePath: journalPath,
 		file:     f,
 		writer:   bufio.NewWriter(f),
 		log:      log,
-	}, nil
+	}
+	// Start background flush + sync every 100ms to reduce fsync overhead
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			ej.mu.Lock()
+			ej.writer.Flush()
+			if err := ej.file.Sync(); err != nil {
+				ej.log.Warnw("Periodic journal fsync failed", "error", err)
+			}
+			ej.mu.Unlock()
+		}
+	}()
+	return ej, nil
 }
 
 // NewDistributedEventJournal creates an EventJournal with distributed features enabled.
@@ -314,10 +328,8 @@ func (ej *EventJournal) appendEventInternal(event WALEvent) error {
 		ej.log.Errorw("Failed to flush journal writer", "error", err)
 		return err
 	}
-	if err := ej.file.Sync(); err != nil {
-		ej.log.Errorw("Failed to sync journal file to disk", "error", err)
-		return err
-	}
+	// Removed immediate file.Sync() to batch via background flusher
+
 	if ej.Kafka != nil && ej.KafkaTopic != "" {
 		if err := ej.Kafka.Publish(ej.KafkaTopic, event.EventType, b); err != nil {
 			ej.log.Errorw("Failed to publish event to Kafka", "error", err, "topic", ej.KafkaTopic)

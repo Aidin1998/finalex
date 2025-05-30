@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -36,8 +37,6 @@ import (
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	ws "github.com/Aidin1998/pincex_unified/internal/ws"
-
-	"runtime"
 
 	"go.uber.org/zap"
 )
@@ -385,16 +384,17 @@ func (r *RecoveryService) replayOrderPlaced(event eventjournal.WALEvent) error {
 		}
 	}
 	if priceStr, exists := orderData["price"]; exists {
-		if price, ok := priceStr.(string); ok {
-			if priceDecimal, err := decimal.NewFromString(price); err == nil {
+		if priceStr, ok := priceStr.(string); ok {
+			priceDecimal, err := decimal.NewFromString(priceStr)
+			if err == nil {
 				order.Price = priceDecimal
 			}
 		}
 	}
-
 	if quantityStr, exists := orderData["quantity"]; exists {
-		if quantity, ok := quantityStr.(string); ok {
-			if quantityDecimal, err := decimal.NewFromString(quantity); err == nil {
+		if quantityStr, ok := quantityStr.(string); ok {
+			quantityDecimal, err := decimal.NewFromString(quantityStr)
+			if err == nil {
 				order.Quantity = quantityDecimal
 			}
 		}
@@ -938,6 +938,73 @@ type MatchingEngine struct {
 		CheckPositionLimit(userID, symbol string, intendedQty float64) error
 	}
 	settlementEngine *settlement.SettlementEngine // NEW: settlement engine integration
+
+	// --- Persistence: Asynchronous DB Writes ---
+	persistenceCh        chan persistenceJob
+	persistenceBatchSize int
+	persistenceInterval  time.Duration
+
+	// Trade persistence batching
+	tradeBatchCh       chan *model.Trade
+	tradeBatchSize     int
+	tradeBatchInterval time.Duration
+}
+
+// persistenceJob represents a DB operation to execute asynchronously
+type persistenceJob struct {
+	op   string
+	data interface{}
+}
+
+// enqueuePersistence adds a persistence job to the buffer
+func (me *MatchingEngine) enqueuePersistence(job persistenceJob) {
+	select {
+	case me.persistenceCh <- job:
+	default:
+		// buffer full: drop or log warning
+		me.logger.Warn("Persistence channel full, dropping job", "op", job.op)
+	}
+}
+
+// persistenceWorker batches and executes persistence jobs
+func (me *MatchingEngine) persistenceWorker() {
+	ticker := time.NewTicker(me.persistenceInterval)
+	defer ticker.Stop()
+	var batch []persistenceJob
+	for {
+		select {
+		case job := <-me.persistenceCh:
+			batch = append(batch, job)
+			if len(batch) >= me.persistenceBatchSize {
+				me.flushPersistence(batch)
+				batch = nil
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				me.flushPersistence(batch)
+				batch = nil
+			}
+		}
+	}
+}
+
+// flushPersistence executes a batch of persistence jobs
+func (me *MatchingEngine) flushPersistence(batch []persistenceJob) {
+	// Execute each job sequentially, errors logged
+	for _, job := range batch {
+		switch job.op {
+		case "create_trade":
+			trade := job.data.(*model.Trade)
+			if err := me.tradeRepo.CreateTrade(context.Background(), trade); err != nil {
+				me.logger.Errorw("Failed to persist trade", "error", err, "tradeID", trade.ID)
+			}
+		case "update_order":
+			order := job.data.(*model.Order)
+			if err := me.orderRepo.UpdateOrderStatusAndFilledQuantity(context.Background(), order.ID, order.Status, order.FilledQuantity, order.AvgPrice); err != nil {
+				me.logger.Errorw("Failed to update order", "error", err, "orderID", order.ID)
+			}
+		}
+	}
 }
 
 // NewMatchingEngine creates a new MatchingEngine instance with the given repositories, logger, config, and event journal.
@@ -965,37 +1032,59 @@ func NewMatchingEngine(
 	if config != nil {
 		rateLimiter = NewRateLimiter(decimal.NewFromInt(10), 20, logger)
 	}
-	return &MatchingEngine{
-		orderRepo:        orderRepo,
-		tradeRepo:        tradeRepo,
-		orderbooks:       make(map[string]*orderbook.OrderBook),
-		logger:           logger,
-		config:           config,
-		workerPool:       workerPool,
-		rateLimiter:      rateLimiter,
-		eventJournal:     eventJournal,
-		wsHub:            wsHub,
-		riskManager:      riskManager,
-		settlementEngine: settlementEngine, // use the passed-in settlement engine
+	me := &MatchingEngine{
+		orderRepo:          orderRepo,
+		tradeRepo:          tradeRepo,
+		orderbooks:         make(map[string]*orderbook.OrderBook),
+		logger:             logger,
+		config:             config,
+		workerPool:         workerPool,
+		rateLimiter:        rateLimiter,
+		eventJournal:       eventJournal,
+		wsHub:              wsHub,
+		riskManager:        riskManager,
+		settlementEngine:   settlementEngine, // use the passed-in settlement engine
+		tradeBatchCh:       make(chan *model.Trade, 1024),
+		tradeBatchSize:     100,
+		tradeBatchInterval: time.Second,
+	}
+	go me.tradeBatchWorker()
+	return me
+}
+
+// tradeBatchWorker collects trades and persists them in batches
+func (me *MatchingEngine) tradeBatchWorker() {
+	ticker := time.NewTicker(me.tradeBatchInterval)
+	defer ticker.Stop()
+	var batch []*model.Trade
+	for {
+		select {
+		case t := <-me.tradeBatchCh:
+			batch = append(batch, t)
+			if len(batch) >= me.tradeBatchSize {
+				me.flushTradeBatch(batch)
+				batch = nil
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				me.flushTradeBatch(batch)
+				batch = nil
+			}
+		}
 	}
 }
 
-// Helper to map model.Trade to settlement.TradeCapture
-func tradeToCapture(trade *model.Trade) settlement.TradeCapture {
-	return settlement.TradeCapture{
-		TradeID:   trade.ID.String(),
-		UserID:    trade.OrderID.String(), // NOTE: model.Trade does not have UserID, so use OrderID or extend model.Trade if needed
-		Symbol:    trade.Pair,
-		Side:      trade.Side,
-		Quantity:  trade.Quantity.InexactFloat64(),
-		Price:     trade.Price.InexactFloat64(),
-		AssetType: "crypto", // TODO: determine asset type dynamically
-		MatchedAt: trade.CreatedAt,
+// flushTradeBatch persists a batch of trades sequentially
+func (me *MatchingEngine) flushTradeBatch(batch []*model.Trade) {
+	ctx := context.Background()
+	for _, t := range batch {
+		if err := me.tradeRepo.CreateTrade(ctx, t); err != nil {
+			me.logger.Errorw("Failed to persist trade", "error", err, "tradeID", t.ID)
+		}
 	}
 }
 
-// --- The following methods are for test/integration only. Remove or refactor before launch. ---
-// Move the ProcessOrder method definition here, before RecoveryService and TestSyncProcessAll
+// ProcessOrder places or cancels an order through the matching engine
 func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, source OrderSourceType) (*model.Order, []*model.Trade, []*model.Order, error) {
 	// Validate order (simplified)
 	if order.Quantity.LessThanOrEqual(decimal.Zero) {
@@ -1044,6 +1133,19 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 		"trades", len(trades),
 		"restingOrders", len(restingOrders),
 	)
+	// after matching and before notifications:
+	for _, trade := range trades {
+		me.enqueuePersistence(persistenceJob{op: "create_trade", data: trade})
+	}
+	me.enqueuePersistence(persistenceJob{op: "update_order", data: order})
+	// Enqueue trades for async persistence
+	for _, trade := range trades {
+		select {
+		case me.tradeBatchCh <- trade:
+		default:
+			me.logger.Warnw("tradeBatchCh full, dropping trade persist", "tradeID", trade.ID)
+		}
+	}
 	return order, trades, restingOrders, nil
 }
 
@@ -1058,7 +1160,7 @@ func (me *MatchingEngine) processLimitOrder(ctx context.Context, order *model.Or
 		}
 		// NEW: Capture trades for settlement
 		for _, trade := range result.Trades {
-			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade, order.UserID.String(), "crypto"))
 		}
 	}
 	return order, result.Trades, result.RestingOrders, err
@@ -1074,7 +1176,7 @@ func (me *MatchingEngine) processMarketOrder(ctx context.Context, order *model.O
 		}
 		// NEW: Capture trades for settlement
 		for _, trade := range result.Trades {
-			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade, order.UserID.String(), "crypto"))
 		}
 	}
 	return order, result.Trades, nil, err
@@ -1093,7 +1195,7 @@ func (me *MatchingEngine) processIOCOrder(ctx context.Context, order *model.Orde
 		}
 		// NEW: Capture trades for settlement
 		for _, trade := range result.Trades {
-			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade, order.UserID.String(), "crypto"))
 		}
 	}
 	return order, result.Trades, nil, err
@@ -1112,7 +1214,7 @@ func (me *MatchingEngine) processFOKOrder(ctx context.Context, order *model.Orde
 		}
 		// NEW: Capture trades for settlement
 		for _, trade := range result.Trades {
-			me.settlementEngine.CaptureTrade(tradeToCapture(trade))
+			me.settlementEngine.CaptureTrade(tradeToCapture(trade, order.UserID.String(), "crypto"))
 		}
 	}
 	return order, result.Trades, nil, err
@@ -1454,4 +1556,18 @@ func (me *MatchingEngine) processPeriodicOrderTasks() {
 		obMu.Unlock()
 	}
 	me.orderbooksMu.RUnlock()
+}
+
+// tradeToCapture converts a *model.Trade to the type expected by settlement.TradeCapture
+func tradeToCapture(trade *model.Trade, userID string, assetType string) settlement.TradeCapture {
+	return settlement.TradeCapture{
+		TradeID:   trade.ID.String(),
+		UserID:    userID,
+		Symbol:    trade.Pair,
+		Side:      trade.Side,
+		Quantity:  trade.Quantity.InexactFloat64(),
+		Price:     trade.Price.InexactFloat64(),
+		AssetType: assetType,
+		MatchedAt: trade.CreatedAt,
+	}
 }
