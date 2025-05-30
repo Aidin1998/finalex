@@ -12,7 +12,9 @@ import (
 // Repository defines the interface for order storage operations
 type Repository interface {
 	CreateOrder(ctx context.Context, order *Order) error
+	GetOrder(ctx context.Context, orderID uuid.UUID) (*Order, error)
 	GetOrderByID(ctx context.Context, orderID uuid.UUID) (*Order, error)
+	UpdateOrder(ctx context.Context, order *Order) error
 	GetOpenOrdersByPair(ctx context.Context, pair string) ([]*Order, error)
 	GetOpenOrdersByUser(ctx context.Context, userID uuid.UUID) ([]*Order, error)
 	UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status string) error

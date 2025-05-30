@@ -18,6 +18,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -215,8 +216,12 @@ func NewAdaptiveMatchingEngine(
 ) *AdaptiveMatchingEngine {
 	// Before calling NewMatchingEngine, instantiate a settlement engine
 	settlementEngine := settlement.NewSettlementEngine()
+	
+	// Create a placeholder trigger monitor for the base engine
+	triggerMonitor := &trigger.TriggerMonitor{}
+	
 	// Create base engine with existing config
-	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub, dummyRiskManagerType{}, settlementEngine)
+	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub, dummyRiskManagerType{}, settlementEngine, triggerMonitor)
 
 	ame := &AdaptiveMatchingEngine{
 		MatchingEngine:       baseEngine,

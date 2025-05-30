@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	metricsapi "github.com/Orbit-CEX/pincex_unified/internal/analytics/metrics"
-	"github.com/Orbit-CEX/pincex_unified/internal/trading/model"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
 
 // monitoringWorker continuously monitors trigger conditions

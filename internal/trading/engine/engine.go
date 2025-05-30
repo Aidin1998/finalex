@@ -983,6 +983,14 @@ type MatchingEngine struct {
 	settlementEngine *settlement.SettlementEngine
 	// --- TriggerMonitor Integration ---
 	triggerMonitor *trigger.TriggerMonitor // Add this field for advanced order monitoring
+
+	// --- Additional fields for async operations ---
+	asyncJobCh  chan asyncJob
+	asyncDLQ    chan asyncJob
+	metricsOnce sync.Once
+
+	// --- Persistence Layer ---
+	persistenceLayer *persistence.PersistenceLayer
 }
 
 // enqueueAdvancedAsync adds an async job to the advanced async job channel with observability, retries, and idempotency.
@@ -1113,14 +1121,14 @@ func NewMatchingEngine(
 	// This reduces GC pressure by pre-allocating objects
 	me.initializeObjectPools(logger)
 
-	// Initialize async persistence layer
-	persistenceLayer, err := persistence.NewPersistenceLayer(orderRepo, "trading_wal.log")
-	if err != nil {
-		logger.Errorw("Failed to initialize async persistence layer", "error", err)
-	} else {
-		me.persistenceLayer = persistenceLayer
-		me.persistenceLayer.Writer.Start() // Start batch writer
-	}
+	// Initialize async persistence layer (stub for now)
+	// persistenceLayer, err := persistence.NewPersistenceLayer(orderRepo, "trading_wal.log")
+	// if err != nil {
+	//	logger.Errorw("Failed to initialize async persistence layer", "error", err)
+	// } else {
+	//	me.persistenceLayer = persistenceLayer
+	//	me.persistenceLayer.Writer.Start() // Start batch writer
+	// }
 
 	me.StartAsyncProcessing()
 	return me
@@ -1171,14 +1179,14 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 	}
 	if err != nil {
 		// Record failed order in business metrics and compliance
-		metricsapi.BusinessMetricsInstance.mu.Lock()
+		metricsapi.BusinessMetricsInstance.Mu.Lock()
 		if _, ok := metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair]; !ok {
 			metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair] = &metricsapi.FailedOrderStats{Reasons: make(map[string]int)}
 		}
-		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].mu.Lock()
+		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].Mu.Lock()
 		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].Reasons[err.Error()]++
-		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].mu.Unlock()
-		metricsapi.BusinessMetricsInstance.mu.Unlock()
+		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].Mu.Unlock()
+		metricsapi.BusinessMetricsInstance.Mu.Unlock()
 
 		metricsapi.ComplianceServiceInstance.Record(metricsapi.ComplianceEvent{
 			Timestamp: time.Now(),
@@ -1193,7 +1201,7 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 	}
 
 	// --- Business Metrics: Fill Rate, Slippage, Conversion, etc. ---
-	metricsapi.BusinessMetricsInstance.mu.Lock()
+	metricsapi.BusinessMetricsInstance.Mu.Lock()
 	// Fill Rate
 	if _, ok := metricsapi.BusinessMetricsInstance.FillRates[order.Pair]; !ok {
 		metricsapi.BusinessMetricsInstance.FillRates[order.Pair] = make(map[string]map[string]*metricsapi.FillRateStats)
@@ -1246,7 +1254,7 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 			})
 		}
 	}
-	metricsapi.BusinessMetricsInstance.mu.Unlock()
+	metricsapi.BusinessMetricsInstance.Mu.Unlock()
 
 	// --- Compliance Event Recording ---
 	metricsapi.ComplianceServiceInstance.Record(metricsapi.ComplianceEvent{
@@ -1294,6 +1302,11 @@ func (me *MatchingEngine) CancelOrder(req *CancelRequest) error {
 		return fmt.Errorf("failed to update order status in DB: %w", err)
 	}
 	return nil
+}
+
+// GetOrderRepository returns the order repository for direct access when needed
+func (me *MatchingEngine) GetOrderRepository() model.Repository {
+	return me.orderRepo
 }
 
 // initializeObjectPools initializes and pre-warms all object pools for optimal performance

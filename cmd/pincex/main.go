@@ -297,7 +297,6 @@ func main() {
 	_ = metricsapi.BusinessMetricsInstance
 	_ = metricsapi.AlertingServiceInstance
 	_ = metricsapi.ComplianceServiceInstance
-	_ = metricsapi.MetricsAPIInstance
 
 	// Start services
 	if err := identitiesSvc.Start(); err != nil {

@@ -13,6 +13,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Error constants
+var (
+	ErrTooManyConditions      = fmt.Errorf("too many conditions")
+	ErrInvalidDisplayQuantity = fmt.Errorf("invalid display quantity")
+	ErrNoMarketPrice          = fmt.Errorf("no market price available")
+	ErrOrderNotFound          = fmt.Errorf("order not found")
+)
+
 // Enhanced Object Pools with Metrics and Pre-warming
 // OrderPool and TradePool provide zero-allocation pooling for hot path usage.
 
@@ -250,27 +258,30 @@ type OrderEvent struct {
 
 // Order represents a trading order in the system.
 type Order struct {
-	ID              uuid.UUID              `json:"id"`
-	UserID          uuid.UUID              `json:"user_id"`
-	Pair            string                 `json:"pair"`
-	Side            string                 `json:"side"`
-	Type            string                 `json:"type"`
-	Price           decimal.Decimal        `json:"price"`
-	Quantity        decimal.Decimal        `json:"quantity"`
-	FilledQuantity  decimal.Decimal        `json:"filled_quantity"`
-	Status          string                 `json:"status"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
-	TimeInForce     string                 `json:"time_in_force"`
-	StopPrice       decimal.Decimal        `json:"stop_price,omitempty"`
-	OCOGroupID      *uuid.UUID             `json:"oco_group_id,omitempty"`
-	AvgPrice        decimal.Decimal        `json:"avg_price"`
-	DisplayQuantity decimal.Decimal        `json:"display_quantity,omitempty"` // For iceberg/hidden orders
-	ExpireAt        *time.Time             `json:"expire_at,omitempty"`        // For GTD orders
-	TrailingOffset  decimal.Decimal        `json:"trailing_offset,omitempty"`  // For trailing stop
-	AlgoParams      map[string]interface{} `json:"algo_params,omitempty"`      // For TWAP/VWAP
-	ParentOrderID   *uuid.UUID             `json:"parent_order_id,omitempty"`  // For OCO/algos
-	Hidden          bool                   `json:"hidden,omitempty"`           // For hidden/iceberg
+	ID               uuid.UUID              `json:"id"`
+	UserID           uuid.UUID              `json:"user_id"`
+	Pair             string                 `json:"pair"`
+	Side             string                 `json:"side"`
+	Type             string                 `json:"type"`
+	Price            decimal.Decimal        `json:"price"`
+	Quantity         decimal.Decimal        `json:"quantity"`
+	FilledQuantity   decimal.Decimal        `json:"filled_quantity"`
+	Status           string                 `json:"status"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	TimeInForce      string                 `json:"time_in_force"`
+	StopPrice        decimal.Decimal        `json:"stop_price,omitempty"`
+	TriggerPrice     decimal.Decimal        `json:"trigger_price,omitempty"`
+	OCOGroupID       *uuid.UUID             `json:"oco_group_id,omitempty"`
+	AvgPrice         decimal.Decimal        `json:"avg_price"`
+	DisplayQuantity  decimal.Decimal        `json:"display_quantity,omitempty"` // For iceberg/hidden orders
+	ExpireAt         *time.Time             `json:"expire_at,omitempty"`        // For GTD orders
+	TrailingOffset   decimal.Decimal        `json:"trailing_offset,omitempty"`  // For trailing stop
+	AlgoParams       map[string]interface{} `json:"algo_params,omitempty"`      // For TWAP/VWAP
+	ParentOrderID    *uuid.UUID             `json:"parent_order_id,omitempty"`  // For OCO/algos
+	Hidden           bool                   `json:"hidden,omitempty"`           // For hidden/iceberg
+	IsTriggeredOrder bool                   `json:"is_triggered_order,omitempty"`
+	IsIcebergSlice   bool                   `json:"is_iceberg_slice,omitempty"`
 	// ... add other fields as needed ...
 }
 

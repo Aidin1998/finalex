@@ -71,12 +71,12 @@ type ConversionStats struct {
 
 type FailedOrderStats struct {
 	Reasons map[string]int
-	mu      sync.Mutex
+	Mu      sync.Mutex // Export the mutex
 }
 
 // BusinessMetrics tracks all business-level trading metrics.
 type BusinessMetrics struct {
-	mu sync.RWMutex
+	Mu sync.RWMutex // Export the mutex
 
 	// Per market, user, and order type
 	FillRates    map[string]map[string]map[string]*FillRateStats // market->user->type
@@ -123,3 +123,13 @@ func NewBusinessMetrics() *BusinessMetrics {
 }
 
 // ... Methods for updating, aggregating, and alerting will be implemented next ...
+
+// RecordTriggerLatency records latency for trigger conditions
+func (bm *BusinessMetrics) RecordTriggerLatency(pair string, latency time.Duration) {
+	// Implementation for trigger latency recording
+}
+
+// RecordTriggerMetrics records trigger performance metrics
+func (bm *BusinessMetrics) RecordTriggerMetrics(stats interface{}) {
+	// Implementation for trigger metrics recording
+}

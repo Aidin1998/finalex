@@ -5,49 +5,49 @@
       {
         "type": "graph",
         "title": "Fill Rate by Market",
-        "targets": [{"expr": "fill_rate{market=~".+"}"}],
+        "targets": [{"expr": "fill_rate{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "graph",
         "title": "Average Slippage",
-        "targets": [{"expr": "avg_slippage{market=~".+"}"}],
+        "targets": [{"expr": "avg_slippage{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "graph",
         "title": "Worst-case Slippage",
-        "targets": [{"expr": "max_slippage{market=~".+"}"}],
+        "targets": [{"expr": "max_slippage{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "graph",
         "title": "Order Book Spread",
-        "targets": [{"expr": "spread{market=~".+"}"}],
+        "targets": [{"expr": "spread{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "graph",
         "title": "Market Impact (Large Orders)",
-        "targets": [{"expr": "market_impact{market=~".+"}"}],
+        "targets": [{"expr": "market_impact{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "graph",
         "title": "Order-to-Trade Conversion Rate",
-        "targets": [{"expr": "conversion_rate{market=~".+"}"}],
+        "targets": [{"expr": "conversion_rate{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "table",
         "title": "Failed Orders by Reason",
-        "targets": [{"expr": "failed_orders{market=~".+"}"}],
+        "targets": [{"expr": "failed_orders{market=~\".+\"}"}],
         "datasource": "Prometheus"
       },
       {
         "type": "table",
         "title": "Compliance Violations",
-        "targets": [{"expr": "compliance_violations{market=~".+"}"}],
+        "targets": [{"expr": "compliance_violations{market=~\".+\"}"}],
         "datasource": "Prometheus"
       }
     ]

@@ -77,7 +77,7 @@ var enhancedSnapshotSlicePool = sync.Pool{
 	},
 }
 
-// GetPriceLevelFromPool gets a price level from the pool
+// GetPriceLevelFromPool returns a pooled PriceLevel
 func GetPriceLevelFromPool() *PriceLevel {
 	atomic.AddInt64(&priceLevelPoolMetrics.Gets, 1)
 	level := PriceLevelPool.Get().(*PriceLevel)
@@ -87,10 +87,13 @@ func GetPriceLevelFromPool() *PriceLevel {
 	return level
 }
 
-// PutPriceLevelToPool returns a price level to the pool after resetting
+// PutPriceLevelToPool returns a PriceLevel to the pool
 func PutPriceLevelToPool(level *PriceLevel) {
 	if level != nil {
-		ResetPriceLevel(level)
+		// Reset the price level before returning to pool
+		level.Price = ""
+		level.firstChunk = nil
+		level.lockContention = 0
 		atomic.AddInt64(&priceLevelPoolMetrics.Puts, 1)
 		PriceLevelPool.Put(level)
 	}

@@ -12,6 +12,7 @@ const (
 	AlertLowFillRate     AlertType = "low_fill_rate"
 	AlertManipulation    AlertType = "manipulation"
 	AlertUnusualPatterns AlertType = "unusual_patterns"
+	AlertTriggerFailure  AlertType = "trigger_failure"
 )
 
 type Alert struct {

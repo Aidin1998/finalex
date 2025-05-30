@@ -101,6 +101,11 @@ func (r *GormRepository) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*
 	return r.convertToInternalOrder(&dbOrder)
 }
 
+// GetOrder retrieves an order by its ID (alias for GetOrderByID)
+func (r *GormRepository) GetOrder(ctx context.Context, orderID uuid.UUID) (*model.Order, error) {
+	return r.GetOrderByID(ctx, orderID)
+}
+
 // GetOpenOrdersByPair retrieves all open orders for a trading pair
 func (r *GormRepository) GetOpenOrdersByPair(ctx context.Context, pair string) ([]*model.Order, error) {
 	var dbOrders []models.Order
@@ -374,6 +379,57 @@ func (r *GormRepository) GetOpenTrailingStopOrders(ctx context.Context, pair str
 	return orders, nil
 }
 
+// UpdateOrder updates all fields of an order in the database
+func (r *GormRepository) UpdateOrder(ctx context.Context, order *model.Order) error {
+	updates := map[string]interface{}{
+		"user_id":         order.UserID,
+		"symbol":          order.Pair,
+		"side":            order.Side,
+		"type":            order.Type,
+		"price":           order.Price.InexactFloat64(),
+		"quantity":        order.Quantity.InexactFloat64(),
+		"filled_quantity": order.FilledQuantity.InexactFloat64(),
+		"status":          order.Status,
+		"time_in_force":   order.TimeInForce,
+		"updated_at":      time.Now(),
+	}
+	if !order.StopPrice.IsZero() {
+		stopPrice := order.StopPrice.InexactFloat64()
+		updates["stop_price"] = stopPrice
+	}
+	if !order.AvgPrice.IsZero() {
+		avgPrice := order.AvgPrice.InexactFloat64()
+		updates["average_price"] = avgPrice
+	}
+	if !order.DisplayQuantity.IsZero() {
+		displayQty := order.DisplayQuantity.InexactFloat64()
+		updates["display_quantity"] = displayQty
+	}
+	if !order.TrailingOffset.IsZero() {
+		trailingOffset := order.TrailingOffset.InexactFloat64()
+		updates["trailing_offset"] = trailingOffset
+	}
+	if order.ExpireAt != nil {
+		updates["expires_at"] = order.ExpireAt
+	}
+	if order.OCOGroupID != nil {
+		updates["oco_group_id"] = order.OCOGroupID
+	}
+	if order.ParentOrderID != nil {
+		updates["parent_order_id"] = order.ParentOrderID
+	}
+	result := r.db.WithContext(ctx).Model(&models.Order{}).
+		Where("id = ?", order.ID).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update order: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 // convertToInternalOrder converts a database model to internal trading model
 func (r *GormRepository) convertToInternalOrder(dbOrder *models.Order) (*model.Order, error) {
 	order := &model.Order{
@@ -391,7 +447,6 @@ func (r *GormRepository) convertToInternalOrder(dbOrder *models.Order) (*model.O
 		TimeInForce:    dbOrder.TimeInForce,
 		ExpireAt:       dbOrder.ExpiresAt,
 	}
-
 	// Handle optional fields
 	if dbOrder.StopPrice != nil {
 		order.StopPrice = decimal.NewFromFloat(*dbOrder.StopPrice)
@@ -405,15 +460,11 @@ func (r *GormRepository) convertToInternalOrder(dbOrder *models.Order) (*model.O
 	if dbOrder.TrailingOffset != nil {
 		order.TrailingOffset = decimal.NewFromFloat(*dbOrder.TrailingOffset)
 	}
-
-	// Handle UUID fields that are already UUID type, not strings
 	if dbOrder.OCOGroupID != nil {
 		order.OCOGroupID = dbOrder.OCOGroupID
 	}
-
 	if dbOrder.ParentOrderID != nil {
 		order.ParentOrderID = dbOrder.ParentOrderID
 	}
-
 	return order, nil
 }

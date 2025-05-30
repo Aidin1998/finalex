@@ -71,24 +71,24 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 	riskCfg.SetSymbolLimit("BTCUSDT", 100.0)
 	// TODO: Load more limits from config/db, and allow admin API to update
 
+	// Initialize trigger monitoring service first
+	triggerMonitor := trigger.NewTriggerMonitor(
+		logger.Sugar(),
+		orderRepo,
+		time.Millisecond*100, // Monitor every 100ms for <100ms trigger latency
+	)
+
 	// Create trading engine with all components
 	tradingEngine := engine.NewMatchingEngine(
 		orderRepo,
 		tradeRepo,
 		logger.Sugar(),
-		&config.Engine, // Pass pointer to EngineConfig, not the struct itself
+		config.Engine, // Pass EngineConfig directly since it's already a pointer
 		/* eventJournal */ nil, // TODO: wire eventJournal if needed
 		wsHub,
 		/* riskManager */ nil, // TODO: wire riskMgr if needed
 		settlementEngine,      // Pass settlement engine
 		triggerMonitor,        // Pass trigger monitor to engine
-	)
-
-	// Initialize trigger monitoring service
-	triggerMonitor := trigger.NewTriggerMonitor(
-		logger.Sugar(),
-		orderRepo,
-		time.Millisecond*100, // Monitor every 100ms for <100ms trigger latency
 	)
 
 	// Set up trigger callbacks to integrate with trading engine
