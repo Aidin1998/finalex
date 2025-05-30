@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/server"
 	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/transaction"
@@ -291,6 +292,12 @@ func main() {
 
 	// Initialize transaction API
 	transactionAPI := transaction.NewTransactionAPI(transactionSuite, zapLogger)
+
+	// Metrics/alerting/compliance API instantiation (singletons)
+	_ = metricsapi.BusinessMetricsInstance
+	_ = metricsapi.AlertingServiceInstance
+	_ = metricsapi.ComplianceServiceInstance
+	_ = metricsapi.MetricsAPIInstance
 
 	// Start services
 	if err := identitiesSvc.Start(); err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
+	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
@@ -47,11 +48,12 @@ type TradingService interface {
 
 // Service implements TradingService
 type Service struct {
-	logger        *zap.Logger
-	db            *gorm.DB
-	engine        *engine.MatchingEngine
-	bookkeeperSvc bookkeeper.BookkeeperService
-	riskConfig    *risk.RiskConfig // Add this field for admin API
+	logger         *zap.Logger
+	db             *gorm.DB
+	engine         *engine.MatchingEngine
+	bookkeeperSvc  bookkeeper.BookkeeperService
+	riskConfig     *risk.RiskConfig // Add this field for admin API
+	triggerMonitor *trigger.TriggerMonitor
 }
 
 // NewService creates a new trading service
@@ -74,20 +76,45 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 		orderRepo,
 		tradeRepo,
 		logger.Sugar(),
-		config.Engine,
+		&config.Engine, // Pass pointer to EngineConfig, not the struct itself
 		/* eventJournal */ nil, // TODO: wire eventJournal if needed
 		wsHub,
 		/* riskManager */ nil, // TODO: wire riskMgr if needed
 		settlementEngine,      // Pass settlement engine
+		triggerMonitor,        // Pass trigger monitor to engine
 	)
+
+	// Initialize trigger monitoring service
+	triggerMonitor := trigger.NewTriggerMonitor(
+		logger.Sugar(),
+		orderRepo,
+		time.Millisecond*100, // Monitor every 100ms for <100ms trigger latency
+	)
+
+	// Set up trigger callbacks to integrate with trading engine
+	triggerMonitor.SetOrderTriggerCallback(func(order *model2.Order) error {
+		// Execute triggered order through the matching engine
+		_, _, _, err := tradingEngine.ProcessOrder(context.Background(), order, "trigger")
+		return err
+	})
+
+	triggerMonitor.SetIcebergSliceCallback(func(state *trigger.IcebergOrderState, newOrder *model2.Order) error {
+		// Place iceberg slice through the matching engine
+		_, _, _, err := tradingEngine.ProcessOrder(context.Background(), newOrder, "iceberg_slice")
+		return err
+	})
+
+	// Register order book price feeds with trigger monitor
+	// This will be done when order books are created
 
 	// Create service
 	svc := &Service{
-		logger:        logger,
-		db:            db,
-		engine:        tradingEngine,
-		bookkeeperSvc: bookkeeperSvc,
-		riskConfig:    riskCfg, // Pass risk config for admin API
+		logger:         logger,
+		db:             db,
+		engine:         tradingEngine,
+		bookkeeperSvc:  bookkeeperSvc,
+		riskConfig:     riskCfg, // Pass risk config for admin API
+		triggerMonitor: triggerMonitor,
 	}
 
 	return svc, nil
@@ -95,13 +122,28 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 
 // Start starts the trading service
 func (s *Service) Start() error {
-	s.logger.Info("Trading service started (engine Start is a no-op)")
+	s.logger.Info("Starting trading service")
+
+	// Start trigger monitoring service
+	if err := s.triggerMonitor.Start(context.Background()); err != nil {
+		s.logger.Error("Failed to start trigger monitor", zap.Error(err))
+		return fmt.Errorf("failed to start trigger monitor: %w", err)
+	}
+
+	s.logger.Info("Trading service started successfully")
 	return nil
 }
 
 // Stop stops the trading service
 func (s *Service) Stop() error {
-	s.logger.Info("Trading service stopped (engine Stop is a no-op)")
+	s.logger.Info("Stopping trading service")
+
+	// Stop trigger monitoring service
+	if err := s.triggerMonitor.Stop(); err != nil {
+		s.logger.Error("Failed to stop trigger monitor", zap.Error(err))
+	}
+
+	s.logger.Info("Trading service stopped")
 	return nil
 }
 
@@ -309,7 +351,7 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 	order.CreatedAt = time.Now()
 	order.UpdatedAt = time.Now()
 
-	// 4. Convert to internal model and process through engine
+	// 4. Convert to internal model
 	modelOrder := toModelOrder(order)
 	if modelOrder == nil {
 		return nil, fmt.Errorf("failed to convert order to internal model")
@@ -325,11 +367,109 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 		zap.Float64("price", order.Price),
 		zap.Float64("quantity", order.Quantity))
 
-	// --- NEW: Call matching engine for real order processing ---
-	processedOrder, _, _, err := s.engine.ProcessOrder(ctx, modelOrder, "api")
-	if err != nil {
-		return nil, err
+	// 5. Check for advanced order types and route to trigger monitoring
+	isAdvancedOrder := false
+
+	switch strings.ToUpper(order.Type) {
+	case "STOP_LOSS", "STOP_LIMIT":
+		// Handle stop-loss orders
+		if modelOrder.StopPrice.IsZero() {
+			return nil, fmt.Errorf("stop price is required for stop-loss orders")
+		}
+
+		if err := s.triggerMonitor.AddStopLossOrder(modelOrder); err != nil {
+			return nil, fmt.Errorf("failed to add stop-loss trigger: %w", err)
+		}
+
+		// Set order status to pending trigger
+		modelOrder.Status = model2.OrderStatusPendingTrigger
+		isAdvancedOrder = true
+
+		s.logger.Info("Added stop-loss order to trigger monitoring",
+			zap.String("order_id", order.ID.String()),
+			zap.String("stop_price", modelOrder.StopPrice.String()))
+
+	case "TAKE_PROFIT":
+		// Handle take-profit orders (require profit price parameter)
+		profitPrice := modelOrder.StopPrice // Use StopPrice field for profit price
+		if profitPrice.IsZero() {
+			return nil, fmt.Errorf("profit price is required for take-profit orders")
+		}
+
+		if err := s.triggerMonitor.AddTakeProfitOrder(modelOrder, profitPrice); err != nil {
+			return nil, fmt.Errorf("failed to add take-profit trigger: %w", err)
+		}
+
+		// Set order status to pending trigger
+		modelOrder.Status = model2.OrderStatusPendingTrigger
+		isAdvancedOrder = true
+
+		s.logger.Info("Added take-profit order to trigger monitoring",
+			zap.String("order_id", order.ID.String()),
+			zap.String("profit_price", profitPrice.String()))
+
+	case "ICEBERG":
+		// Handle iceberg orders
+		if modelOrder.DisplayQuantity.IsZero() || modelOrder.DisplayQuantity.GreaterThan(modelOrder.Quantity) {
+			return nil, fmt.Errorf("invalid display quantity for iceberg order")
+		}
+
+		if err := s.triggerMonitor.AddIcebergOrder(modelOrder); err != nil {
+			return nil, fmt.Errorf("failed to add iceberg order: %w", err)
+		}
+
+		// Set order status to pending trigger (iceberg slice management)
+		modelOrder.Status = model2.OrderStatusPendingTrigger
+		isAdvancedOrder = true
+
+		s.logger.Info("Added iceberg order to slice management",
+			zap.String("order_id", order.ID.String()),
+			zap.String("total_quantity", modelOrder.Quantity.String()),
+			zap.String("display_quantity", modelOrder.DisplayQuantity.String()))
+
+	case "TRAILING_STOP":
+		// Handle trailing stop orders
+		if modelOrder.TrailingOffset.IsZero() {
+			return nil, fmt.Errorf("trailing offset is required for trailing stop orders")
+		}
+
+		if err := s.triggerMonitor.AddTrailingStopOrder(modelOrder); err != nil {
+			return nil, fmt.Errorf("failed to add trailing stop trigger: %w", err)
+		}
+
+		// Set order status to pending trigger
+		modelOrder.Status = model2.OrderStatusPendingTrigger
+		isAdvancedOrder = true
+
+		s.logger.Info("Added trailing stop order to trigger monitoring",
+			zap.String("order_id", order.ID.String()),
+			zap.String("trailing_offset", modelOrder.TrailingOffset.String()))
 	}
+
+	// 6. Process order based on type
+	var processedOrder *model2.Order
+	var err error
+
+	if isAdvancedOrder {
+		// For advanced orders, save to repository but don't execute immediately
+		if err := s.engine.GetOrderRepository().CreateOrder(ctx, modelOrder); err != nil {
+			return nil, fmt.Errorf("failed to save advanced order: %w", err)
+		}
+		processedOrder = modelOrder
+
+		s.logger.Info("Advanced order saved and added to trigger monitoring",
+			zap.String("order_id", order.ID.String()),
+			zap.String("type", order.Type),
+			zap.String("status", processedOrder.Status))
+	} else {
+		// For regular orders, process through matching engine
+		processedOrder, _, _, err = s.engine.ProcessOrder(ctx, modelOrder, "api")
+		if err != nil {
+			return nil, fmt.Errorf("failed to process order: %w", err)
+		}
+	}
+
+	// 7. Convert back to API model and return
 	apiOrder := toAPIOrder(processedOrder)
 	apiOrder.UpdatedAt = time.Now()
 	return apiOrder, nil

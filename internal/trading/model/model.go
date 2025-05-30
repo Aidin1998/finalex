@@ -6,15 +6,47 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
+// Enhanced Object Pools with Metrics and Pre-warming
 // OrderPool and TradePool provide zero-allocation pooling for hot path usage.
-var OrderPool = sync.Pool{New: func() any { return new(Order) }}
-var TradePool = sync.Pool{New: func() any { return new(Trade) }}
+
+// Pool metrics for monitoring hit/miss rates and performance
+type PoolMetrics struct {
+	Gets        int64 // Total gets from pool
+	Puts        int64 // Total puts to pool
+	Hits        int64 // Objects served from pool (not newly created)
+	Misses      int64 // Objects created because pool was empty
+	Allocations int64 // Total new objects allocated
+}
+
+var (
+	orderPoolMetrics = &PoolMetrics{}
+	tradePoolMetrics = &PoolMetrics{}
+)
+
+// Enhanced OrderPool with proper reset and metrics
+var OrderPool = sync.Pool{
+	New: func() any {
+		atomic.AddInt64(&orderPoolMetrics.Allocations, 1)
+		atomic.AddInt64(&orderPoolMetrics.Misses, 1)
+		return new(Order)
+	},
+}
+
+// Enhanced TradePool with proper reset and metrics
+var TradePool = sync.Pool{
+	New: func() any {
+		atomic.AddInt64(&tradePoolMetrics.Allocations, 1)
+		atomic.AddInt64(&tradePoolMetrics.Misses, 1)
+		return new(Trade)
+	},
+}
 
 // PriceFeedAdapter adapts a context-aware price feed to the legacy interface
 // (for API compatibility)
@@ -94,19 +126,109 @@ func NewOrderForTest(pair, side string, priceStr, qtyStr string) *Order { // Cha
 	}
 }
 
-// Preallocate a large number of Order and Trade objects for the pools at startup
+// Enhanced preallocation with configurable pool sizes
 func PreallocateObjectPools() {
-	const preallocOrders = 8192
-	const preallocTrades = 8192
+	PreallocateObjectPoolsWithSizes(8192, 8192)
+}
+
+// PreallocateObjectPoolsWithSizes allows configurable pool pre-warming
+func PreallocateObjectPoolsWithSizes(preallocOrders, preallocTrades int) {
+	// Ensure minimum of 1000 objects as per requirements
+	if preallocOrders < 1000 {
+		preallocOrders = 1000
+	}
+	if preallocTrades < 1000 {
+		preallocTrades = 1000
+	}
+
+	// Pre-warm OrderPool
 	for i := 0; i < preallocOrders; i++ {
-		OrderPool.Put(new(Order))
+		order := &Order{}
+		OrderPool.Put(order)
 	}
+
+	// Pre-warm TradePool
 	for i := 0; i < preallocTrades; i++ {
-		TradePool.Put(new(Trade))
+		trade := &Trade{}
+		TradePool.Put(trade)
 	}
+
+	fmt.Printf("Object pools pre-warmed: %d orders, %d trades\n", preallocOrders, preallocTrades)
 }
 
 // Call PreallocateObjectPools() during application startup (main.go or engine.go)
+
+// GetOrderFromPool gets an order from the pool with metrics tracking
+func GetOrderFromPool() *Order {
+	atomic.AddInt64(&orderPoolMetrics.Gets, 1)
+	order := OrderPool.Get().(*Order)
+	if order.ID != uuid.Nil {
+		// Object was reused from pool
+		atomic.AddInt64(&orderPoolMetrics.Hits, 1)
+	}
+	return order
+}
+
+// PutOrderToPool returns an order to the pool after resetting it
+func PutOrderToPool(order *Order) {
+	if order != nil {
+		ResetOrder(order)
+		atomic.AddInt64(&orderPoolMetrics.Puts, 1)
+		OrderPool.Put(order)
+	}
+}
+
+// GetTradeFromPool gets a trade from the pool with metrics tracking
+func GetTradeFromPool() *Trade {
+	atomic.AddInt64(&tradePoolMetrics.Gets, 1)
+	trade := TradePool.Get().(*Trade)
+	if trade.ID != uuid.Nil {
+		// Object was reused from pool
+		atomic.AddInt64(&tradePoolMetrics.Hits, 1)
+	}
+	return trade
+}
+
+// PutTradeToPool returns a trade to the pool after resetting it
+func PutTradeToPool(trade *Trade) {
+	if trade != nil {
+		ResetTrade(trade)
+		atomic.AddInt64(&tradePoolMetrics.Puts, 1)
+		TradePool.Put(trade)
+	}
+}
+
+// ResetOrder clears all fields of an order for safe pooling
+func ResetOrder(order *Order) {
+	*order = Order{}
+}
+
+// ResetTrade clears all fields of a trade for safe pooling
+func ResetTrade(trade *Trade) {
+	*trade = Trade{}
+}
+
+// GetOrderPoolMetrics returns current pool metrics for monitoring
+func GetOrderPoolMetrics() PoolMetrics {
+	return PoolMetrics{
+		Gets:        atomic.LoadInt64(&orderPoolMetrics.Gets),
+		Puts:        atomic.LoadInt64(&orderPoolMetrics.Puts),
+		Hits:        atomic.LoadInt64(&orderPoolMetrics.Hits),
+		Misses:      atomic.LoadInt64(&orderPoolMetrics.Misses),
+		Allocations: atomic.LoadInt64(&orderPoolMetrics.Allocations),
+	}
+}
+
+// GetTradePoolMetrics returns current pool metrics for monitoring
+func GetTradePoolMetrics() PoolMetrics {
+	return PoolMetrics{
+		Gets:        atomic.LoadInt64(&tradePoolMetrics.Gets),
+		Puts:        atomic.LoadInt64(&tradePoolMetrics.Puts),
+		Hits:        atomic.LoadInt64(&tradePoolMetrics.Hits),
+		Misses:      atomic.LoadInt64(&tradePoolMetrics.Misses),
+		Allocations: atomic.LoadInt64(&tradePoolMetrics.Allocations),
+	}
+}
 
 // OrderEventType represents the type of event for orderbook snapshots and recovery
 // Add more event types as needed for future features
@@ -191,8 +313,14 @@ func (o *Order) ValidateAdvanced() error {
 		return fmt.Errorf("TWAP/VWAP order must have algo params")
 	}
 	// Prevent invalid combinations
-	if o.Type == OrderTypeFOK && o.Type == OrderTypeGTD {
-		return fmt.Errorf("FOK and GTD cannot be combined")
+	if o.Type == OrderTypeFOK || o.Type == OrderTypeGTD {
+		// These are valid individual types, check for other invalid combinations
+		if o.Type == OrderTypeFOK && o.Side == "" {
+			return fmt.Errorf("FOK order must have valid side")
+		}
+		if o.Type == OrderTypeGTD && o.ExpireAt == nil {
+			return fmt.Errorf("GTD order must have expiration time")
+		}
 	}
 	if o.Type == OrderTypeOCO && o.ParentOrderID != nil {
 		return fmt.Errorf("OCO child cannot have ParentOrderID set")

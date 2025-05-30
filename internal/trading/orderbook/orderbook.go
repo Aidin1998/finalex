@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 
 	"github.com/google/uuid"
@@ -585,20 +586,18 @@ func (sc *spreadCache) addToLRU(price string, level *PriceLevel) {
 //
 // See detailed comments in each method for logic and concurrency model.
 
-// --- Order Object Pool ---
-var orderObjectPool = sync.Pool{
-	New: func() interface{} { return new(model.Order) },
-}
+// --- Order Object Pool Integration ---
+// Object pools are now managed in the model package for consistency
+// This provides wrapper functions for backward compatibility
 
-// GetOrderFromPool returns a pooled *model.Order
+// GetOrderFromPool returns a pooled *model.Order from the enhanced model pool
 func GetOrderFromPool() *model.Order {
-	return orderObjectPool.Get().(*model.Order)
+	return model.GetOrderFromPool()
 }
 
-// PutOrderToPool returns an order to the pool (zeroes fields for safety)
+// PutOrderToPool returns an order to the enhanced model pool
 func PutOrderToPool(order *model.Order) {
-	*order = model.Order{} // zero fields
-	orderObjectPool.Put(order)
+	model.PutOrderToPool(order)
 }
 
 // AddOrderResult holds the result of AddOrder: matched trades and resting orders.
@@ -619,6 +618,26 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 	if breakerActive {
 		return nil, fmt.Errorf("circuit breaker is active")
 	}
+
+	// --- Business Metrics, Alerting, Compliance Integration ---
+	// bm := server.BusinessMetricsInstanceExport
+	// alertSvc := server.AlertingServiceInstanceExport
+	// compliance := server.ComplianceServiceInstanceExport
+	pair := ob.Pair
+	user := ""
+	if order.UserID != uuid.Nil {
+		user = order.UserID.String()
+	}
+	orderType := order.Type
+
+	// Track order received (for conversion rate)
+	bm.mu.Lock()
+	if bm.Conversion[pair] == nil {
+		bm.Conversion[pair] = &metricsapi.ConversionStats{}
+	}
+	bm.Conversion[pair].Orders++
+	bm.mu.Unlock()
+
 	side := order.Side
 	var book, oppBook *btree.Map[string, *PriceLevel]
 	var bookMu, oppBookMu *sync.RWMutex
@@ -669,18 +688,87 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 			order.FilledQuantity = order.FilledQuantity.Add(matchQty)
 			maker.FilledQuantity = maker.FilledQuantity.Add(matchQty)
 			qtyLeft = qtyLeft.Sub(matchQty)
-			// Record trade
-			trade := &model.Trade{
-				ID:        uuid.New(),
-				OrderID:   order.ID,
-				Pair:      order.Pair,
-				Price:     priceDec,
-				Quantity:  matchQty,
-				Side:      order.Side,
-				Maker:     false,
-				CreatedAt: time.Now(),
-			}
+			// Record trade - use pooled trade object
+			trade := model.GetTradeFromPool()
+			trade.ID = uuid.New()
+			trade.OrderID = order.ID
+			trade.Pair = order.Pair
+			trade.Price = priceDec
+			trade.Quantity = matchQty
+			trade.Side = order.Side
+			trade.Maker = false
+			trade.CreatedAt = time.Now()
 			trades = append(trades, trade)
+
+			// --- Metrics: Fill Rate, Slippage, Market Impact, Compliance ---
+			bm.mu.Lock()
+			// Fill rate
+			if bm.FillRates[pair] == nil {
+				bm.FillRates[pair] = make(map[string]map[string]*metricsapi.FillRateStats)
+			}
+			if bm.FillRates[pair][user] == nil {
+				bm.FillRates[pair][user] = make(map[string]*metricsapi.FillRateStats)
+			}
+			if bm.FillRates[pair][user][orderType] == nil {
+				bm.FillRates[pair][user][orderType] = &metricsapi.FillRateStats{}
+			}
+			bm.FillRates[pair][user][orderType].Filled++
+			bm.FillRates[pair][user][orderType].Total++
+			// Slippage (difference between expected and executed price)
+			expected := order.Price.InexactFloat64()
+			executed := priceDec.InexactFloat64()
+			slippage := executed - expected
+			if bm.Slippage[pair] == nil {
+				bm.Slippage[pair] = make(map[string]*metricsapi.SlippageStats)
+			}
+			if bm.Slippage[pair][user] == nil {
+				bm.Slippage[pair][user] = &metricsapi.SlippageStats{Values: metricsapi.NewSlidingWindow(5 * time.Minute)}
+			}
+			bm.Slippage[pair][user].Values.Add(slippage)
+			if slippage > bm.Slippage[pair][user].Worst {
+				bm.Slippage[pair][user].Worst = slippage
+			}
+			// Market impact (track trade size)
+			if bm.MarketImpact[pair] == nil {
+				bm.MarketImpact[pair] = &metricsapi.MarketImpactStats{Values: metricsapi.NewSlidingWindow(5 * time.Minute)}
+			}
+			bm.MarketImpact[pair].Values.Add(matchQty.InexactFloat64())
+			// Conversion (order to trade)
+			bm.Conversion[pair].Trades++
+			bm.mu.Unlock()
+
+			// --- Alerting: Slippage, Fill Rate ---
+			if alertSvc != nil {
+				if slippage > alertSvc.Config.SlippageThreshold && alertSvc.Config.SlippageThreshold > 0 {
+					alertSvc.Raise(metricsapi.Alert{
+						Type:      metricsapi.AlertSlippage,
+						Market:    pair,
+						User:      user,
+						OrderType: orderType,
+						Value:     slippage,
+						Threshold: alertSvc.Config.SlippageThreshold,
+						Details:   "High slippage detected",
+						Timestamp: time.Now(),
+					})
+				}
+			}
+
+			// --- Compliance: Record trade event ---
+			if compliance != nil {
+				compliance.Record(metricsapi.ComplianceEvent{
+					Timestamp: time.Now(),
+					Market:    pair,
+					User:      user,
+					OrderID:   order.ID.String(),
+					Rule:      "trade_execution",
+					Violation: false,
+					Details: map[string]interface{}{
+						"price": executed,
+						"qty":   matchQty.InexactFloat64(),
+					},
+				})
+			}
+
 			if maker.FilledQuantity.Equal(maker.Quantity) {
 				level.RemoveOrder(maker.ID)
 				ob.ordersMu.Lock()
@@ -698,12 +786,14 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 		level.mu.Unlock()
 		return qtyLeft.GreaterThan(decimal.Zero)
 	})
-	oppBookMu.RUnlock()
-	// Remove empty price levels from opposite book
+	oppBookMu.RUnlock() // Remove empty price levels from opposite book
 	if len(toRemove) > 0 {
 		oppBookMu.Lock()
 		for _, price := range toRemove {
-			oppBook.Delete(price)
+			if level, exists := oppBook.Get(price); exists {
+				oppBook.Delete(price)
+				PutPriceLevelToPool(level)
+			}
 		}
 		oppBookMu.Unlock()
 	}
@@ -715,7 +805,8 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 		level, ok := book.Get(priceStr)
 		bookMu.RUnlock()
 		if !ok {
-			level = &PriceLevel{Price: priceStr}
+			level = GetPriceLevelFromPool()
+			level.Price = priceStr
 			bookMu.Lock()
 			book.Set(priceStr, level)
 			bookMu.Unlock()
@@ -729,10 +820,45 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 	result := &AddOrderResult{Trades: trades, RestingOrders: restingOrders}
 	// Update top levels cache after mutation
 	ob.UpdateTopLevelsCache(defaultTopLevelsDepth)
+
+	// --- Metrics: Failed Orders (if not filled) ---
+	if qtyLeft.GreaterThan(decimal.Zero) && trades == nil {
+		bm.mu.Lock()
+		if bm.FailedOrders[pair] == nil {
+			bm.FailedOrders[pair] = &metricsapi.FailedOrderStats{Reasons: make(map[string]int)}
+		}
+		bm.FailedOrders[pair].mu.Lock()
+		bm.FailedOrders[pair].Reasons["not_filled"]++
+		bm.FailedOrders[pair].mu.Unlock()
+		bm.mu.Unlock()
+		if alertSvc != nil && alertSvc.Config.FillRateThreshold > 0 {
+			alertSvc.Raise(metricsapi.Alert{
+				Type:      metricsapi.AlertLowFillRate,
+				Market:    pair,
+				User:      user,
+				OrderType: orderType,
+				Value:     0,
+				Threshold: alertSvc.Config.FillRateThreshold,
+				Details:   "Order not filled",
+				Timestamp: time.Now(),
+			})
+		}
+		if compliance != nil {
+			compliance.Record(metricsapi.ComplianceEvent{
+				Timestamp: time.Now(),
+				Market:    pair,
+				User:      user,
+				OrderID:   order.ID.String(),
+				Rule:      "order_not_filled",
+				Violation: false,
+				Details:   map[string]interface{}{},
+			})
+		}
+	}
+
 	return result, nil
 }
 
-// CancelOrder cancels an order by ID.
 func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 	ob.ordersMu.RLock()
 	order, ok := ob.ordersByID[orderID]
@@ -760,6 +886,7 @@ func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 			bookMu.Lock()
 			book.Delete(priceStr)
 			bookMu.Unlock()
+			PutPriceLevelToPool(level)
 		}
 		level.mu.Unlock()
 	}
@@ -769,6 +896,49 @@ func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 	PutOrderToPool(order)
 	// Update top levels cache after mutation
 	ob.UpdateTopLevelsCache(defaultTopLevelsDepth)
+
+	// --- Metrics: Failed Orders (cancelled) ---
+	bm := server.BusinessMetricsInstanceExport
+	alertSvc := server.AlertingServiceInstanceExport
+	compliance := server.ComplianceServiceInstanceExport
+	pair := ob.Pair
+	user := ""
+	if order.UserID != uuid.Nil {
+		user = order.UserID.String()
+	}
+	orderType := order.Type
+	bm.mu.Lock()
+	if bm.FailedOrders[pair] == nil {
+		bm.FailedOrders[pair] = &metricsapi.FailedOrderStats{Reasons: make(map[string]int)}
+	}
+	bm.FailedOrders[pair].mu.Lock()
+	bm.FailedOrders[pair].Reasons["cancelled"]++
+	bm.FailedOrders[pair].mu.Unlock()
+	bm.mu.Unlock()
+	if alertSvc != nil && alertSvc.Config.FillRateThreshold > 0 {
+		alertSvc.Raise(metricsapi.Alert{
+			Type:      metricsapi.AlertLowFillRate,
+			Market:    pair,
+			User:      user,
+			OrderType: orderType,
+			Value:     0,
+			Threshold: alertSvc.Config.FillRateThreshold,
+			Details:   "Order cancelled",
+			Timestamp: time.Now(),
+		})
+	}
+	if compliance != nil {
+		compliance.Record(metricsapi.ComplianceEvent{
+			Timestamp: time.Now(),
+			Market:    pair,
+			User:      user,
+			OrderID:   order.ID.String(),
+			Rule:      "order_cancelled",
+			Violation: false,
+			Details:   map[string]interface{}{},
+		})
+	}
+
 	return nil
 }
 
@@ -1076,7 +1246,7 @@ const defaultTopLevelsDepth = 20
 
 // NewOrderBook creates a new OrderBook for a given trading pair.
 func NewOrderBook(pair string) *OrderBook {
-	return &OrderBook{
+	ob := &OrderBook{
 		Pair:          pair,
 		bids:          btree.NewMap[string, *PriceLevel](32),
 		asks:          btree.NewMap[string, *PriceLevel](32),
@@ -1088,6 +1258,12 @@ func NewOrderBook(pair string) *OrderBook {
 		adminState:    nil,
 		snapshotCache: snapshotCache{},
 	}
+	// --- TriggerMonitor Integration ---
+	// Ensure every new order book is registered with the trigger monitor for price monitoring.
+	// If a global or injected TriggerMonitor reference is available, register here:
+	// Example (uncomment and adjust as needed):
+	// trigger.TriggerMonitorInstance.AddOrderBook(pair, ob)
+	return ob
 }
 
 // AllActiveOrders returns a slice of all open/active orders in the book.

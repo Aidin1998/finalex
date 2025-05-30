@@ -33,10 +33,14 @@ import (
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	persistence "github.com/Aidin1998/pincex_unified/internal/trading/persistence"
+	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 )
 
 // CancelRequest is re-exported from orderbook package for unified API.
@@ -965,25 +969,20 @@ var asyncDLQ = make(chan asyncJob, 10000)
 // --- MatchingEngine Core Struct ---
 // MatchingEngine is the main struct for the spot matching engine. It manages order books, persistence, and event handling.
 type MatchingEngine struct {
-	orderRepo    model.Repository
-	tradeRepo    TradeRepository
-	orderbooks   map[string]*orderbook.OrderBook
-	orderbooksMu sync.RWMutex
-	logger       *zap.SugaredLogger
-	config       *Config
-	workerPool   *WorkerPool
-	rateLimiter  *RateLimiter
-	eventJournal *eventjournal.EventJournal
-	wsHub        *ws.Hub
-	riskManager  interface {
-		CheckPositionLimit(userID, symbol string, intendedQty float64) error
-	}
+	orderRepo        model.Repository
+	tradeRepo        TradeRepository
+	orderbooks       map[string]*orderbook.OrderBook
+	orderbooksMu     sync.RWMutex
+	logger           *zap.SugaredLogger
+	config           *Config
+	workerPool       *WorkerPool
+	rateLimiter      *RateLimiter
+	eventJournal     *eventjournal.EventJournal
+	wsHub            *ws.Hub
+	riskManager      interface{}
 	settlementEngine *settlement.SettlementEngine
-
-	// --- Advanced Async Persistence ---
-	asyncJobCh  chan asyncJob
-	asyncDLQ    chan asyncJob
-	metricsOnce sync.Once
+	// --- TriggerMonitor Integration ---
+	triggerMonitor *trigger.TriggerMonitor // Add this field for advanced order monitoring
 }
 
 // enqueueAdvancedAsync adds an async job to the advanced async job channel with observability, retries, and idempotency.
@@ -1081,6 +1080,7 @@ func NewMatchingEngine(
 		CheckPositionLimit(userID, symbol string, intendedQty float64) error
 	},
 	settlementEngine *settlement.SettlementEngine,
+	triggerMonitor *trigger.TriggerMonitor, // Add triggerMonitor as a parameter
 ) *MatchingEngine {
 	var workerPool *WorkerPool
 	if config != nil && config.Engine.WorkerPoolSize > 0 {
@@ -1106,7 +1106,22 @@ func NewMatchingEngine(
 		wsHub:            wsHub,
 		riskManager:      riskManager,
 		settlementEngine: settlementEngine,
+		triggerMonitor:   triggerMonitor, // Initialize triggerMonitor
 	}
+
+	// Initialize object pools with pre-warming for optimal performance
+	// This reduces GC pressure by pre-allocating objects
+	me.initializeObjectPools(logger)
+
+	// Initialize async persistence layer
+	persistenceLayer, err := persistence.NewPersistenceLayer(orderRepo, "trading_wal.log")
+	if err != nil {
+		logger.Errorw("Failed to initialize async persistence layer", "error", err)
+	} else {
+		me.persistenceLayer = persistenceLayer
+		me.persistenceLayer.Writer.Start() // Start batch writer
+	}
+
 	me.StartAsyncProcessing()
 	return me
 }
@@ -1130,6 +1145,11 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 	if !ok {
 		ob = orderbook.NewOrderBook(order.Pair)
 		me.orderbooks[order.Pair] = ob
+		// --- TriggerMonitor Integration ---
+		// Register the new order book with the trigger monitor if available
+		if me.triggerMonitor != nil {
+			me.triggerMonitor.AddOrderBook(order.Pair, ob)
+		}
 	}
 	me.orderbooksMu.Unlock()
 
@@ -1150,35 +1170,95 @@ func (me *MatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, 
 		}
 	}
 	if err != nil {
+		// Record failed order in business metrics and compliance
+		metricsapi.BusinessMetricsInstance.mu.Lock()
+		if _, ok := metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair]; !ok {
+			metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair] = &metricsapi.FailedOrderStats{Reasons: make(map[string]int)}
+		}
+		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].mu.Lock()
+		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].Reasons[err.Error()]++
+		metricsapi.BusinessMetricsInstance.FailedOrders[order.Pair].mu.Unlock()
+		metricsapi.BusinessMetricsInstance.mu.Unlock()
+
+		metricsapi.ComplianceServiceInstance.Record(metricsapi.ComplianceEvent{
+			Timestamp: time.Now(),
+			Market:    order.Pair,
+			User:      order.UserID.String(),
+			OrderID:   order.ID.String(),
+			Rule:      "order_rejected",
+			Violation: true,
+			Details:   map[string]interface{}{"reason": err.Error(), "source": source},
+		})
 		return nil, nil, nil, err
 	}
 
-	// Enqueue async jobs for persistence and settlement
-	for _, trade := range trades {
-		me.enqueueAdvancedAsync(asyncJob{
-			op:         "create_trade",
-			data:       trade,
-			maxRetries: 3,
-			id:         trade.ID.String(),
-			createdAt:  time.Now(),
-		})
+	// --- Business Metrics: Fill Rate, Slippage, Conversion, etc. ---
+	metricsapi.BusinessMetricsInstance.mu.Lock()
+	// Fill Rate
+	if _, ok := metricsapi.BusinessMetricsInstance.FillRates[order.Pair]; !ok {
+		metricsapi.BusinessMetricsInstance.FillRates[order.Pair] = make(map[string]map[string]*metricsapi.FillRateStats)
 	}
-	me.enqueueAdvancedAsync(asyncJob{
-		op:         "update_order",
-		data:       order,
-		maxRetries: 3,
-		id:         order.ID.String(),
-		createdAt:  time.Now(),
+	if _, ok := metricsapi.BusinessMetricsInstance.FillRates[order.Pair][order.UserID.String()]; !ok {
+		metricsapi.BusinessMetricsInstance.FillRates[order.Pair][order.UserID.String()] = make(map[string]*metricsapi.FillRateStats)
+	}
+	if _, ok := metricsapi.BusinessMetricsInstance.FillRates[order.Pair][order.UserID.String()][order.Type]; !ok {
+		metricsapi.BusinessMetricsInstance.FillRates[order.Pair][order.UserID.String()][order.Type] = &metricsapi.FillRateStats{}
+	}
+	fr := metricsapi.BusinessMetricsInstance.FillRates[order.Pair][order.UserID.String()][order.Type]
+	fr.Total++
+	if order.FilledQuantity.Equal(order.Quantity) {
+		fr.Filled++
+	}
+	// Slippage (if applicable)
+	if _, ok := metricsapi.BusinessMetricsInstance.Slippage[order.Pair]; !ok {
+		metricsapi.BusinessMetricsInstance.Slippage[order.Pair] = make(map[string]*metricsapi.SlippageStats)
+	}
+	if _, ok := metricsapi.BusinessMetricsInstance.Slippage[order.Pair][order.UserID.String()]; !ok {
+		metricsapi.BusinessMetricsInstance.Slippage[order.Pair][order.UserID.String()] = &metricsapi.SlippageStats{Values: metricsapi.NewSlidingWindow(5 * time.Minute)}
+	}
+	if len(trades) > 0 {
+		// Calculate average slippage for this order
+		var totalSlippage float64
+		for _, trade := range trades {
+			// Slippage = |order.Price - trade.Price| for limit orders
+			if order.Type == OrderTypeLimit {
+				slippage := order.Price.Sub(trade.Price).Abs().InexactFloat64()
+				totalSlippage += slippage
+			}
+		}
+		avgSlippage := totalSlippage / float64(len(trades))
+		slipStats := metricsapi.BusinessMetricsInstance.Slippage[order.Pair][order.UserID.String()]
+		slipStats.Values.Add(avgSlippage)
+		if avgSlippage > slipStats.Worst {
+			slipStats.Worst = avgSlippage
+		}
+		// Alert if slippage exceeds threshold
+		if avgSlippage > 0.01 { // Example threshold
+			metricsapi.AlertingServiceInstance.Raise(metricsapi.Alert{
+				Type:      metricsapi.AlertSlippage,
+				Market:    order.Pair,
+				User:      order.UserID.String(),
+				OrderType: order.Type,
+				Value:     avgSlippage,
+				Threshold: 0.01,
+				Details:   "High slippage detected",
+				Timestamp: time.Now(),
+			})
+		}
+	}
+	metricsapi.BusinessMetricsInstance.mu.Unlock()
+
+	// --- Compliance Event Recording ---
+	metricsapi.ComplianceServiceInstance.Record(metricsapi.ComplianceEvent{
+		Timestamp: time.Now(),
+		Market:    order.Pair,
+		User:      order.UserID.String(),
+		OrderID:   order.ID.String(),
+		Rule:      "order_processed",
+		Violation: false,
+		Details:   map[string]interface{}{"filled_qty": order.FilledQuantity.String(), "order_qty": order.Quantity.String(), "source": source},
 	})
-	for _, trade := range trades {
-		me.enqueueAdvancedAsync(asyncJob{
-			op:         "settle_trade",
-			data:       trade,
-			maxRetries: 3,
-			id:         trade.ID.String() + ":settle",
-			createdAt:  time.Now(),
-		})
-	}
+
 	return order, trades, restingOrders, nil
 }
 
@@ -1214,6 +1294,44 @@ func (me *MatchingEngine) CancelOrder(req *CancelRequest) error {
 		return fmt.Errorf("failed to update order status in DB: %w", err)
 	}
 	return nil
+}
+
+// initializeObjectPools initializes and pre-warms all object pools for optimal performance
+// This reduces GC pressure by pre-allocating commonly used objects
+func (me *MatchingEngine) initializeObjectPools(logger *zap.SugaredLogger) {
+	// Pre-warm model object pools (Order and Trade)
+	// Use configurable sizes with minimums to ensure adequate pre-warming
+	orderPoolSize := 2000 // Default 2000 orders
+	tradePoolSize := 1500 // Default 1500 trades
+
+	// Check if config specifies larger pool sizes
+	if me.config != nil {
+		// Could add config fields for pool sizes in future
+		// For now, use sensible defaults based on expected load
+	}
+
+	// Pre-warm order and trade pools from model package
+	model.PreallocateObjectPoolsWithSizes(orderPoolSize, tradePoolSize)
+
+	// Pre-warm order book structure pools
+	// These handle price levels, order chunks, and snapshot slices
+	priceLevelSize := 200     // Price levels per order book
+	orderChunkSize := 800     // Order chunks for linked lists
+	safePriceLevelSize := 200 // Safe price levels for thread-safe books
+	snapshotSliceSize := 100  // Snapshot slices for market data
+
+	orderbook.PrewarmOrderBookPools(priceLevelSize, orderChunkSize, safePriceLevelSize, snapshotSliceSize)
+
+	if logger != nil {
+		logger.Infow("Object pools initialized and pre-warmed",
+			"order_pool_size", orderPoolSize,
+			"trade_pool_size", tradePoolSize,
+			"price_level_pool_size", priceLevelSize,
+			"order_chunk_pool_size", orderChunkSize,
+			"safe_price_level_pool_size", safePriceLevelSize,
+			"snapshot_slice_pool_size", snapshotSliceSize,
+		)
+	}
 }
 
 // ...existing code after ProcessOrder (other methods, etc)...

@@ -19,6 +19,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/server"
+	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
@@ -101,17 +102,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
-
 	// Create services with stubs
-	identitiesSvc, _ := identities.NewService(logger, db)
+	authSvc := &auth.AuthService{} // Create mock auth service first
+	identitiesSvc, _ := identities.NewService(logger, db, authSvc)
 	bookkeeperSvc, _ := bookkeeper.NewService(logger, db)
 	kycProvider := &stubKYCProvider{}
 	kycService := kyc.NewKYCService(kycProvider)
 	fiatSvc, _ := fiat.NewService(logger, db, bookkeeperSvc, kycService)
 	pubsub := &stubPubSub{}
 	marketfeedsSvc, _ := marketfeeds.NewService(logger, db, pubsub)
-	wsHub := ws.NewHub(2, 50) // Small test WebSocket hub
-	tradingSvc, _ := trading.NewService(logger, db, bookkeeperSvc, wsHub)
+	wsHub := ws.NewHub(2, 50)                          // Small test WebSocket hub
+	settlementEngine := &settlement.SettlementEngine{} // Mock settlement engine
+	tradingSvc, _ := trading.NewService(logger, db, bookkeeperSvc, wsHub, settlementEngine)
 
 	// Create auth service with in-memory rate limiter
 	inMemoryRateLimiter := auth.NewInMemoryRateLimiter()

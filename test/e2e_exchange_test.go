@@ -18,9 +18,11 @@ import (
 func TestE2E_ExchangeLifecycle(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	_ = db.AutoMigrate(&models.TradingPair{}, &models.Order{}, &models.Trade{}, &models.Account{}, &models.Transaction{}, &models.User{})
+
 	logger := zap.NewNop()
 	bkSvc, _ := bookkeeper.NewService(logger, db)
-	ts, _ := trading.NewService(logger, db, bkSvc)
+	// Create minimal dependencies for trading service - using nil for now since these are interface types
+	ts, _ := trading.NewService(logger, db, bkSvc, nil, nil)
 	_ = ts.Start()
 	ctx := context.Background()
 	userCount := 1000

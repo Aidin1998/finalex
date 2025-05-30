@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
@@ -87,6 +88,19 @@ func (s *Server) Router() *gin.Engine {
 
 	// Add WebSocket route for market data
 	router.GET("/ws/marketdata", s.handleWebSocketMarketData)
+
+	metricsAPI := metricsapi.NewMetricsAPI(
+		metricsapi.BusinessMetricsInstance,
+		metricsapi.AlertingServiceInstance,
+		metricsapi.ComplianceServiceInstance,
+	)
+
+	router.GET("/metrics/fillrate", gin.WrapH(metricsAPI))
+	router.GET("/metrics/slippage", gin.WrapH(metricsAPI))
+	router.GET("/metrics/marketimpact", gin.WrapH(metricsAPI))
+	router.GET("/metrics/spread", gin.WrapH(metricsAPI))
+	router.GET("/metrics/alerts", gin.WrapH(metricsAPI))
+	router.GET("/metrics/compliance", gin.WrapH(metricsAPI))
 
 	// Add API routes
 	api := router.Group("/api")

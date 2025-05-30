@@ -358,19 +358,16 @@ func (ob *DeadlockSafeOrderBook) findMatches(
 			matchQty := decimal.Min(qtyLeft, makerQtyLeft)
 			if matchQty.LessThanOrEqual(decimal.Zero) {
 				continue
-			}
-
-			// Create match record
-			trade := &model.Trade{
-				ID:        uuid.New(),
-				OrderID:   order.ID,
-				Pair:      order.Pair,
-				Price:     priceDec,
-				Quantity:  matchQty,
-				Side:      order.Side,
-				Maker:     false,
-				CreatedAt: time.Now(),
-			}
+			} // Create match record - use pooled trade object
+			trade := model.GetTradeFromPool()
+			trade.ID = uuid.New()
+			trade.OrderID = order.ID
+			trade.Pair = order.Pair
+			trade.Price = priceDec
+			trade.Quantity = matchQty
+			trade.Side = order.Side
+			trade.Maker = false
+			trade.CreatedAt = time.Now()
 
 			match := OrderMatch{
 				TakerOrder: order,
@@ -491,12 +488,14 @@ func (ob *DeadlockSafeOrderBook) cleanupPriceLevels(
 		}
 		level.mu.Unlock()
 	}
-
 	// Remove empty levels in batch
 	if len(levelsToRemove) > 0 {
 		bookMu.Lock()
 		for _, priceStr := range levelsToRemove {
-			bookMap.Delete(priceStr)
+			if level, exists := bookMap.Get(priceStr); exists {
+				bookMap.Delete(priceStr)
+				PutSafePriceLevelToPool(level)
+			}
 		}
 		bookMu.Unlock()
 	}
@@ -697,9 +696,9 @@ func (ob *DeadlockSafeOrderBook) CancelOrder(orderID uuid.UUID) error {
 		level.mu.RLock()
 		stillEmpty := level.isEmpty()
 		level.mu.RUnlock()
-
 		if stillEmpty {
 			bookMap.Delete(priceStr)
+			PutSafePriceLevelToPool(level)
 		}
 		bookMu.Unlock()
 	}
