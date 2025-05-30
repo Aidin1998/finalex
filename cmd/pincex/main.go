@@ -277,6 +277,37 @@ func main() {
 		zapLogger.Fatal("Failed to create market feeds service", zap.Error(err))
 	}
 
+	// --- SETTLEMENT PIPELINE WIRING ---
+	// Create confirmation store and channel
+	confirmationStore := settlement.NewConfirmationStore()
+	confirmationChan := make(chan settlement.SettlementConfirmation, 100)
+
+	// Kafka config (replace with your actual broker addresses and group ID)
+	kafkaBrokers := []string{"localhost:9092"} // TODO: load from config
+	kafkaGroupID := "settlement-group"         // TODO: load from config
+	kafkaTopic := "settlement-requests"        // TODO: load from config
+
+	settlementProcessor, err := settlement.NewSettlementProcessor(kafkaBrokers, kafkaGroupID, confirmationChan, zapLogger)
+	if err != nil {
+		zapLogger.Fatal("Failed to create settlement processor", zap.Error(err))
+	}
+
+	// Start the settlement processor in a goroutine
+	go func() {
+		ctx := context.Background()
+		if err := settlementProcessor.StartConsuming(ctx, kafkaTopic); err != nil {
+			zapLogger.Error("Settlement processor stopped", zap.Error(err))
+		}
+	}()
+
+	// Start a goroutine to save confirmations to the store
+	go func() {
+		for conf := range confirmationChan {
+			confirmationStore.Save(conf)
+		}
+	}()
+	// --- END SETTLEMENT PIPELINE WIRING ---
+
 	// Create API server
 	apiServer := server.NewServer(
 		zapLogger,
@@ -330,6 +361,9 @@ func main() {
 
 		// Register transaction management routes
 		transactionAPI.RegisterRoutes(router)
+
+		// Register settlement confirmation API routes
+		settlement.RegisterConfirmationAPI(router, confirmationStore)
 
 		if err := http.ListenAndServe(addr, router); err != nil {
 			zapLogger.Fatal("Failed to start API server", zap.Error(err))

@@ -33,6 +33,7 @@ require (
 	gorm.io/gorm v1.25.7-0.20240204074919-46816ad31dde
 	google.golang.org/grpc v1.62.1
 	google.golang.org/protobuf v1.33.0
+	github.com/Shopify/sarama v1.45.2
 )
 
 require (
@@ -128,3 +129,5 @@ require (
 replace github.com/Aidin1998/pincex_unified => ./
 
 replace github.com/Aidin1998/pincex_unified/pkg/metrics => ./pkg/metrics
+
+replace github.com/Shopify/sarama => github.com/Shopify/sarama v1.45.2
