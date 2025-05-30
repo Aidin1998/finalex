@@ -5,7 +5,6 @@ go 1.22
 toolchain go1.24.2
 
 require (
-	github.com/Aidin1998/pincex_unified/pkg/metrics v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.13.12
 	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-contrib/zap v0.2.0
@@ -16,6 +15,7 @@ require (
 	github.com/google/uuid v1.4.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/redis/go-redis/v9 v9.3.0
@@ -24,12 +24,10 @@ require (
 	github.com/spf13/viper v1.17.0
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/btree v1.7.0
-	github.com/ulule/limiter/v3 v3.11.2
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.46.1
-	go.opentelemetry.io/otel v1.21.0
-	go.opentelemetry.io/otel/trace v1.21.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/crypto v0.33.0
+	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/postgres v1.5.4
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.7-0.20240204074919-46816ad31dde
@@ -82,7 +80,6 @@ require (
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
-	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -90,7 +87,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/pierrec/lz4 v2.6.0+incompatible // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
@@ -108,7 +104,9 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
+	go.opentelemetry.io/otel v1.21.0 // indirect
 	go.opentelemetry.io/otel/metric v1.21.0 // indirect
+	go.opentelemetry.io/otel/trace v1.21.0 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect

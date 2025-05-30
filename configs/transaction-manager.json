@@ -1,0 +1,119 @@
+{
+  "xa_manager": {
+    "transaction_timeout": "5m",
+    "prepare_timeout": "30s",
+    "commit_timeout": "60s",
+    "rollback_timeout": "30s",
+    "max_concurrent_txns": 1000,
+    "recovery_interval": "30s",
+    "heuristic_timeout": "5m"
+  },
+  "recovery": {
+    "enabled": true,
+    "max_recovery_attempts": 3,
+    "recovery_timeout": "2m",
+    "retry_backoff_initial": "1s",
+    "retry_backoff_max": "30s",
+    "retry_backoff_multiplier": 2.0,
+    "parallel_recovery": true,
+    "circuit_breaker_enabled": true,
+    "circuit_breaker_threshold": 5,
+    "circuit_breaker_timeout": "60s"
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics_interval": "10s",
+    "alert_threshold_error_rate": 0.05,
+    "alert_threshold_timeout_rate": 0.02,
+    "alert_threshold_latency_p99": "5s",
+    "retention_period": "24h",
+    "email_notifications": {
+      "enabled": true,
+      "smtp_host": "smtp.company.com",
+      "smtp_port": 587,
+      "from_address": "alerts@company.com",
+      "to_addresses": ["ops@company.com", "devops@company.com"]
+    },
+    "slack_notifications": {
+      "enabled": true,
+      "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+      "channel": "#alerts"
+    }
+  },
+  "lock_manager": {
+    "lock_timeout": "30s",
+    "heartbeat_interval": "5s",
+    "cleanup_interval": "60s",
+    "max_locks_per_resource": 10,
+    "deadlock_detection_enabled": true,
+    "deadlock_detection_interval": "10s"
+  },
+  "middleware": {
+    "auto_commit": true,
+    "default_timeout": "30s",
+    "max_retries": 3,
+    "retry_backoff": "1s"
+  },
+  "resources": {
+    "bookkeeper": {
+      "max_connections": 20,
+      "connection_timeout": "5s",
+      "query_timeout": "30s",
+      "retry_attempts": 3
+    },
+    "settlement": {
+      "batch_size": 100,
+      "processing_timeout": "60s",
+      "max_parallel_operations": 10
+    },
+    "trading": {
+      "order_timeout": "10s",
+      "match_timeout": "5s",
+      "position_timeout": "30s"
+    },
+    "fiat": {
+      "validation_timeout": "30s",
+      "processing_timeout": "300s",
+      "compliance_timeout": "60s"
+    },
+    "wallet": {
+      "confirmation_blocks": 6,
+      "withdrawal_timeout": "600s",
+      "address_validation_timeout": "10s"
+    }
+  },
+  "performance": {
+    "batch_size": 100,
+    "connection_pool_size": 50,
+    "worker_count": 10,
+    "max_queue_size": 10000,
+    "metrics_buffer_size": 1000,
+    "enable_tracing": true,
+    "enable_profiling": false
+  },
+  "security": {
+    "enable_authentication": true,
+    "enable_authorization": true,
+    "api_key_required": true,
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 60,
+      "burst_size": 10
+    },
+    "audit_logging": {
+      "enabled": true,
+      "log_level": "info",
+      "include_payload": false
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "output": "stdout",
+    "file_output": "/var/log/transaction-manager.log",
+    "max_file_size": "100MB",
+    "max_backup_files": 5,
+    "max_file_age": 30,
+    "compress_backups": true
+  }
+}

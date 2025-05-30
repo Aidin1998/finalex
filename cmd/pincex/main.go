@@ -31,6 +31,7 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/server"
 	"github.com/Aidin1998/pincex_unified/internal/settlement"
+	"github.com/Aidin1998/pincex_unified/internal/transaction"
 )
 
 // --- STUB KYC PROVIDER ---
@@ -179,6 +180,25 @@ func main() {
 	settlementEngine := settlement.NewSettlementEngine()
 	// --- End Settlement Engine Initialization ---
 
+	// --- Distributed Transaction Manager Initialization ---
+	configPath := os.Getenv("TRANSACTION_CONFIG_PATH")
+	if configPath == "" {
+		configPath = "./configs/transaction-manager.yaml"
+	}
+
+	// Initialize distributed transaction manager suite
+	transactionSuite, err := transaction.GetTransactionManagerSuite(
+		db,
+		zapLogger,
+		nil, // bookkeeperSvc will be initialized later
+		settlementEngine,
+		configPath,
+	)
+	if err != nil {
+		zapLogger.Fatal("Failed to initialize transaction manager suite", zap.Error(err))
+	}
+	// --- End Distributed Transaction Manager Initialization ---
+
 	// Simple Redis client for rate limiting
 	simpleRedis := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Address,
@@ -219,6 +239,9 @@ func main() {
 		zapLogger.Fatal("Failed to create bookkeeper service", zap.Error(err))
 	}
 
+	// Update transaction suite with bookkeeper service
+	transactionSuite.BookkeeperXA = transaction.NewBookkeeperXAResource(bookkeeperSvc, db, zapLogger)
+
 	// Create a stub KYC service (replace with real provider as needed)
 	kycProvider := &stubKYCProvider{}
 	kycService := kyc.NewKYCService(kycProvider)
@@ -227,6 +250,9 @@ func main() {
 	if err != nil {
 		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
 	}
+
+	// Update transaction suite with fiat service
+	transactionSuite.FiatXA = transaction.NewFiatXAResource(db, fiatSvc, zapLogger)
 
 	// Create WebSocket Hub for high-performance real-time data
 	wsHub := ws.NewHub(16, 1000) // 16 shards, 1000 message replay buffer
@@ -263,10 +289,19 @@ func main() {
 		tieredRateLimiter,
 	)
 
+	// Initialize transaction API
+	transactionAPI := transaction.NewTransactionAPI(transactionSuite, zapLogger)
+
 	// Start services
 	if err := identitiesSvc.Start(); err != nil {
 		zapLogger.Fatal("Failed to start identities service", zap.Error(err))
 	}
+
+	// Start distributed transaction manager suite
+	if err := transactionSuite.Start(context.Background()); err != nil {
+		zapLogger.Fatal("Failed to start transaction manager suite", zap.Error(err))
+	}
+
 	if err := bookkeeperSvc.Start(); err != nil {
 		zapLogger.Fatal("Failed to start bookkeeper service", zap.Error(err))
 	}
@@ -286,6 +321,10 @@ func main() {
 	go func() {
 		zapLogger.Info("Starting API server", zap.String("addr", addr))
 		router := apiServer.Router()
+
+		// Register transaction management routes
+		transactionAPI.RegisterRoutes(router)
+
 		if err := http.ListenAndServe(addr, router); err != nil {
 			zapLogger.Fatal("Failed to start API server", zap.Error(err))
 		}
@@ -302,6 +341,10 @@ func main() {
 	// Stop services
 	if err := tradingSvc.Stop(); err != nil {
 		zapLogger.Error("Failed to stop trading service", zap.Error(err))
+	}
+	// Stop distributed transaction manager suite
+	if err := transactionSuite.Stop(context.Background()); err != nil {
+		zapLogger.Error("Failed to stop transaction manager suite", zap.Error(err))
 	}
 	if err := marketfeedsSvc.Stop(); err != nil {
 		zapLogger.Error("Failed to stop market feeds service", zap.Error(err))
