@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Shopify/sarama" // Kafka client
+	"github.com/IBM/sarama" // Kafka client
 	"go.uber.org/zap"
 )
 

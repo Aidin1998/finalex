@@ -90,19 +90,6 @@ type OrchestratorConfig struct {
 	BurstSize         int  `json:"burst_size" yaml:"burst_size"`
 }
 
-// MigrationRequest represents a migration request from the API
-type MigrationRequest struct {
-	OrderBookID    string                 `json:"order_book_id" validate:"required"`
-	SourceStrategy string                 `json:"source_strategy" validate:"required"`
-	TargetStrategy string                 `json:"target_strategy" validate:"required"`
-	MigrationMode  MigrationMode          `json:"migration_mode"`
-	Config         map[string]interface{} `json:"config,omitempty"`
-	Priority       int                    `json:"priority"`
-	ScheduledTime  *time.Time             `json:"scheduled_time,omitempty"`
-	DryRun         bool                   `json:"dry_run"`
-	Description    string                 `json:"description,omitempty"`
-}
-
 // MigrationResponse represents the API response for migration operations
 type MigrationResponse struct {
 	Success     bool        `json:"success"`

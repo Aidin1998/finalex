@@ -93,26 +93,6 @@ type RiskAssessment struct {
 	ImpactAssessment   *ImpactAssessment `json:"impact_assessment"`
 }
 
-// ImpactAssessment evaluates potential impact
-type ImpactAssessment struct {
-	PerformanceImpact  string `json:"performance_impact"`
-	AvailabilityImpact string `json:"availability_impact"`
-	DataIntegrityRisk  string `json:"data_integrity_risk"`
-	UserExperienceRisk string `json:"user_experience_risk"`
-	EstimatedDowntime  int64  `json:"estimated_downtime_ms"`
-}
-
-// PerformanceBaseline captures current performance metrics
-type PerformanceBaseline struct {
-	AvgLatencyMs    float64   `json:"avg_latency_ms"`
-	OrdersPerSecond float64   `json:"orders_per_second"`
-	MemoryUsageMB   float64   `json:"memory_usage_mb"`
-	CPUUsagePercent float64   `json:"cpu_usage_percent"`
-	ErrorRate       float64   `json:"error_rate"`
-	MeasurementTime time.Time `json:"measurement_time"`
-	SampleSize      int64     `json:"sample_size"`
-}
-
 // NewOrderBookParticipant creates a new order book migration participant
 func NewOrderBookParticipant(
 	pair string,
@@ -186,11 +166,15 @@ func (p *OrderBookParticipant) Prepare(ctx context.Context, migrationID uuid.UUI
 	if err != nil {
 		return p.createFailedState("snapshot creation failed", err), nil
 	}
-
 	// Step 4: Validate data integrity
 	validationData, err := p.validateDataIntegrity(ctx, snapshot)
 	if err != nil {
 		return p.createFailedState("data validation failed", err), nil
+	}
+
+	// Step 4.5: Set performance baseline in validation data
+	if baseline != nil {
+		validationData.PerformanceBaseline = baseline
 	}
 
 	// Step 5: Assess migration risks
@@ -317,10 +301,9 @@ func (p *OrderBookParticipant) Abort(ctx context.Context, migrationID uuid.UUID)
 			return fmt.Errorf("backup restoration failed: %w", err)
 		}
 	}
-
 	// Step 2: Reset to original state
 	if p.adaptiveBook != nil {
-		p.adaptiveBook.SetMigrationPercentage(0)
+		p.adaptiveBook.SetMigrationPercentage(int32(0))
 		p.logger.Infow("Reset adaptive order book to original implementation")
 	}
 
@@ -435,13 +418,16 @@ func (p *OrderBookParticipant) capturePerformanceBaseline(ctx context.Context) (
 	// This would implement actual performance measurement
 	// For now, return mock data
 	return &PerformanceBaseline{
-		AvgLatencyMs:    1.5,
-		OrdersPerSecond: 1000.0,
-		MemoryUsageMB:   256.0,
-		CPUUsagePercent: 15.0,
-		ErrorRate:       0.001,
-		MeasurementTime: time.Now(),
-		SampleSize:      10000,
+		CaptureTime:      time.Now(),
+		AvgLatency:       1500 * time.Microsecond, // 1.5ms
+		MaxLatency:       5 * time.Millisecond,
+		MinLatency:       500 * time.Microsecond,
+		ThroughputTPS:    1000.0,
+		ErrorRate:        0.001,
+		MemoryFootprint:  256 * 1024 * 1024, // 256MB in bytes
+		CPUUtilization:   15.0,
+		OrdersPerSecond:  1000.0,
+		SamplingDuration: 10 * time.Second,
 	}, nil
 }
 
@@ -540,6 +526,8 @@ func (p *OrderBookParticipant) validateDataIntegrity(ctx context.Context, snapsh
 		"orders_balanced":    snapshot.OrdersByType["buy"] > 0 && snapshot.OrdersByType["sell"] > 0,
 		"volume_positive":    snapshot.TotalVolume.GreaterThan(decimal.Zero),
 		"price_levels_valid": len(snapshot.PriceLevels) > 0,
+		"bids_available":     len(bids) > 0,
+		"asks_available":     len(asks) > 0,
 	}
 
 	// Create integrity checksum
@@ -586,18 +574,17 @@ func (p *OrderBookParticipant) assessMigrationRisks(config *migration.MigrationC
 		overallRisk = "high"
 		successProbability = 0.85
 	}
-
 	return &RiskAssessment{
 		OverallRisk:        overallRisk,
 		RiskFactors:        riskFactors,
 		MitigationActions:  mitigationActions,
 		SuccessProbability: successProbability,
 		ImpactAssessment: &ImpactAssessment{
-			PerformanceImpact:  "minimal",
-			AvailabilityImpact: "minimal",
-			DataIntegrityRisk:  "low",
-			UserExperienceRisk: "low",
-			EstimatedDowntime:  50, // milliseconds
+			EstimatedDowntime: 50, // milliseconds
+			AffectedUsers:     100,
+			OrdersAtRisk:      validation.OrderCount / 10,
+			RevenueImpact:     0.001, // 0.1% revenue impact
+			RecoveryTime:      5 * time.Second,
 		},
 	}
 }
@@ -662,9 +649,8 @@ func (p *OrderBookParticipant) executeAtomicSwitch(ctx context.Context) error {
 	// Temporarily halt trading
 	p.adaptiveBook.HaltTrading()
 	defer p.adaptiveBook.ResumeTrading()
-
 	// Switch to new implementation
-	p.adaptiveBook.SetMigrationPercentage(100)
+	p.adaptiveBook.SetMigrationPercentage(int32(100))
 
 	p.logger.Infow("Atomic switch completed", "pair", p.pair)
 	return nil
@@ -676,9 +662,8 @@ func (p *OrderBookParticipant) executeGradualRollout(ctx context.Context) error 
 	}
 
 	p.logger.Infow("Executing gradual rollout", "pair", p.pair)
-
 	// Gradually increase percentage over time
-	percentages := []int{10, 25, 50, 75, 100}
+	percentages := []int32{10, 25, 50, 75, 100}
 
 	for _, percentage := range percentages {
 		p.adaptiveBook.SetMigrationPercentage(percentage)
@@ -727,10 +712,9 @@ func (p *OrderBookParticipant) restoreFromBackup(ctx context.Context, backupInfo
 
 	// In a real implementation, this would restore actual backup data
 	// For now, we'll simulate it
-
 	// Reset adaptive book to original state
 	if p.adaptiveBook != nil {
-		p.adaptiveBook.SetMigrationPercentage(0)
+		p.adaptiveBook.SetMigrationPercentage(int32(0))
 	}
 
 	p.logger.Infow("Backup restoration completed", "backup_id", backupInfo.BackupID, "pair", p.pair)

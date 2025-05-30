@@ -14,11 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/pincex_unified/internal/trading/migration"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
-
-	"c:/Orbit CEX/pincex_unified/internal/trading/engine"
-	"c:/Orbit CEX/pincex_unified/internal/trading/migration"
 )
 
 // EngineParticipant handles matching engine coordination during migration
@@ -315,8 +315,6 @@ func (p *EngineParticipant) GetType() string {
 
 // HealthCheck performs a health check on the engine participant
 func (p *EngineParticipant) HealthCheck(ctx context.Context) (*migration.HealthCheck, error) {
-	startTime := time.Now()
-
 	// Check engine health
 	engineState := p.captureEngineState(ctx)
 
@@ -352,25 +350,28 @@ func (p *EngineParticipant) HealthCheck(ctx context.Context) (*migration.HealthC
 	}
 	atomic.StoreInt64(&p.lastHeartbeat, time.Now().UnixNano())
 
+	var status string
+	var message string
+
+	if overallHealthy {
+		status = "healthy"
+		message = "Engine participant is healthy"
+	} else {
+		status = "warning"
+		message = fmt.Sprintf("Engine participant unhealthy - routing: %v, sync: %v", routingHealthy, syncHealthy)
+		if healthScore < 0.5 {
+			status = "critical"
+		}
+	}
+
 	return &migration.HealthCheck{
-		Timestamp: time.Now(),
-		IsHealthy: overallHealthy,
-		Score:     healthScore,
-		Latency:   time.Since(startTime),
-		Details: map[string]interface{}{
-			"engine_state":      engineState,
-			"circuit_breaker":   p.circuitBreaker.state,
-			"routing_healthy":   routingHealthy,
-			"sync_healthy":      syncHealthy,
-			"processing_orders": atomic.LoadInt64(&p.isProcessingOrders) == 1,
-		},
-		Metrics: map[string]float64{
-			"error_rate":      engineState.ErrorRate,
-			"latency_p95_ms":  float64(engineState.LatencyP95.Nanoseconds()) / 1e6,
-			"throughput_tps":  engineState.ThroughputTPS,
-			"cpu_usage":       engineState.CPUUsage,
-			"memory_usage_mb": float64(engineState.MemoryUsage) / (1024 * 1024),
-		},
+		Name:       "engine_participant",
+		Status:     status,
+		Score:      healthScore,
+		Message:    message,
+		LastCheck:  time.Now(),
+		CheckCount: 1,
+		FailCount:  0,
 	}, nil
 }
 
@@ -452,7 +453,6 @@ func (p *EngineParticipant) Prepare(ctx context.Context, migrationID uuid.UUID, 
 		"risk_level", riskAssessment.OverallRisk,
 		"strategy", migrationPlan.Strategy,
 	)
-
 	// Create orders snapshot for coordinator
 	ordersSnapshot := &migration.OrdersSnapshot{
 		Timestamp:   engineState.Timestamp,
@@ -461,17 +461,9 @@ func (p *EngineParticipant) Prepare(ctx context.Context, migrationID uuid.UUID, 
 			"active":     engineState.ActiveOrders,
 			"processing": int64(engineState.QueueDepth),
 		},
-		TotalVolume: 0, // Will be populated by actual volume calculation
-		AverageSize: 0, // Will be populated by actual size calculation
-		PriceRange: migration.PriceRange{
-			Min: 0,
-			Max: 0,
-		},
-		MarketDepth: migration.MarketDepth{
-			BidLevels: 0,
-			AskLevels: 0,
-			Spread:    0,
-		},
+		TotalVolume: decimal.Zero, // Will be populated by actual volume calculation
+		PriceLevels: make(map[string]*migration.PriceLevelSnapshot),
+		Checksum:    "temp_checksum", // Will be calculated properly
 	}
 
 	return &migration.ParticipantState{

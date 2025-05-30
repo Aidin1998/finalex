@@ -18,6 +18,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// Alert represents a system alert
+type Alert struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Severity    string    `json:"severity"`
+	Message     string    `json:"message"`
+	Source      string    `json:"source"`
+	Deployment  string    `json:"deployment,omitempty"`
+	MetricName  string    `json:"metric_name,omitempty"`
+	MetricValue float64   `json:"metric_value,omitempty"`
+}
+
 // PredictionService orchestrates load prediction and scaling decisions
 type PredictionService struct {
 	config        *ServiceConfig
@@ -456,9 +467,31 @@ func (s *PredictionService) initializeModels() error {
 
 		switch modelConfig.Type {
 		case "arima":
-			model, err = NewARIMAModel(modelConfig.Parameters)
+			// Extract ARIMA parameters
+			p, d, q := 2, 1, 2 // default values
+			if pVal, ok := modelConfig.Parameters["p"].(float64); ok {
+				p = int(pVal)
+			}
+			if dVal, ok := modelConfig.Parameters["d"].(float64); ok {
+				d = int(dVal)
+			}
+			if qVal, ok := modelConfig.Parameters["q"].(float64); ok {
+				q = int(qVal)
+			}
+			model = NewARIMAModel(p, d, q, s.logger)
 		case "lstm":
-			model, err = NewLSTMModel(modelConfig.Parameters)
+			// Extract LSTM parameters
+			inputSize, hiddenSize, outputSize := 50, 128, 10 // default values
+			if iVal, ok := modelConfig.Parameters["input_size"].(float64); ok {
+				inputSize = int(iVal)
+			}
+			if hVal, ok := modelConfig.Parameters["hidden_size"].(float64); ok {
+				hiddenSize = int(hVal)
+			}
+			if oVal, ok := modelConfig.Parameters["output_size"].(float64); ok {
+				outputSize = int(oVal)
+			}
+			model = NewLSTMModel(inputSize, hiddenSize, outputSize, s.logger)
 		default:
 			return fmt.Errorf("unknown model type: %s", modelConfig.Type)
 		}
@@ -551,9 +584,8 @@ func (s *PredictionService) makePrediction(ctx context.Context) error {
 	if model == nil {
 		return fmt.Errorf("active model %s not found", s.activeModel)
 	}
-
 	startTime := time.Now()
-	prediction, err := model.Predict(ctx, metrics)
+	prediction, err := model.Predict(ctx, s.config.PredictionInterval)
 	predictionLatency := time.Since(startTime)
 
 	if err != nil {
@@ -597,10 +629,19 @@ func (s *PredictionService) makePrediction(ctx context.Context) error {
 			s.logger.Errorw("Failed to execute scaling decision", "error", err)
 		}
 	}
-
 	// Handle alerts
-	for _, alert := range prediction.Alerts {
+	for _, predictionAlert := range prediction.Alerts {
 		if s.onAlert != nil {
+			// Convert PredictionAlert to Alert
+			alert := &Alert{
+				Timestamp:   time.Now(),
+				Severity:    predictionAlert.Severity,
+				Message:     predictionAlert.Message,
+				Source:      "predictor",
+				Deployment:  "scaling-service",
+				MetricName:  string(predictionAlert.Type),
+				MetricValue: predictionAlert.PredictedValue,
+			}
 			err = s.onAlert(alert)
 			if err != nil {
 				s.logger.Errorw("Failed to send alert", "error", err)
@@ -622,30 +663,17 @@ func (s *PredictionService) makePrediction(ctx context.Context) error {
 func (s *PredictionService) fetchMetricsFromPrometheus(ctx context.Context) (*LoadMetrics, error) {
 	// This is a simplified implementation
 	// In production, you would fetch actual metrics from Prometheus
-	now := time.Now()
 
 	// Example metrics - replace with actual Prometheus queries
 	return &LoadMetrics{
-		Timestamp: now,
-		LoadMetrics: &LoadMetrics{
-			CPU:    0.7,  // 70% CPU usage
-			Memory: 0.6,  // 60% memory usage
-			RPS:    1000, // 1000 requests per second
-		},
-		TradingMetrics: &TradingMetrics{
-			OrdersPerSecond:  50,
-			TradesPerSecond:  25,
-			ActiveOrders:     1000,
-			OrderBookDepth:   500,
-			SpreadVolatility: decimal.NewFromFloat(0.02),
-			MarketVolatility: decimal.NewFromFloat(0.15),
-		},
-		SystemMetrics: &SystemMetrics{
-			DiskIOPS:            100,
-			NetworkIOBytes:      1024 * 1024, // 1MB
-			DatabaseConnections: 50,
-			MessageQueueSize:    100,
-		},
+		CPUUtilization:    0.7,         // 70% CPU usage
+		MemoryUtilization: 0.6,         // 60% memory usage
+		NetworkIOBytes:    1024 * 1024, // 1MB
+		DiskIOBytes:       512 * 1024,  // 512KB
+		RequestsPerSecond: 1000,        // 1000 requests per second
+		LatencyP95Ms:      45.5,        // 45.5ms P95 latency
+		ErrorRate:         0.02,        // 2% error rate
+		ActiveConnections: 150,         // 150 active connections
 	}, nil
 }
 
@@ -656,19 +684,22 @@ func (s *PredictionService) generateScalingDecision(ctx context.Context, predict
 	action := "no_change"
 	reason := "Load within normal range"
 
+	// Get predicted CPU utilization for scaling decisions
+	predictedCPU := prediction.PredictedLoad.CPUUtilization
+
 	// Determine scaling action based on prediction
-	if prediction.PredictedLoad > 0.8 {
+	if predictedCPU > 0.8 {
 		targetInstances = int(float64(currentInstances) * 1.5)
 		action = "scale_up"
 		reason = "High load predicted"
-	} else if prediction.PredictedLoad < 0.3 && currentInstances > s.config.ScalingConstraints.MinInstances {
+	} else if predictedCPU < 0.3 && currentInstances > s.config.ScalingConstraints.MinInstances {
 		targetInstances = int(float64(currentInstances) * 0.8)
 		action = "scale_down"
 		reason = "Low load predicted"
 	}
 
 	// Pre-warming logic
-	if prediction.PredictedLoad > s.config.ScalingConstraints.PreWarmingThreshold {
+	if predictedCPU > s.config.ScalingConstraints.PreWarmingThreshold {
 		if action == "no_change" {
 			action = "pre_warm"
 			targetInstances = currentInstances + 1
@@ -683,7 +714,7 @@ func (s *PredictionService) generateScalingDecision(ctx context.Context, predict
 		TargetInstances:   targetInstances,
 		Reason:            reason,
 		Confidence:        prediction.Confidence,
-		PredictedLoad:     prediction.PredictedLoad,
+		PredictedLoad:     predictedCPU,
 		ModelUsed:         s.activeModel,
 		CostImpact:        s.calculateCostImpact(currentInstances, targetInstances),
 		ManualOverride:    false,

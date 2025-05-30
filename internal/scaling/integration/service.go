@@ -12,17 +12,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/scaling/controller"
+	"github.com/Aidin1998/pincex_unified/internal/scaling/features"
+	"github.com/Aidin1998/pincex_unified/internal/scaling/predictor"
+	"github.com/Aidin1998/pincex_unified/internal/scaling/training"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/orbit-cex/pincex_unified/internal/scaling/controller"
-	"github.com/orbit-cex/pincex_unified/internal/scaling/features"
-	"github.com/orbit-cex/pincex_unified/internal/scaling/predictor"
-	"github.com/orbit-cex/pincex_unified/internal/scaling/training"
 )
 
 // MLAutoScalingService integrates all ML auto-scaling components
@@ -457,33 +456,25 @@ func (s *MLAutoScalingService) initializeComponents() error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize training pipeline: %w", err)
-	}
-
-	// Initialize prediction service
+	} // Initialize prediction service
 	s.predictionService, err = predictor.NewPredictionService(
-		&predictor.PredictionConfig{
-			Models:              s.config.TrainingPipeline.ModelConfigs,
-			PredictionHorizon:   5 * time.Minute,
-			ConfidenceThreshold: 0.8,
-			EnsembleMethod:      "weighted_average",
-			CacheConfig: &predictor.CacheConfig{
-				Enabled: true,
-				TTL:     1 * time.Minute,
-				MaxSize: 1000,
-			},
+		&predictor.ServiceConfig{
+			PredictionInterval:    5 * time.Minute,
+			ModelRetryInterval:    30 * time.Second,
+			MetricsBufferSize:     1000,
+			PredictionHistorySize: 100,
+			PrometheusURL:         s.config.Integration.Prometheus.URL,
 		},
 		s.logger.Named("prediction-service"),
+		nil, // regionCoordinator - would need to implement
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize prediction service: %w", err)
 	}
-
 	// Initialize auto-scaler
 	s.autoScaler, err = controller.NewAutoScaler(
 		s.config.AutoScaler,
 		s.logger.Named("auto-scaler"),
-		s.k8sClient,
-		nil, // metricsClient - would need to implement
 		s.predictionService,
 	)
 	if err != nil {
@@ -518,13 +509,12 @@ func (s *MLAutoScalingService) setupCallbacks() {
 	// Auto-scaler -> Scaling events
 	s.autoScaler.SetScalingEventCallback(func(event *controller.ScalingEvent) error {
 		s.metrics.ScalingEventsTotal++
-
 		scalingEvent := &ScalingEvent{
-			ID:              event.ID,
+			ID:              fmt.Sprintf("scaling-%d", time.Now().Unix()),
 			Timestamp:       event.Timestamp,
 			Service:         event.DeploymentName,
 			EventType:       event.EventType,
-			CurrentReplicas: event.OldReplicas,
+			CurrentReplicas: event.PreviousReplicas,
 			TargetReplicas:  event.NewReplicas,
 			Reason:          event.Reason,
 			Success:         event.Success,
@@ -562,11 +552,10 @@ func (s *MLAutoScalingService) runPredictionCycle(ctx context.Context) {
 		s.logger.Errorw("Failed to get features", "error", err)
 		return
 	}
-
-	// Generate predictions
-	predictions, err := s.predictionService.Predict(ctx, features.ScaledFeatures)
-	if err != nil {
-		s.logger.Errorw("Failed to generate predictions", "error", err)
+	// Get current prediction from the prediction service
+	currentPrediction := s.predictionService.GetCurrentPrediction()
+	if currentPrediction == nil {
+		s.logger.Warnw("No current prediction available")
 		return
 	}
 
@@ -575,22 +564,20 @@ func (s *MLAutoScalingService) runPredictionCycle(ctx context.Context) {
 		Timestamp:      time.Now(),
 		PredictionType: "load",
 		Predictions:    make(map[string]*LoadPrediction),
-		Confidence:     predictions.Confidence,
-		ModelUsed:      predictions.ModelName,
+		Confidence:     currentPrediction.Confidence,
+		ModelUsed:      currentPrediction.ModelMetadata.ModelType,
 		Features:       features.ScaledFeatures,
 		ProcessingTime: time.Since(startTime),
 	}
-
-	// Convert predictions to load predictions
-	for service, prediction := range predictions.Predictions {
-		result.Predictions[service] = &LoadPrediction{
-			Service:           service,
-			CurrentLoad:       prediction.CurrentValue,
-			PredictedLoad:     prediction.PredictedValue,
-			Horizon:           predictions.Horizon,
-			Confidence:        prediction.Confidence,
-			RecommendedAction: s.determineRecommendedAction(prediction),
-		}
+	// Convert prediction to load predictions (simplified for trading service)
+	currentLoad := 0.5 // This would come from current metrics
+	result.Predictions["trading-service"] = &LoadPrediction{
+		Service:           "trading-service",
+		CurrentLoad:       currentLoad,
+		PredictedLoad:     currentPrediction.PredictedLoad.CPUUtilization,
+		Horizon:           currentPrediction.PredictionHorizon,
+		Confidence:        currentPrediction.Confidence,
+		RecommendedAction: s.determineRecommendedAction(currentLoad, currentPrediction.PredictedLoad.CPUUtilization),
 	}
 
 	s.metrics.PredictionsGenerated++
@@ -604,8 +591,8 @@ func (s *MLAutoScalingService) runPredictionCycle(ctx context.Context) {
 }
 
 // determineRecommendedAction determines the recommended scaling action
-func (s *MLAutoScalingService) determineRecommendedAction(prediction *predictor.ServicePrediction) string {
-	changePercent := (prediction.PredictedValue - prediction.CurrentValue) / prediction.CurrentValue * 100
+func (s *MLAutoScalingService) determineRecommendedAction(currentLoad, predictedLoad float64) string {
+	changePercent := (predictedLoad - currentLoad) / currentLoad * 100
 
 	if changePercent > 20 {
 		return "scale_up"

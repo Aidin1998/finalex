@@ -71,6 +71,16 @@ const (
 	VoteTimeout ParticipantVote = "timeout"
 )
 
+// MigrationMode represents the mode of migration
+type MigrationMode string
+
+const (
+	ModeImmediate MigrationMode = "immediate"
+	ModeScheduled MigrationMode = "scheduled"
+	ModeGradual   MigrationMode = "gradual"
+	ModeDryRun    MigrationMode = "dry_run"
+)
+
 // MigrationRequest represents a migration request
 type MigrationRequest struct {
 	ID          uuid.UUID              `json:"id"`
@@ -164,15 +174,16 @@ type MigrationState struct {
 
 // ParticipantState represents the state of a migration participant
 type ParticipantState struct {
-	ID              string          `json:"id"`
-	Type            string          `json:"type"` // coordinator, order_book, persistence, etc.
-	Vote            ParticipantVote `json:"vote"`
-	VoteTime        *time.Time      `json:"vote_time,omitempty"`
-	LastHeartbeat   time.Time       `json:"last_heartbeat"`
-	IsHealthy       bool            `json:"is_healthy"`
-	ErrorMessage    string          `json:"error_message,omitempty"`
-	OrdersSnapshot  *OrdersSnapshot `json:"orders_snapshot,omitempty"`
-	PreparationData interface{}     `json:"preparation_data,omitempty"`
+	ID              string                 `json:"id"`
+	Type            string                 `json:"type"` // coordinator, order_book, persistence, etc.
+	Vote            ParticipantVote        `json:"vote"`
+	VoteTime        *time.Time             `json:"vote_time,omitempty"`
+	LastHeartbeat   time.Time              `json:"last_heartbeat"`
+	IsHealthy       bool                   `json:"is_healthy"`
+	ErrorMessage    string                 `json:"error_message,omitempty"`
+	Metrics         map[string]interface{} `json:"metrics,omitempty"`
+	OrdersSnapshot  *OrdersSnapshot        `json:"orders_snapshot,omitempty"`
+	PreparationData interface{}            `json:"preparation_data,omitempty"`
 }
 
 // VotesSummary summarizes the voting results
