@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,8 +59,93 @@ func NewEventJournal(log *zap.SugaredLogger, journalPath string) (*EventJournal,
 
 // ReplayEvents replays all events from the journal to restore engine state.
 func (ej *EventJournal) ReplayEvents(handler func(WALEvent) (bool, error)) error {
-	// TODO: implement replay logic
+	ej.mu.Lock()
+	defer ej.mu.Unlock()
+
+	// Close writer and reopen file for reading
+	if ej.writer != nil {
+		if err := ej.writer.Flush(); err != nil {
+			ej.log.Errorw("Failed to flush writer before replay", "error", err)
+		}
+	}
+
+	// Open file for reading
+	file, err := os.Open(ej.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ej.log.Info("No journal file found for replay")
+			return nil // No events to replay
+		}
+		return fmt.Errorf("failed to open journal file for replay: %w", err)
+	}
+	defer file.Close()
+
+	ej.log.Info("Starting event replay from journal", zap.String("path", ej.filePath))
+
+	scanner := bufio.NewScanner(file)
+	eventCount := 0
+	errorCount := 0
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue // Skip empty lines
+		}
+
+		var event WALEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			errorCount++
+			ej.log.Errorw("Failed to unmarshal event during replay",
+				"error", err,
+				"line", line[:min(100, len(line))],
+				"eventCount", eventCount)
+			continue // Skip corrupted events
+		}
+
+		eventCount++
+
+		// Call the handler with the event
+		shouldContinue, err := handler(event)
+		if err != nil {
+			ej.log.Errorw("Handler error during event replay",
+				"error", err,
+				"eventType", event.EventType,
+				"eventCount", eventCount)
+
+			// Check if we should continue on error
+			if !shouldContinue {
+				return fmt.Errorf("replay stopped due to handler error: %w", err)
+			}
+		}
+
+		if !shouldContinue {
+			ej.log.Infow("Replay stopped by handler", "eventCount", eventCount)
+			break
+		}
+
+		// Log progress every 1000 events
+		if eventCount%1000 == 0 {
+			ej.log.Infow("Replay progress", "eventsProcessed", eventCount)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading journal during replay: %w", err)
+	}
+
+	ej.log.Infow("Event replay completed",
+		"totalEvents", eventCount,
+		"errorCount", errorCount)
+
 	return nil
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // WriteEvent writes a WALEvent to the journal.

@@ -26,6 +26,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -270,7 +271,7 @@ func NewDistributedEventJournal(log *zap.SugaredLogger, journalPath string, inst
 var InstanceID string
 
 // --- Enhanced AppendEvent ---
-func (ej *EventJournal) AppendEvent(event WALEvent) error {
+func (ej *EventJournal) AppendWALEvent(event WALEvent) error {
 	if ej.InstanceID != "" {
 		// Attach instance ID for distributed tracing
 		if event.Data == nil {
@@ -373,3 +374,199 @@ func (ej *EventJournal) HealthCheck() map[string]interface{} {
 }
 
 // --- End Distributed Event Journal Usage ---
+
+// --- EventStore Interface Implementation ---
+
+// AppendEvent implements EventStore interface - appends a versioned event
+func (ej *EventJournal) AppendEvent(event VersionedEvent) error {
+	// Convert VersionedEvent to WALEvent for storage
+	walEvent := WALEvent{
+		Timestamp: event.Timestamp,
+		EventType: event.EventType,
+		Pair:      "",       // Extract from event data if needed
+		OrderID:   uuid.Nil, // Extract from event data if needed
+		Data:      event.Data,
+	}
+
+	// Extract pair and orderID from event data if available
+	if data, ok := event.Data.(map[string]interface{}); ok {
+		if pair, exists := data["pair"]; exists {
+			if pairStr, ok := pair.(string); ok {
+				walEvent.Pair = pairStr
+			}
+		}
+		if orderID, exists := data["order_id"]; exists {
+			if orderIDStr, ok := orderID.(string); ok {
+				if id, err := uuid.Parse(orderIDStr); err == nil {
+					walEvent.OrderID = id
+				}
+			}
+		}
+	}
+
+	return ej.AppendWALEvent(walEvent)
+}
+
+// ReplayAllVersioned implements EventStore interface - replays all events as versioned events
+func (ej *EventJournal) ReplayAllVersioned(handler func(VersionedEvent) error) error {
+	ej.log.Info("Starting versioned event replay")
+
+	// Use the existing ReplayEvents method with a conversion wrapper
+	return ej.ReplayEvents(func(walEvent WALEvent) (bool, error) {
+		// Convert WALEvent to VersionedEvent
+		versionedEvent := VersionedEvent{
+			EventID:   uuid.New().String(), // Generate new ID
+			EventType: walEvent.EventType,
+			Version:   1, // Default version, could be enhanced to detect version
+			Timestamp: walEvent.Timestamp,
+			Data:      walEvent.Data,
+		}
+
+		// Call the versioned event handler
+		if err := handler(versionedEvent); err != nil {
+			return false, err // Stop replay on error
+		}
+
+		return true, nil // Continue replay
+	})
+}
+
+// IntegrityCheck performs integrity check on the journal
+func (ej *EventJournal) IntegrityCheck() error {
+	ej.log.Info("Starting journal integrity check")
+
+	file, err := os.Open(ej.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No file means no integrity issues
+		}
+		return fmt.Errorf("failed to open journal for integrity check: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	validEvents := 0
+	corruptedEvents := 0
+
+	for scanner.Scan() {
+		lineCount++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var event WALEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			corruptedEvents++
+			ej.log.Warnw("Corrupted event found during integrity check",
+				"line", lineCount,
+				"error", err)
+		} else {
+			validEvents++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading journal during integrity check: %w", err)
+	}
+
+	ej.log.Infow("Journal integrity check completed",
+		"totalLines", lineCount,
+		"validEvents", validEvents,
+		"corruptedEvents", corruptedEvents)
+
+	if corruptedEvents > 0 {
+		return fmt.Errorf("found %d corrupted events out of %d total lines", corruptedEvents, lineCount)
+	}
+
+	return nil
+}
+
+// ReplayEvents implements the core replay functionality for WALEvents
+func (ej *EventJournal) ReplayEvents(handler func(WALEvent) (bool, error)) error {
+	ej.mu.Lock()
+	defer ej.mu.Unlock()
+
+	// Flush any pending writes
+	if ej.writer != nil {
+		if err := ej.writer.Flush(); err != nil {
+			ej.log.Errorw("Failed to flush writer before replay", "error", err)
+		}
+	}
+
+	// Open file for reading
+	file, err := os.Open(ej.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ej.log.Info("No journal file found for replay")
+			return nil
+		}
+		return fmt.Errorf("failed to open journal file for replay: %w", err)
+	}
+	defer file.Close()
+
+	ej.log.Infow("Starting event replay", "journalPath", ej.filePath)
+
+	scanner := bufio.NewScanner(file)
+	eventCount := 0
+	errorCount := 0
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var event WALEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			errorCount++
+			ej.log.Errorw("Failed to unmarshal event during replay",
+				"error", err,
+				"line", line[:minInt(100, len(line))],
+				"eventCount", eventCount)
+			continue
+		}
+
+		eventCount++
+
+		shouldContinue, err := handler(event)
+		if err != nil {
+			ej.log.Errorw("Handler error during replay",
+				"error", err,
+				"eventType", event.EventType,
+				"eventCount", eventCount)
+
+			if !shouldContinue {
+				return fmt.Errorf("replay stopped due to handler error: %w", err)
+			}
+		}
+
+		if !shouldContinue {
+			ej.log.Infow("Replay stopped by handler", "eventCount", eventCount)
+			break
+		}
+
+		if eventCount%1000 == 0 {
+			ej.log.Infow("Replay progress", "eventsProcessed", eventCount)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading journal during replay: %w", err)
+	}
+
+	ej.log.Infow("Event replay completed",
+		"totalEvents", eventCount,
+		"errorCount", errorCount)
+
+	return nil
+}
+
+// minInt helper function
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

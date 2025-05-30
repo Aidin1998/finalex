@@ -83,6 +83,7 @@ type OrderSourceType string
 const (
 	OrderSourceStopLimitTrigger OrderSourceType = "STOP_LIMIT_TRIGGER"
 	OrderSourceGTDExpiration    OrderSourceType = "GTD_EXPIRATION"
+	OrderSourceRecovery         OrderSourceType = "RECOVERY"
 )
 
 type TradeRepository interface {
@@ -289,21 +290,166 @@ func (r *RecoveryService) ReplayEvents() error {
 		r.logger.Warn("No event journal available for recovery")
 		return nil
 	}
+
 	r.logger.Info("Replaying events from journal for recovery...")
+
+	eventCount := 0
+	errorCount := 0
+
 	return r.journal.ReplayEvents(func(event eventjournal.WALEvent) (bool, error) {
+		eventCount++
+
+		// Log progress every 100 events during recovery
+		if eventCount%100 == 0 {
+			r.logger.Infow("Recovery progress", "eventsProcessed", eventCount)
+		}
+
 		switch event.EventType {
 		case eventjournal.EventTypeOrderPlaced:
-			order, ok := event.Data.(*model.Order)
-			if ok {
-				_, _, _, _ = r.engine.ProcessOrder(context.Background(), order, OrderSourceGTDExpiration)
+			if err := r.replayOrderPlaced(event); err != nil {
+				errorCount++
+				r.logger.Errorw("Failed to replay ORDER_PLACED event",
+					"eventCount", eventCount,
+					"error", err)
+				return true, nil // Continue on error
 			}
+
 		case eventjournal.EventTypeOrderCancelled:
-			// Implement cancel replay logic as needed
+			if err := r.replayOrderCancelled(event); err != nil {
+				errorCount++
+				r.logger.Errorw("Failed to replay ORDER_CANCELLED event",
+					"eventCount", eventCount,
+					"error", err)
+				return true, nil // Continue on error
+			}
+
 		case eventjournal.EventTypeTradeExecuted:
-			// Implement trade replay logic as needed
+			if err := r.replayTradeExecuted(event); err != nil {
+				errorCount++
+				r.logger.Errorw("Failed to replay TRADE_EXECUTED event",
+					"eventCount", eventCount,
+					"error", err)
+				return true, nil // Continue on error
+			}
+
+		case eventjournal.EventTypeCheckpoint:
+			r.logger.Debugw("Replaying checkpoint event", "eventCount", eventCount)
+			// Checkpoints are informational during recovery
+
+		default:
+			r.logger.Warnw("Unknown event type during replay",
+				"eventType", event.EventType,
+				"eventCount", eventCount)
 		}
-		return true, nil
+
+		return true, nil // Continue processing
 	})
+}
+
+// replayOrderPlaced processes an ORDER_PLACED event during recovery
+func (r *RecoveryService) replayOrderPlaced(event eventjournal.WALEvent) error {
+	// Try to extract order from event data
+	orderData, ok := event.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid order data format in event")
+	}
+
+	// Convert map to Order struct (simplified conversion)
+	// In production, you'd want more robust deserialization
+	order := &model.Order{
+		Pair: event.Pair,
+	}
+
+	// Parse order ID
+	if event.OrderID != uuid.Nil {
+		order.ID = event.OrderID
+	}
+
+	// Extract basic fields from orderData
+	if userID, exists := orderData["user_id"]; exists {
+		if userIDStr, ok := userID.(string); ok {
+			if id, err := uuid.Parse(userIDStr); err == nil {
+				order.UserID = id
+			}
+		}
+	}
+	if side, exists := orderData["side"]; exists {
+		if sideStr, ok := side.(string); ok {
+			order.Side = sideStr
+		}
+	}
+
+	if orderType, exists := orderData["type"]; exists {
+		if typeStr, ok := orderType.(string); ok {
+			order.Type = typeStr
+		}
+	}
+	if priceStr, exists := orderData["price"]; exists {
+		if price, ok := priceStr.(string); ok {
+			if priceDecimal, err := decimal.NewFromString(price); err == nil {
+				order.Price = priceDecimal
+			}
+		}
+	}
+
+	if quantityStr, exists := orderData["quantity"]; exists {
+		if quantity, ok := quantityStr.(string); ok {
+			if quantityDecimal, err := decimal.NewFromString(quantity); err == nil {
+				order.Quantity = quantityDecimal
+			}
+		}
+	}
+
+	// Process the order through the engine
+	ctx := context.Background()
+	_, _, _, err := r.engine.ProcessOrder(ctx, order, OrderSourceRecovery)
+	if err != nil {
+		return fmt.Errorf("failed to process replayed order: %w", err)
+	}
+
+	return nil
+}
+
+// replayOrderCancelled processes an ORDER_CANCELLED event during recovery
+func (r *RecoveryService) replayOrderCancelled(event eventjournal.WALEvent) error {
+	if event.OrderID == uuid.Nil {
+		return fmt.Errorf("missing order ID in cancel event")
+	}
+	// Create cancel request
+	cancelReq := &CancelRequest{
+		OrderID: event.OrderID,
+		Pair:    event.Pair,
+	}
+
+	// Extract user ID from event data if available
+	if data, ok := event.Data.(map[string]interface{}); ok {
+		if userID, exists := data["user_id"]; exists {
+			if userIDStr, ok := userID.(string); ok {
+				if id, err := uuid.Parse(userIDStr); err == nil {
+					cancelReq.UserID = id
+				}
+			}
+		}
+	}
+	// Process the cancellation through the engine
+	err := r.engine.CancelOrder(cancelReq)
+	if err != nil {
+		// During recovery, some cancellations might fail if order doesn't exist
+		r.logger.Debugw("Cancel during recovery failed (order may not exist)",
+			"orderID", event.OrderID,
+			"error", err)
+	}
+
+	return nil
+}
+
+// replayTradeExecuted processes a TRADE_EXECUTED event during recovery
+func (r *RecoveryService) replayTradeExecuted(event eventjournal.WALEvent) error {
+	// Trade events are typically results of order processing
+	// During recovery, trades should be reconstructed from order processing
+	// rather than replayed directly, so we can safely skip them
+	r.logger.Debugw("Skipping trade event during recovery (trades reconstructed from orders)")
+	return nil
 }
 
 // --- AdminController: Handles admin commands, market controls, and monitoring ---

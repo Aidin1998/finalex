@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -306,4 +307,128 @@ func (j *FileEventJournal) GetEvents(ctx context.Context, fromTime time.Time) ([
 	}
 
 	return events, nil
+}
+
+// ReplayEvents replays all events from the journal with advanced error handling
+func (j *FileEventJournal) ReplayEvents(ctx context.Context, handler func(*WALEvent) (bool, error)) error {
+	if !j.config.Enabled {
+		j.logger.Info("Journal is disabled, no events to replay")
+		return nil
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	// Open file for reading
+	file, err := os.Open(j.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			j.logger.Info("No journal file found for replay")
+			return nil
+		}
+		return fmt.Errorf("failed to open journal file for replay: %w", err)
+	}
+	defer file.Close()
+
+	j.logger.Info("Starting event replay from file journal", zap.String("path", j.filePath))
+
+	decoder := json.NewDecoder(file)
+	eventCount := 0
+	errorCount := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			j.logger.Warn("Replay cancelled by context")
+			return ctx.Err()
+		default:
+		}
+
+		var event WALEvent
+		if err := decoder.Decode(&event); err != nil {
+			if err == io.EOF {
+				break // End of file reached
+			}
+
+			errorCount++
+			j.logger.Error("Failed to decode event during replay",
+				zap.Error(err),
+				zap.Int("eventCount", eventCount))
+			continue
+		}
+
+		eventCount++
+
+		shouldContinue, err := handler(&event)
+		if err != nil {
+			j.logger.Error("Handler error during replay",
+				zap.Error(err),
+				zap.String("eventType", event.EventType),
+				zap.Int("eventCount", eventCount))
+
+			if !shouldContinue {
+				return fmt.Errorf("replay stopped due to handler error: %w", err)
+			}
+		}
+
+		if !shouldContinue {
+			j.logger.Info("Replay stopped by handler", zap.Int("eventCount", eventCount))
+			break
+		}
+
+		// Log progress every 1000 events
+		if eventCount%1000 == 0 {
+			j.logger.Info("Replay progress", zap.Int("eventsProcessed", eventCount))
+		}
+	}
+
+	j.logger.Info("Event replay completed",
+		zap.Int("totalEvents", eventCount),
+		zap.Int("errorCount", errorCount))
+
+	return nil
+}
+
+// ReplayEventsFromTime replays events from a specific timestamp
+func (j *FileEventJournal) ReplayEventsFromTime(ctx context.Context, fromTime time.Time, handler func(*WALEvent) (bool, error)) error {
+	if !j.config.Enabled {
+		return nil
+	}
+
+	events, err := j.GetEvents(ctx, fromTime)
+	if err != nil {
+		return fmt.Errorf("failed to get events from time: %w", err)
+	}
+
+	j.logger.Info("Starting time-based replay",
+		zap.Time("fromTime", fromTime),
+		zap.Int("eventsToReplay", len(events)))
+
+	for i, event := range events {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		shouldContinue, err := handler(event)
+		if err != nil {
+			j.logger.Error("Handler error during time-based replay",
+				zap.Error(err),
+				zap.String("eventType", event.EventType),
+				zap.Int("eventIndex", i))
+
+			if !shouldContinue {
+				return fmt.Errorf("time-based replay stopped due to handler error: %w", err)
+			}
+		}
+
+		if !shouldContinue {
+			j.logger.Info("Time-based replay stopped by handler", zap.Int("eventIndex", i))
+			break
+		}
+	}
+
+	j.logger.Info("Time-based replay completed", zap.Int("eventsProcessed", len(events)))
+	return nil
 }
