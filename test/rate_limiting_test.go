@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"testing"
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
@@ -27,6 +28,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/Aidin1998/pincex_unified/internal/middleware/ratelimit"
 )
 
 // Test UserService adapter for rate limiter
@@ -414,4 +417,41 @@ func (s *stubKYCProvider) GetStatus(sessionID string) (kyc.KYCStatus, error) {
 
 func (s *stubKYCProvider) WebhookHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+func TestRateLimitMiddleware_AllowAndBlock(t *testing.T) {
+	// Setup config manager with a strict limit
+	ratelimit.ConfigManagerInstance.SetConfig("anonymous", &ratelimit.RateLimitConfig{
+		Name:    "anonymous",
+		Type:    ratelimit.LimiterTokenBucket,
+		Limit:   2,
+		Burst:   2,
+		Window:  time.Second,
+		Enabled: true,
+	})
+	// Setup middleware
+	mw := ratelimit.Middleware
+	// Dummy handler
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	// First request: should pass
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	// Second request: should pass
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	// Third request: should be rate limited
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, req)
+	if rec3.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rec3.Code)
+	}
 }
