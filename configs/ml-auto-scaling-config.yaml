@@ -1,0 +1,446 @@
+# ML-based Auto-scaling Configuration
+# This configuration defines the ML-based load prediction and auto-scaling system
+
+# Auto-scaling Controller Configuration
+autoscaler:
+  namespace: "pincex-trading"
+  deployments:
+    trading-engine:
+      name: "trading-engine"
+      min_replicas: 3
+      max_replicas: 50
+      target_cpu: 70
+      target_memory: 80
+      strategy: "predictive"
+      custom_metrics:
+        - name: "orders_per_second"
+          type: "External"
+          target_value: "1000"
+          selector:
+            service: "trading-engine"
+        - name: "trade_latency_p99"
+          type: "External"
+          target_value: "50ms"
+          selector:
+            service: "trading-engine"
+      scaling_behavior:
+        scale_up:
+          stabilization_window_seconds: 30
+          select_policy: "Max"
+          policies:
+            - type: "Percent"
+              value: 100
+              period_seconds: 15
+            - type: "Pods"
+              value: 10
+              period_seconds: 60
+        scale_down:
+          stabilization_window_seconds: 300
+          select_policy: "Min"
+          policies:
+            - type: "Percent"
+              value: 10
+              period_seconds: 60
+    
+    order-matching:
+      name: "order-matching"
+      min_replicas: 2
+      max_replicas: 20
+      target_cpu: 75
+      target_memory: 85
+      strategy: "hybrid"
+      custom_metrics:
+        - name: "match_queue_depth"
+          type: "External"
+          target_value: "100"
+        - name: "match_latency_avg"
+          type: "External"  
+          target_value: "10ms"
+
+    market-data:
+      name: "market-data"
+      min_replicas: 2
+      max_replicas: 15
+      target_cpu: 60
+      target_memory: 70
+      strategy: "reactive"
+      custom_metrics:
+        - name: "market_data_throughput"
+          type: "External"
+          target_value: "10000"
+
+  # HPA Configuration with ML Predictions
+  hpa_configs:
+    trading-engine:
+      predictive_enabled: true
+      prediction_horizon: "5m"
+      confidence_threshold: 0.8
+      metrics:
+        - type: "Resource"
+          resource:
+            name: "cpu"
+            target: "70"
+        - type: "Resource"
+          resource:
+            name: "memory"
+            target: "80"
+        - type: "External"
+          external:
+            metric: "orders_per_second{service=\"trading-engine\"}"
+            target: "1000"
+
+  # Scaling Constraints
+  scaling_constraints:
+    max_scale_up_rate: 200      # Max 200% increase per minute
+    max_scale_down_rate: 50     # Max 50% decrease per minute
+    cooldown_period: "2m"
+    emergency_scale_up_limit: 500  # Emergency limit: 500% increase
+    cost_limit_per_hour: "1000.00"
+
+  # Pre-warming Configuration
+  pre_warming_config:
+    enabled: true
+    trigger_threshold: 0.7      # Start pre-warming at 70% predicted load
+    pre_warm_instances: 2
+    pre_warm_duration: "5m"
+    max_pre_warm_instances: 10
+
+  # Graceful Scale-down
+  graceful_scale_down:
+    enabled: true
+    drain_timeout: "60s"
+    pre_stop_hooks:
+      - name: "drain_connections"
+        timeout: "30s"
+        command: ["/scripts/drain.sh"]
+    data_persistence:
+      enabled: true
+      backup_timeout: "45s"
+
+  # Cost Optimization
+  cost_optimization:
+    enabled: true
+    spot_instances:
+      enabled: true
+      max_spot_ratio: 0.7
+      fallback_strategy: "on_demand"
+    scheduled_scaling:
+      enabled: true
+      rules:
+        - name: "trading_hours_scale_up"
+          schedule: "0 8 * * 1-5"  # 8 AM weekdays
+          min_replicas: 10
+          max_replicas: 50
+        - name: "off_hours_scale_down"
+          schedule: "0 18 * * 1-5"  # 6 PM weekdays
+          min_replicas: 3
+          max_replicas: 15
+
+# Feature Engineering Configuration
+feature_engineering:
+  # Data Ingestion
+  metrics_config:
+    prometheus_queries:
+      - name: "cpu_usage"
+        query: "rate(cpu_usage_seconds_total[5m])"
+        interval: "30s"
+        aggregation: "avg"
+        enabled: true
+      - name: "memory_usage"
+        query: "container_memory_usage_bytes / container_spec_memory_limit_bytes"
+        interval: "30s"
+        aggregation: "avg"
+        enabled: true
+      - name: "orders_per_second"
+        query: "rate(trading_orders_total[1m])"
+        interval: "15s"
+        aggregation: "sum"
+        enabled: true
+      - name: "trade_latency_p99"
+        query: "histogram_quantile(0.99, rate(trading_latency_seconds_bucket[5m]))"
+        interval: "30s"
+        aggregation: "avg"
+        enabled: true
+      - name: "order_book_depth"
+        query: "orderbook_depth_total"
+        interval: "10s"
+        aggregation: "avg"
+        enabled: true
+    
+    trading_metrics:
+      order_book_metrics:
+        depth_levels: [5, 10, 20]
+        spread_metrics: true
+        imbalance_metrics: true
+        velocity_metrics: true
+        update_frequency: "5s"
+      
+      trading_volume_metrics:
+        time_windows: ["1m", "5m", "15m", "1h"]
+        volume_breakdown: true
+        volume_profile: true
+        trend_analysis: true
+      
+      price_metrics:
+        price_features: ["ohlc", "vwap", "twap"]
+        returns: ["simple", "log"]
+        technical_indicators: ["rsi", "macd", "bollinger"]
+        time_frames: ["1m", "5m", "15m"]
+
+  # Feature Transformations
+  window_sizes: [5, 10, 30, 60]  # 5min, 10min, 30min, 1hour windows
+  update_frequency: "30s"
+  
+  transformations:
+    - name: "log_transform"
+      type: "log"
+      input_features: ["orders_per_second", "trade_volume"]
+      enabled: true
+      order: 1
+    
+    - name: "normalize"
+      type: "normalize"
+      input_features: ["cpu_usage", "memory_usage"]
+      enabled: true
+      order: 2
+    
+    - name: "polynomial"
+      type: "polynomial"
+      parameters:
+        degree: 2
+      input_features: ["trade_latency_p99"]
+      enabled: true
+      order: 3
+
+  # Feature Selection
+  lag_features: [1, 2, 3, 5, 10]  # Create lag features for 1, 2, 3, 5, 10 time periods
+  
+  selection_methods:
+    - method: "variance_threshold"
+      parameters:
+        threshold: 0.01
+      weight: 0.3
+      enabled: true
+    
+    - method: "correlation"
+      parameters:
+        threshold: 0.95
+      weight: 0.4
+      enabled: true
+    
+    - method: "mutual_info"
+      parameters:
+        k_best: 50
+      weight: 0.3
+      enabled: true
+
+  max_features: 100
+  selection_threshold: 0.05
+
+  # Feature Scaling
+  scaling_methods:
+    - method: "standard"
+      features: []  # Apply to all features
+      adaptive: true
+      update_freq: "1h"
+      enabled: true
+
+  # Quality Monitoring
+  monitoring_enabled: true
+  quality_config:
+    quality_metrics: ["completeness", "consistency", "validity"]
+    quality_thresholds:
+      completeness: 0.95
+      consistency: 0.90
+      validity: 0.98
+    monitoring_frequency: "5m"
+    
+    drift_detection:
+      enabled: true
+      methods: ["psi", "ks_test"]
+      window_size: "1h"
+      comparison_period: "24h"
+      thresholds:
+        psi: 0.1
+        ks_test: 0.05
+
+  # Caching and Performance
+  caching_config:
+    enabled: true
+    cache_size: 10000
+    ttl: "10m"
+    eviction_policy: "lru"
+    persistent_cache: false
+
+  parallel_processing:
+    enabled: true
+    worker_count: 4
+    batch_size: 100
+    queue_size: 1000
+
+# Training Pipeline Configuration  
+training_pipeline:
+  training_interval: "1h"        # Retrain models every hour
+  evaluation_interval: "15m"     # Evaluate models every 15 minutes
+  data_retention_period: "7d"    # Keep training data for 7 days
+  min_training_size: 1000        # Minimum data points for training
+  validation_split: 0.2          # 20% for validation
+  test_split: 0.1                # 10% for testing
+  max_concurrent_jobs: 3
+
+  # Model Configurations
+  model_configs:
+    arima:
+      model_type: "arima"
+      hyperparameters:
+        p: 2
+        d: 1
+        q: 2
+        seasonal: true
+        seasonal_periods: 12
+      training_strategy: "incremental"
+      enabled: true
+      priority: 1
+      
+      early_stopping_config:
+        enabled: true
+        patience: 10
+        min_delta: 0.001
+        monitor: "val_mae"
+        mode: "min"
+    
+    lstm:
+      model_type: "lstm"
+      hyperparameters:
+        sequence_length: 60
+        hidden_units: 128
+        layers: 2
+        dropout: 0.2
+        learning_rate: 0.001
+        batch_size: 32
+        epochs: 100
+      training_strategy: "incremental"
+      enabled: true
+      priority: 2
+      
+      early_stopping_config:
+        enabled: true
+        patience: 15
+        min_delta: 0.001
+        monitor: "val_loss"
+        mode: "min"
+    
+    xgboost:
+      model_type: "xgboost"
+      hyperparameters:
+        n_estimators: 100
+        max_depth: 6
+        learning_rate: 0.1
+        subsample: 0.8
+        colsample_bytree: 0.8
+      training_strategy: "full_retrain"
+      enabled: true
+      priority: 3
+
+  # Evaluation Configuration
+  evaluation_config:
+    metrics: ["mae", "rmse", "mape", "r2"]
+    validation_strategy: "time_series_split"
+    evaluation_frequency: "15m"
+    performance_thresholds:
+      mae: 0.05
+      rmse: 0.1
+      mape: 0.1
+      r2: 0.8
+    
+    backtesting_config:
+      enabled: true
+      window_size: "24h"
+      step_size: "1h"
+      min_test_periods: 10
+
+  # A/B Testing Configuration
+  ab_testing_config:
+    enabled: true
+    test_duration: "24h"
+    min_sample_size: 1000
+    significance_level: 0.05
+    power: 0.8
+    
+    test_groups:
+      - name: "control"
+        model_type: "arima"
+        traffic_percentage: 50
+      - name: "treatment"
+        model_type: "lstm"
+        traffic_percentage: 50
+
+  # Drift Detection
+  drift_detection_config:
+    enabled: true
+    methods: ["statistical", "model_based"]
+    detection_window: "1h"
+    comparison_window: "24h"
+    thresholds:
+      statistical: 0.05
+      model_based: 0.1
+    retrain_on_drift: true
+
+# Monitoring and Alerting
+monitoring:
+  prometheus:
+    enabled: true
+    metrics_port: 9090
+    custom_metrics:
+      - name: "ml_prediction_accuracy"
+        type: "gauge"
+        description: "ML model prediction accuracy"
+      - name: "scaling_events_total"
+        type: "counter"
+        description: "Total scaling events triggered"
+      - name: "feature_quality_score"
+        type: "gauge"
+        description: "Feature engineering quality score"
+
+  alerting:
+    enabled: true
+    channels: ["slack", "email"]
+    
+    alert_rules:
+      - name: "prediction_accuracy_low"
+        condition: "ml_prediction_accuracy < 0.7"
+        severity: "warning"
+        duration: "5m"
+      
+      - name: "scaling_failure"
+        condition: "scaling_events_failed_total > 0"
+        severity: "critical"
+        duration: "1m"
+      
+      - name: "feature_quality_degraded"
+        condition: "feature_quality_score < 0.8"
+        severity: "warning"
+        duration: "10m"
+
+# Integration Configuration
+integration:
+  kubernetes:
+    config_path: "~/.kube/config"
+    namespace: "pincex-trading"
+  
+  prometheus:
+    url: "http://prometheus:9090"
+    timeout: "30s"
+  
+  grafana:
+    url: "http://grafana:3000"
+    dashboard_id: "ml-autoscaling"
+
+# Logging Configuration  
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  fields:
+    service: "ml-autoscaler"
+    version: "1.0.0"

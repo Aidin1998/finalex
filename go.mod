@@ -33,7 +33,13 @@ require (
 	gorm.io/gorm v1.25.7-0.20240204074919-46816ad31dde
 	google.golang.org/grpc v1.62.1
 	google.golang.org/protobuf v1.33.0
-	github.com/Shopify/sarama v1.45.2
+	github.com/IBM/sarama v1.45.2
+	k8s.io/api v0.29.0
+	k8s.io/apimachinery v0.29.0
+	k8s.io/client-go v0.29.0
+	k8s.io/metrics v0.29.0
+	github.com/prometheus/client_golang v1.22.0
+	gonum.org/v1/gonum v0.14.0
 )
 
 require (

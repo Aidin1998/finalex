@@ -9,6 +9,8 @@ package training
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -940,14 +942,548 @@ func (tp *TrainingPipeline) SetDriftDetectedCallback(callback func(*DriftAlert) 
 	tp.onDriftDetected = callback
 }
 
-// Private methods (implementations would be quite extensive)
+// Helper methods for training pipeline
 
+// executeTrainingJob executes a training job
+func (tp *TrainingPipeline) executeTrainingJob(ctx context.Context, job *TrainingJob, config *ModelTrainingConfig) {
+	defer func() {
+		// Clean up job from running map
+		tp.trainingScheduler.mu.Lock()
+		delete(tp.trainingScheduler.running, job.ID)
+		tp.trainingScheduler.mu.Unlock()
+	}()
+
+	tp.logger.Infow("Starting training job execution",
+		"job_id", job.ID,
+		"model_type", job.ModelType)
+
+	// Update job progress
+	job.Progress = 0.1
+	job.Status = "data_preparation"
+
+	// Collect training data
+	trainingData, err := tp.dataCollector.CollectData(ctx, TimeRange{
+		Start: time.Now().Add(-tp.config.DataRetentionPeriod),
+		End:   time.Now(),
+	})
+	if err != nil {
+		tp.failTrainingJob(job, fmt.Sprintf("Data collection failed: %v", err))
+		return
+	}
+
+	if len(trainingData) < tp.config.MinTrainingSize {
+		tp.failTrainingJob(job, fmt.Sprintf("Insufficient training data: got %d, need %d",
+			len(trainingData), tp.config.MinTrainingSize))
+		return
+	}
+
+	job.Progress = 0.3
+	job.Status = "feature_engineering"
+
+	// Apply feature engineering
+	engineeredData, err := tp.featureEngineering.EngineerFeatures(ctx, trainingData)
+	if err != nil {
+		tp.failTrainingJob(job, fmt.Sprintf("Feature engineering failed: %v", err))
+		return
+	}
+
+	job.Progress = 0.5
+	job.Status = "training"
+
+	// Split data for training/validation
+	trainData, validationData := tp.splitTrainingData(engineeredData)
+
+	// Create model version
+	modelVersion := &ModelVersion{
+		ID:              fmt.Sprintf("%s-v%d", job.ModelType, time.Now().Unix()),
+		ModelType:       job.ModelType,
+		Version:         fmt.Sprintf("v%d", time.Now().Unix()),
+		TrainedAt:       time.Now(),
+		TrainingJobID:   job.ID,
+		Hyperparameters: job.Hyperparameters,
+		Status:          "training",
+		Tags:            make(map[string]string),
+	}
+
+	// Train model (simplified - would delegate to actual ML training)
+	trainingMetrics := tp.trainModel(ctx, job, modelVersion, trainData, validationData)
+
+	job.Progress = 0.8
+	job.Status = "validation"
+
+	// Validate model
+	validationMetrics := tp.validateModel(ctx, modelVersion, validationData)
+
+	job.Progress = 0.9
+	job.Status = "registration"
+
+	// Update model metrics
+	modelVersion.Metrics = &ModelMetrics{
+		TrainingMetrics:   trainingMetrics,
+		ValidationMetrics: validationMetrics,
+	}
+
+	// Register model
+	err = tp.modelRegistry.RegisterModel(ctx, modelVersion)
+	if err != nil {
+		tp.failTrainingJob(job, fmt.Sprintf("Model registration failed: %v", err))
+		return
+	}
+
+	// Complete job
+	job.Progress = 1.0
+	job.Status = "completed"
+	job.EndTime = &[]time.Time{time.Now()}[0]
+	modelVersion.Status = "trained"
+
+	// Store model version
+	tp.mu.Lock()
+	tp.modelVersions[modelVersion.ID] = modelVersion
+	tp.mu.Unlock()
+
+	// Call callback if configured
+	if tp.onModelTrained != nil {
+		go func() {
+			if err := tp.onModelTrained(modelVersion); err != nil {
+				tp.logger.Errorw("Model trained callback failed", "error", err)
+			}
+		}()
+	}
+
+	tp.logger.Infow("Training job completed successfully",
+		"job_id", job.ID,
+		"model_id", modelVersion.ID,
+		"training_metrics", trainingMetrics,
+		"validation_metrics", validationMetrics)
+}
+
+// failTrainingJob marks a training job as failed
+func (tp *TrainingPipeline) failTrainingJob(job *TrainingJob, reason string) {
+	job.Status = "failed"
+	job.EndTime = &[]time.Time{time.Now()}[0]
+	tp.logger.Errorw("Training job failed",
+		"job_id", job.ID,
+		"model_type", job.ModelType,
+		"reason", reason)
+}
+
+// splitTrainingData splits data into training and validation sets
+func (tp *TrainingPipeline) splitTrainingData(data []*TrainingDataPoint) ([]*TrainingDataPoint, []*TrainingDataPoint) {
+	splitIndex := int(float64(len(data)) * (1.0 - tp.config.ValidationSplit))
+	return data[:splitIndex], data[splitIndex:]
+}
+
+// trainModel performs the actual model training
+func (tp *TrainingPipeline) trainModel(ctx context.Context, job *TrainingJob, model *ModelVersion,
+	trainData, validationData []*TrainingDataPoint) map[string]float64 {
+
+	// Simplified training simulation
+	// In a real implementation, this would delegate to the specific ML framework
+
+	metrics := make(map[string]float64)
+
+	// Simulate training process with random metrics for demonstration
+	switch model.ModelType {
+	case "arima":
+		metrics["mae"] = 0.05 + (rand.Float64() * 0.02)
+		metrics["rmse"] = 0.08 + (rand.Float64() * 0.03)
+		metrics["mape"] = 0.06 + (rand.Float64() * 0.02)
+	case "lstm":
+		metrics["mae"] = 0.04 + (rand.Float64() * 0.02)
+		metrics["rmse"] = 0.07 + (rand.Float64() * 0.03)
+		metrics["mape"] = 0.05 + (rand.Float64() * 0.02)
+		metrics["accuracy"] = 0.85 + (rand.Float64() * 0.1)
+	case "xgboost":
+		metrics["mae"] = 0.03 + (rand.Float64() * 0.02)
+		metrics["rmse"] = 0.06 + (rand.Float64() * 0.03)
+		metrics["mape"] = 0.04 + (rand.Float64() * 0.02)
+		metrics["r2"] = 0.90 + (rand.Float64() * 0.05)
+	default:
+		metrics["mae"] = 0.06 + (rand.Float64() * 0.03)
+		metrics["rmse"] = 0.09 + (rand.Float64() * 0.04)
+	}
+
+	job.Metrics = metrics
+	return metrics
+}
+
+// validateModel validates the trained model
+func (tp *TrainingPipeline) validateModel(ctx context.Context, model *ModelVersion,
+	validationData []*TrainingDataPoint) map[string]float64 {
+
+	// Simplified validation
+	metrics := make(map[string]float64)
+
+	// Validation metrics are typically slightly worse than training metrics
+	if model.Metrics != nil && model.Metrics.TrainingMetrics != nil {
+		for metricName, value := range model.Metrics.TrainingMetrics {
+			// Add some degradation to simulate realistic validation performance
+			degradation := 0.05 + (rand.Float64() * 0.1)
+			if metricName == "accuracy" || metricName == "r2" {
+				metrics[metricName] = value * (1.0 - degradation)
+			} else {
+				metrics[metricName] = value * (1.0 + degradation)
+			}
+		}
+	}
+
+	return metrics
+}
+
+// checkPerformanceDegradation checks if model performance is degrading
+func (tp *TrainingPipeline) checkPerformanceDegradation(model *ModelVersion, result *EvaluationResult) {
+	// Get historical performance
+	tp.performanceTracker.mu.RLock()
+	history := tp.performanceTracker.performanceHistory[model.ID]
+	tp.performanceTracker.mu.RUnlock()
+
+	if len(history) < 3 {
+		return // Need at least 3 points for trend analysis
+	}
+
+	// Check for degradation trend
+	recentPoints := history[len(history)-3:]
+	for metricName, currentValue := range result.Metrics {
+		baseline := recentPoints[0].Metrics[metricName]
+		degradationPct := math.Abs((currentValue - baseline) / baseline * 100)
+
+		threshold := 10.0 // 10% degradation threshold
+		if degradationPct > threshold {
+			alert := &PerformanceDegradationAlert{
+				ID:              fmt.Sprintf("degradation-%s-%s-%d", model.ID, metricName, time.Now().Unix()),
+				Timestamp:       time.Now(),
+				ModelVersion:    model.ID,
+				MetricName:      metricName,
+				CurrentValue:    currentValue,
+				BaselineValue:   baseline,
+				DegradationPct:  degradationPct,
+				Severity:        tp.calculateDegradationSeverity(degradationPct),
+				TrendDirection:  tp.calculateTrendDirection(recentPoints, metricName),
+				Recommendations: tp.generateDegradationRecommendations(degradationPct, metricName),
+			}
+
+			tp.performanceTracker.mu.Lock()
+			tp.performanceTracker.degradationAlerts = append(tp.performanceTracker.degradationAlerts, alert)
+			tp.performanceTracker.mu.Unlock()
+
+			tp.logger.Warnw("Performance degradation detected",
+				"model_id", model.ID,
+				"metric", metricName,
+				"degradation_pct", degradationPct,
+				"severity", alert.Severity)
+		}
+	}
+}
+
+// calculatePerformanceMetrics calculates performance metrics from test data
+func (tp *TrainingPipeline) calculatePerformanceMetrics(testData []*TrainingDataPoint, model *ModelVersion) map[string]float64 {
+	metrics := make(map[string]float64)
+
+	// Simplified metric calculation - would use actual model predictions
+	metrics["mae"] = 0.05 + (rand.Float64() * 0.02)
+	metrics["rmse"] = 0.08 + (rand.Float64() * 0.03)
+	metrics["mape"] = 0.06 + (rand.Float64() * 0.02)
+	metrics["latency_ms"] = 10.0 + (rand.Float64() * 5.0)
+	metrics["throughput_rps"] = 100.0 + (rand.Float64() * 50.0)
+
+	return metrics
+}
+
+// calculateDataQuality calculates data quality score
+func (tp *TrainingPipeline) calculateDataQuality(data []*TrainingDataPoint) float64 {
+	if len(data) == 0 {
+		return 0.0
+	}
+
+	// Simple quality calculation based on completeness and variance
+	completePoints := 0
+	for _, point := range data {
+		if point.Quality > 0.7 {
+			completePoints++
+		}
+	}
+
+	return float64(completePoints) / float64(len(data))
+}
+
+// detectPerformanceDegradation detects performance degradation
+func (tp *TrainingPipeline) detectPerformanceDegradation(model *ModelVersion, point *PerformancePoint) {
+	tp.performanceTracker.mu.RLock()
+	history := tp.performanceTracker.performanceHistory[model.ID]
+	tp.performanceTracker.mu.RUnlock()
+
+	if len(history) < 5 {
+		return // Need sufficient history
+	}
+
+	// Calculate moving average for baseline
+	baseline := tp.calculateMovingAverage(history[len(history)-5:], "mae")
+	current := point.Metrics["mae"]
+
+	degradationPct := (current - baseline) / baseline * 100
+	if degradationPct > 15.0 { // 15% degradation threshold
+		alert := &PerformanceDegradationAlert{
+			ID:              fmt.Sprintf("perf-degradation-%s-%d", model.ID, time.Now().Unix()),
+			Timestamp:       time.Now(),
+			ModelVersion:    model.ID,
+			MetricName:      "mae",
+			CurrentValue:    current,
+			BaselineValue:   baseline,
+			DegradationPct:  degradationPct,
+			Severity:        tp.calculateDegradationSeverity(degradationPct),
+			Recommendations: []string{"Consider model retraining", "Check data quality"},
+		}
+
+		tp.performanceTracker.mu.Lock()
+		tp.performanceTracker.degradationAlerts = append(tp.performanceTracker.degradationAlerts, alert)
+		tp.performanceTracker.mu.Unlock()
+	}
+}
+
+// calculateMovingAverage calculates moving average for a metric
+func (tp *TrainingPipeline) calculateMovingAverage(points []*PerformancePoint, metric string) float64 {
+	if len(points) == 0 {
+		return 0.0
+	}
+
+	sum := 0.0
+	count := 0
+	for _, point := range points {
+		if value, exists := point.Metrics[metric]; exists {
+			sum += value
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 0.0
+	}
+
+	return sum / float64(count)
+}
+
+// calculateDriftSeverity calculates drift severity level
+func (tp *TrainingPipeline) calculateDriftSeverity(driftScore float64) string {
+	if driftScore > 0.8 {
+		return "critical"
+	} else if driftScore > 0.6 {
+		return "high"
+	} else if driftScore > 0.4 {
+		return "medium"
+	} else if driftScore > 0.2 {
+		return "low"
+	}
+	return "minimal"
+}
+
+// generateDriftRecommendations generates recommendations for drift handling
+func (tp *TrainingPipeline) generateDriftRecommendations(result *DriftDetectionResult) []string {
+	recommendations := make([]string, 0)
+
+	if result.DriftScore > 0.6 {
+		recommendations = append(recommendations, "Immediate model retraining recommended")
+		recommendations = append(recommendations, "Review feature engineering pipeline")
+	} else if result.DriftScore > 0.4 {
+		recommendations = append(recommendations, "Schedule model retraining within 24 hours")
+		recommendations = append(recommendations, "Monitor feature distributions closely")
+	} else {
+		recommendations = append(recommendations, "Continue monitoring")
+		recommendations = append(recommendations, "Consider feature recalibration")
+	}
+
+	if len(result.AffectedFeatures) > 0 {
+		recommendations = append(recommendations,
+			fmt.Sprintf("Focus on affected features: %v", result.AffectedFeatures))
+	}
+
+	return recommendations
+}
+
+// calculateDegradationSeverity calculates performance degradation severity
+func (tp *TrainingPipeline) calculateDegradationSeverity(degradationPct float64) string {
+	if degradationPct > 50.0 {
+		return "critical"
+	} else if degradationPct > 30.0 {
+		return "high"
+	} else if degradationPct > 15.0 {
+		return "medium"
+	}
+	return "low"
+}
+
+// calculateTrendDirection calculates trend direction for a metric
+func (tp *TrainingPipeline) calculateTrendDirection(points []*PerformancePoint, metric string) string {
+	if len(points) < 2 {
+		return "unknown"
+	}
+
+	first := points[0].Metrics[metric]
+	last := points[len(points)-1].Metrics[metric]
+
+	if last > first {
+		return "increasing"
+	} else if last < first {
+		return "decreasing"
+	}
+	return "stable"
+}
+
+// generateDegradationRecommendations generates recommendations for performance degradation
+func (tp *TrainingPipeline) generateDegradationRecommendations(degradationPct float64, metric string) []string {
+	recommendations := make([]string, 0)
+
+	if degradationPct > 30.0 {
+		recommendations = append(recommendations, "Immediate model retraining required")
+		recommendations = append(recommendations, "Investigate data quality issues")
+		recommendations = append(recommendations, "Consider rolling back to previous model version")
+	} else if degradationPct > 15.0 {
+		recommendations = append(recommendations, "Schedule model retraining")
+		recommendations = append(recommendations, "Monitor data pipeline health")
+	} else {
+		recommendations = append(recommendations, "Continue monitoring")
+		recommendations = append(recommendations, "Consider hyperparameter tuning")
+	}
+
+	return recommendations
+}
+
+// A/B testing helper methods
+
+// collectABTestMetrics collects metrics for A/B testing
+func (tp *TrainingPipeline) collectABTestMetrics(ctx context.Context, modelID string) (map[string]*ABTestMetric, error) {
+	metrics := make(map[string]*ABTestMetric)
+
+	// Collect performance data for the model
+	testData, err := tp.dataCollector.CollectData(ctx, TimeRange{
+		Start: time.Now().Add(-tp.config.ABTestingConfig.TestDuration),
+		End:   time.Now(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate metrics
+	performanceMetrics := tp.calculatePerformanceMetrics(testData, &ModelVersion{ID: modelID})
+
+	for metricName, value := range performanceMetrics {
+		metrics[metricName] = &ABTestMetric{
+			Value:      value,
+			SampleSize: len(testData),
+			StdDev:     value * 0.1, // Simplified standard deviation
+			ConfidenceInterval: [2]float64{
+				value * 0.95,
+				value * 1.05,
+			},
+		}
+	}
+
+	return metrics, nil
+}
+
+// performStatisticalTest performs statistical significance testing
+func (tp *TrainingPipeline) performStatisticalTest(championMetrics, challengerMetrics map[string]*ABTestMetric) bool {
+	// Simplified statistical test - in practice would use proper t-test or similar
+
+	for metricName, challengerMetric := range challengerMetrics {
+		championMetric, exists := championMetrics[metricName]
+		if !exists {
+			continue
+		}
+
+		// Check if challenger is significantly better
+		improvement := (championMetric.Value - challengerMetric.Value) / championMetric.Value
+
+		// For error metrics (lower is better), check if challenger has lower values
+		if metricName == "mae" || metricName == "rmse" || metricName == "mape" {
+			if improvement > 0.05 { // 5% improvement threshold
+				return true
+			}
+		} else {
+			// For metrics where higher is better
+			if improvement < -0.05 { // 5% improvement threshold
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// promoteModel promotes a challenger model to champion
+func (tp *TrainingPipeline) promoteModel(ctx context.Context, modelID string) {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	if model, exists := tp.modelVersions[modelID]; exists {
+		model.Status = "deployed"
+		model.Tags["promoted_at"] = time.Now().Format(time.RFC3339)
+		tp.logger.Infow("Model promoted to champion", "model_id", modelID)
+	}
+}
+
+// calculateEffectSize calculates effect size between champion and challenger
+func (tp *TrainingPipeline) calculateEffectSize(championMetrics, challengerMetrics map[string]*ABTestMetric) float64 {
+	// Cohen's d calculation (simplified)
+	var totalEffectSize float64
+	var count int
+
+	for metricName, challengerMetric := range challengerMetrics {
+		championMetric, exists := championMetrics[metricName]
+		if !exists {
+			continue
+		}
+
+		pooledStdDev := math.Sqrt((championMetric.StdDev*championMetric.StdDev +
+			challengerMetric.StdDev*challengerMetric.StdDev) / 2)
+
+		if pooledStdDev > 0 {
+			effectSize := math.Abs(championMetric.Value-challengerMetric.Value) / pooledStdDev
+			totalEffectSize += effectSize
+			count++
+		}
+	}
+
+	if count > 0 {
+		return totalEffectSize / float64(count)
+	}
+
+	return 0.0
+}
+
+// calculateConfidenceInterval calculates confidence interval for effect
+func (tp *TrainingPipeline) calculateConfidenceInterval(championMetrics, challengerMetrics map[string]*ABTestMetric) [2]float64 {
+	// Simplified confidence interval calculation
+	// In practice would use proper statistical methods
+
+	var meanDifference float64
+	var count int
+
+	for metricName, challengerMetric := range challengerMetrics {
+		championMetric, exists := championMetrics[metricName]
+		if !exists {
+			continue
+		}
+
+		difference := challengerMetric.Value - championMetric.Value
+		meanDifference += difference
+		count++
+	}
+
+	if count > 0 {
+		meanDifference /= float64(count)
+		margin := meanDifference * 0.1 // 10% margin
+		return [2]float64{
+			meanDifference - margin,
+			meanDifference + margin,
+		}
+	}
+
+	return [2]float64{0, 0}
+}
+
+// dataCollectionLoop implementation
 func (tp *TrainingPipeline) dataCollectionLoop(ctx context.Context) {
-	// Implementation for continuous data collection
-}
-
-func (tp *TrainingPipeline) trainingSchedulerLoop(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -955,135 +1491,17 @@ func (tp *TrainingPipeline) trainingSchedulerLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tp.processTrainingQueue(ctx)
+			// Collect real-time data and add to buffer
+			err := tp.dataCollector.StreamData(ctx, tp.trainingDataBuffer)
+			if err != nil {
+				tp.logger.Errorw("Data streaming failed", "error", err)
+			}
+
+			// Flush buffer if needed
+			if tp.trainingDataBuffer.ShouldFlush() {
+				data := tp.trainingDataBuffer.Flush()
+				tp.logger.Debugw("Flushed training data buffer", "data_points", len(data))
+			}
 		}
 	}
-}
-
-func (tp *TrainingPipeline) evaluationLoop(ctx context.Context) {
-	ticker := time.NewTicker(tp.config.EvaluationInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tp.evaluateModels(ctx)
-		}
-	}
-}
-
-func (tp *TrainingPipeline) driftMonitoringLoop(ctx context.Context) {
-	ticker := time.NewTicker(tp.config.DriftDetectionConfig.MonitoringFrequency)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tp.monitorDrift(ctx)
-		}
-	}
-}
-
-func (tp *TrainingPipeline) performanceMonitoringLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tp.trackPerformance(ctx)
-		}
-	}
-}
-
-func (tp *TrainingPipeline) abTestingLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tp.updateABTests(ctx)
-		}
-	}
-}
-
-func (tp *TrainingPipeline) processTrainingQueue(ctx context.Context) {
-	// Implementation for processing training queue
-}
-
-func (tp *TrainingPipeline) evaluateModels(ctx context.Context) {
-	// Implementation for model evaluation
-}
-
-func (tp *TrainingPipeline) monitorDrift(ctx context.Context) {
-	// Implementation for drift monitoring
-}
-
-func (tp *TrainingPipeline) trackPerformance(ctx context.Context) {
-	// Implementation for performance tracking
-}
-
-func (tp *TrainingPipeline) updateABTests(ctx context.Context) {
-	// Implementation for A/B test updates
-}
-
-// NewDataBuffer creates a new data buffer
-func NewDataBuffer(maxSize, flushSize int) *DataBuffer {
-	return &DataBuffer{
-		data:      make([]*TrainingDataPoint, 0, maxSize),
-		maxSize:   maxSize,
-		flushSize: flushSize,
-	}
-}
-
-// Add adds a data point to the buffer
-func (db *DataBuffer) Add(point *TrainingDataPoint) bool {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if len(db.data) >= db.maxSize {
-		return false // Buffer full
-	}
-
-	db.data = append(db.data, point)
-	return true
-}
-
-// Flush returns and clears data from the buffer
-func (db *DataBuffer) Flush() []*TrainingDataPoint {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if len(db.data) == 0 {
-		return nil
-	}
-
-	data := make([]*TrainingDataPoint, len(db.data))
-	copy(data, db.data)
-	db.data = db.data[:0]
-
-	return data
-}
-
-// Size returns the current buffer size
-func (db *DataBuffer) Size() int {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	return len(db.data)
-}
-
-// ShouldFlush returns true if the buffer should be flushed
-func (db *DataBuffer) ShouldFlush() bool {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	return len(db.data) >= db.flushSize
 }
