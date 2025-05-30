@@ -14,8 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -199,9 +201,11 @@ func NewAdaptiveMatchingEngine(
 	tradeRepo TradeRepository,
 	logger *zap.SugaredLogger,
 	config *AdaptiveEngineConfig,
+	eventJournal *eventjournal.EventJournal,
+	wsHub *ws.Hub,
 ) *AdaptiveMatchingEngine {
 	// Create base engine with existing config
-	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, nil)
+	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub)
 
 	ame := &AdaptiveMatchingEngine{
 		MatchingEngine:       baseEngine,

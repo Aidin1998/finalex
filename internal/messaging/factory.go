@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 	"go.uber.org/zap"
 )
 
@@ -61,16 +62,17 @@ func (f *MessagingFactory) CreateMessageBus() (*MessageBus, error) {
 func (f *MessagingFactory) CreateTradingServices(
 	messageBus *MessageBus,
 	bookkeeperSvc bookkeeper.BookkeeperService,
+	wsHub *ws.Hub,
 ) (*TradingServices, error) {
 
 	// Create bookkeeper message service
 	bookkeeperMsgSvc := NewBookkeeperMessageService(bookkeeperSvc, messageBus, f.logger)
 
 	// Create trading message service
-	tradingMsgSvc := NewTradingMessageService(bookkeeperMsgSvc, messageBus, f.logger)
+	tradingMsgSvc := NewTradingMessageService(bookkeeperMsgSvc, messageBus, wsHub, f.logger)
 
 	// Create market data message service
-	marketDataMsgSvc := NewMarketDataMessageService(messageBus, f.logger)
+	marketDataMsgSvc := NewMarketDataMessageService(messageBus, wsHub, f.logger)
 
 	// Create notification service
 	notificationSvc := NewNotificationService(messageBus, f.logger)

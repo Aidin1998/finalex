@@ -15,6 +15,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -197,14 +198,15 @@ func (suite *AdaptiveTradingTestSuite) SetupTest() {
 
 	// Create adaptive configuration for testing
 	config := engine.GetPresets().TestingConfig()
-
 	// Create adaptive trading service
 	var err error
+	wsHub := ws.NewHub(4, 100) // Create test WebSocket hub with smaller parameters
 	suite.service, err = trading.NewAdaptiveService(
 		suite.logger,
 		suite.db,
 		suite.mockBookkeeper,
 		config,
+		wsHub,
 	)
 	require.NoError(suite.T(), err)
 

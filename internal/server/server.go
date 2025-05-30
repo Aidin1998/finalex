@@ -9,9 +9,9 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
-	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
 
@@ -31,7 +31,7 @@ type Server struct {
 	fiatSvc           fiat.FiatService
 	marketfeedsSvc    marketfeeds.MarketFeedService
 	tradingSvc        trading.TradingService
-	marketDataHub     *marketdata.Hub
+	wsHub             *ws.Hub
 	tieredRateLimiter *auth.TieredRateLimiter
 }
 
@@ -44,7 +44,7 @@ func NewServer(
 	fiatSvc fiat.FiatService,
 	marketfeedsSvc marketfeeds.MarketFeedService,
 	tradingSvc trading.TradingService,
-	marketDataHub *marketdata.Hub,
+	wsHub *ws.Hub,
 	tieredRateLimiter *auth.TieredRateLimiter,
 ) *Server {
 	return &Server{
@@ -55,7 +55,7 @@ func NewServer(
 		fiatSvc:           fiatSvc,
 		marketfeedsSvc:    marketfeedsSvc,
 		tradingSvc:        tradingSvc,
-		marketDataHub:     marketDataHub,
+		wsHub:             wsHub,
 		tieredRateLimiter: tieredRateLimiter,
 	}
 }
@@ -484,13 +484,12 @@ func (s *Server) handleUpdateUserKYC(c *gin.Context) {
 
 // handleWebSocketMarketData handles WebSocket connections for market data
 func (s *Server) handleWebSocketMarketData(c *gin.Context) {
-	if s.marketDataHub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "market data service unavailable"})
+	if s.wsHub == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "WebSocket service unavailable"})
 		return
 	}
-
-	// Upgrade to WebSocket using the marketdata Hub's ServeWS method
-	s.marketDataHub.ServeWS(c.Writer, c.Request)
+	clientID := c.ClientIP() // or some unique identifier
+	s.wsHub.ServeWS(c.Writer, c.Request, clientID)
 }
 
 // Rate limiting admin handlers

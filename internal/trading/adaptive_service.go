@@ -15,9 +15,11 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -73,9 +75,9 @@ type AdaptiveService struct {
 }
 
 // NewAdaptiveService creates a new adaptive trading service
-func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, adaptiveConfig *engine.AdaptiveEngineConfig) (AdaptiveTradingService, error) {
+func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, adaptiveConfig *engine.AdaptiveEngineConfig, wsHub *ws.Hub) (AdaptiveTradingService, error) {
 	// Initialize base trading service
-	baseSvcIface, err := NewService(logger, db, bookkeeperSvc)
+	baseSvcIface, err := NewService(logger, db, bookkeeperSvc, wsHub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base trading service: %w", err)
 	}
@@ -84,11 +86,16 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 	// Initialize repositories
 	orderRepo := repository.NewGormRepository(db, logger)
 	tradeRepo := repository.NewGormTradeRepository(db, logger)
-
 	// Validate adaptive configuration
 	validator := engine.NewValidation()
 	if err := validator.ValidateConfig(adaptiveConfig); err != nil {
 		return nil, fmt.Errorf("invalid adaptive configuration: %w", err)
+	}
+
+	// Initialize event journal for adaptive engine
+	eventJournal, err := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/adaptive_events.log")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create event journal: %w", err)
 	}
 
 	// Create adaptive trading engine
@@ -97,6 +104,8 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		tradeRepo,
 		logger.Sugar(),
 		adaptiveConfig,
+		eventJournal,
+		wsHub,
 	)
 
 	// Create adaptive service

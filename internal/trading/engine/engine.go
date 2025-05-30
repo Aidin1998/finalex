@@ -34,6 +34,7 @@ import (
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 
 	"runtime"
 
@@ -469,6 +470,30 @@ func (me *MatchingEngine) notifyTradeHandlers(event TradeEvent) {
 	for _, handler := range tradeHandlers {
 		go handler(event)
 	}
+
+	// Broadcast trade event to WebSocket clients
+	if me.wsHub != nil && event.Trade != nil {
+		tradeData := map[string]interface{}{
+			"type":      "trade",
+			"symbol":    event.Trade.Pair,
+			"price":     event.Trade.Price,
+			"quantity":  event.Trade.Quantity,
+			"side":      event.Trade.Side,
+			"timestamp": event.Trade.CreatedAt,
+			"trade_id":  event.Trade.ID.String(),
+		}
+		if data, err := json.Marshal(tradeData); err == nil {
+			tradeTopic := fmt.Sprintf("trades.%s", event.Trade.Pair)
+			me.wsHub.Broadcast(tradeTopic, data)
+			me.logger.Debugw("Broadcasted trade to WebSocket clients",
+				"topic", tradeTopic,
+				"symbol", event.Trade.Pair,
+				"price", event.Trade.Price,
+				"quantity", event.Trade.Quantity)
+		} else {
+			me.logger.Errorw("Failed to marshal trade for WebSocket broadcast", "error", err)
+		}
+	}
 }
 
 // =============================
@@ -761,6 +786,7 @@ type MatchingEngine struct {
 	workerPool   *WorkerPool  // For background jobs
 	rateLimiter  *RateLimiter // Integrated for future use (API, jobs, etc.)
 	eventJournal *eventjournal.EventJournal
+	wsHub        *ws.Hub // WebSocket hub for real-time broadcasting
 }
 
 // Exported constructor for MatchingEngine to fix undefined: matching_engine.NewMatchingEngine errors
@@ -771,6 +797,7 @@ func NewMatchingEngine(
 	logger *zap.SugaredLogger,
 	config *Config,
 	eventJournal *eventjournal.EventJournal, // new param, can be nil
+	wsHub *ws.Hub, // WebSocket hub for real-time broadcasting
 ) *MatchingEngine {
 	var workerPool *WorkerPool
 	if config != nil && config.Engine.WorkerPoolSize > 0 {
@@ -779,8 +806,7 @@ func NewMatchingEngine(
 			config.Engine.WorkerPoolQueueSize,
 			logger,
 		)
-	}
-	// Example: create a global rate limiter (10 ops/sec, burst 20)
+	} // Example: create a global rate limiter (10 ops/sec, burst 20)
 	var rateLimiter *RateLimiter
 	if config != nil {
 		rateLimiter = NewRateLimiter(decimal.NewFromInt(10), 20, logger)
@@ -794,6 +820,7 @@ func NewMatchingEngine(
 		workerPool:   workerPool,
 		rateLimiter:  rateLimiter,
 		eventJournal: eventJournal,
+		wsHub:        wsHub,
 	}
 }
 

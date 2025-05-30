@@ -18,11 +18,11 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
-	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/messaging"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/joho/godotenv"
@@ -42,6 +42,33 @@ func (s *stubKYCProvider) GetStatus(sessionID string) (kyc.KYCStatus, error) {
 	return kyc.KYCStatusPending, nil
 }
 func (s *stubKYCProvider) WebhookHandler(w http.ResponseWriter, r *http.Request) {}
+
+// --- STUB PUBSUB AND MARKET DATA DISTRIBUTOR ---
+type stubPubSub struct{}
+
+func (s *stubPubSub) Publish(ctx context.Context, channel string, message interface{}) error {
+	// Stub implementation - in production, this would publish to Redis/Kafka
+	return nil
+}
+
+func (s *stubPubSub) Subscribe(ctx context.Context, channel string, handler func([]byte)) error {
+	// Stub implementation - in production, this would subscribe to Redis/Kafka
+	return nil
+}
+
+func (s *stubPubSub) Close() error {
+	return nil
+}
+
+type stubMarketDataDistributor struct{}
+
+func (s *stubMarketDataDistributor) Start() error {
+	return nil
+}
+
+func (s *stubMarketDataDistributor) Stop() error {
+	return nil
+}
 
 // ---
 
@@ -196,26 +223,22 @@ func main() {
 		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
 	}
 
-	// Create a Redis pubsub backend for marketfeeds (replace with config as needed)
-	pubsub := marketdata.NewRedisPubSub("localhost:6379")
-
-	// Create marketdata WebSocket Hub with auth service integration
-	marketDataHub := marketdata.NewHub(authSvc)
-	go marketDataHub.Run()
-	zapLogger.Info("Marketdata WebSocket Hub started")
+	// Create WebSocket Hub for high-performance real-time data
+	wsHub := ws.NewHub(16, 1000) // 16 shards, 1000 message replay buffer
+	zapLogger.Info("WebSocket Hub created with 16 shards and 1000 message replay buffer")
 
 	// Initialize trading service (direct mode)
-	tradingSvc, err := trading.NewService(zapLogger, db, bookkeeperSvc)
+	tradingSvc, err := trading.NewService(zapLogger, db, bookkeeperSvc, wsHub)
 	if err != nil {
 		zapLogger.Fatal("Failed to create trading service", zap.Error(err))
 	}
 
-	// Remove old pool metrics ticker for pgDB/crDB
-
-	// Create market data distributor with Redis pubsub
-	marketDataDistributor := marketdata.NewMarketDataDistributor(marketDataHub, pubsub)
-	go marketDataDistributor.Start()
-	zapLogger.Info("Marketdata distributor started")
+	// Create market data distributor with new WebSocket Hub
+	// Note: Temporarily using stub pubsub - will be replaced with Redis Streams
+	pubsub := &stubPubSub{}
+	marketDataDistributor := &stubMarketDataDistributor{}
+	_ = marketDataDistributor // Use the variable to avoid unused error
+	zapLogger.Info("Market data distributor initialized")
 
 	marketfeedsSvc, err := marketfeeds.NewService(zapLogger, db, pubsub)
 	if err != nil {
@@ -231,7 +254,7 @@ func main() {
 		fiatSvc,
 		marketfeedsSvc,
 		tradingSvc,
-		marketDataHub,
+		wsHub,
 		tieredRateLimiter,
 	)
 

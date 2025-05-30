@@ -15,6 +15,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
@@ -52,7 +53,7 @@ type Service struct {
 }
 
 // NewService creates a new trading service
-func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService) (TradingService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, wsHub *ws.Hub) (TradingService, error) {
 	// Initialize repositories
 	orderRepo := repository.NewGormRepository(db, logger)
 	tradeRepo := repository.NewGormTradeRepository(db, logger)
@@ -73,6 +74,7 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 		logger.Sugar(),
 		config.Engine,
 		eventJournal,
+		wsHub,
 	)
 
 	// Create service

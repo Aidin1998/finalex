@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -13,16 +14,19 @@ import (
 // MarketDataMessageService handles market data distribution via message queue
 type MarketDataMessageService struct {
 	messageBus *MessageBus
+	wsHub      *ws.Hub
 	logger     *zap.Logger
 }
 
 // NewMarketDataMessageService creates a new message-driven market data service
 func NewMarketDataMessageService(
 	messageBus *MessageBus,
+	wsHub *ws.Hub,
 	logger *zap.Logger,
 ) *MarketDataMessageService {
 	service := &MarketDataMessageService{
 		messageBus: messageBus,
+		wsHub:      wsHub,
 		logger:     logger,
 	}
 
@@ -120,11 +124,17 @@ func (s *MarketDataMessageService) handleOrderBookUpdate(ctx context.Context, ms
 		zap.Int64("sequence", update.Sequence),
 		zap.Bool("is_snapshot", update.IsSnapshot))
 
-	// Here you would typically:
-	// 1. Update internal order book state
-	// 2. Distribute to WebSocket clients
-	// 3. Update market data cache
-	// 4. Send to external APIs/feeds
+	// Broadcast to WebSocket clients
+	if s.wsHub != nil {
+		if data, err := json.Marshal(update); err == nil {
+			topic := fmt.Sprintf("orderbook.%s", update.Symbol)
+			s.wsHub.Broadcast(topic, data)
+			s.logger.Debug("Broadcasted order book update to WebSocket clients",
+				zap.String("topic", topic))
+		} else {
+			s.logger.Error("Failed to marshal order book update for WebSocket broadcast", zap.Error(err))
+		}
+	}
 
 	return nil
 }
@@ -140,11 +150,17 @@ func (s *MarketDataMessageService) handleTickerUpdate(ctx context.Context, msg *
 		zap.String("symbol", update.Symbol),
 		zap.String("last_price", update.LastPrice.String()))
 
-	// Here you would typically:
-	// 1. Update ticker cache
-	// 2. Distribute to WebSocket clients
-	// 3. Update 24h statistics
-	// 4. Send to external price feeds
+	// Broadcast to WebSocket clients
+	if s.wsHub != nil {
+		if data, err := json.Marshal(update); err == nil {
+			topic := fmt.Sprintf("ticker.%s", update.Symbol)
+			s.wsHub.Broadcast(topic, data)
+			s.logger.Debug("Broadcasted ticker update to WebSocket clients",
+				zap.String("topic", topic))
+		} else {
+			s.logger.Error("Failed to marshal ticker update for WebSocket broadcast", zap.Error(err))
+		}
+	}
 
 	return nil
 }
@@ -161,11 +177,17 @@ func (s *MarketDataMessageService) handleCandleUpdate(ctx context.Context, msg *
 		zap.String("interval", update.Interval),
 		zap.String("close_price", update.Close.String()))
 
-	// Here you would typically:
-	// 1. Store candle data in time-series database
-	// 2. Update chart data cache
-	// 3. Distribute to WebSocket clients
-	// 4. Trigger technical analysis calculations
+	// Broadcast to WebSocket clients
+	if s.wsHub != nil {
+		if data, err := json.Marshal(update); err == nil {
+			topic := fmt.Sprintf("candle.%s.%s", update.Symbol, update.Interval)
+			s.wsHub.Broadcast(topic, data)
+			s.logger.Debug("Broadcasted candle update to WebSocket clients",
+				zap.String("topic", topic))
+		} else {
+			s.logger.Error("Failed to marshal candle update for WebSocket broadcast", zap.Error(err))
+		}
+	}
 
 	return nil
 }

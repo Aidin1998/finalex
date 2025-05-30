@@ -1,4 +1,4 @@
-package main
+package test
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/server"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -109,7 +110,8 @@ func main() {
 	fiatSvc, _ := fiat.NewService(logger, db, bookkeeperSvc, kycService)
 	pubsub := &stubPubSub{}
 	marketfeedsSvc, _ := marketfeeds.NewService(logger, db, pubsub)
-	tradingSvc, _ := trading.NewService(logger, db, bookkeeperSvc)
+	wsHub := ws.NewHub(2, 50) // Small test WebSocket hub
+	tradingSvc, _ := trading.NewService(logger, db, bookkeeperSvc, wsHub)
 
 	// Create auth service with in-memory rate limiter
 	inMemoryRateLimiter := auth.NewInMemoryRateLimiter()

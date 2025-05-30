@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -15,6 +16,7 @@ import (
 type TradingMessageService struct {
 	bookkeeperMsgSvc *BookkeeperMessageService
 	messageBus       *MessageBus
+	wsHub            *ws.Hub
 	logger           *zap.Logger
 }
 
@@ -22,11 +24,13 @@ type TradingMessageService struct {
 func NewTradingMessageService(
 	bookkeeperMsgSvc *BookkeeperMessageService,
 	messageBus *MessageBus,
+	wsHub *ws.Hub,
 	logger *zap.Logger,
 ) *TradingMessageService {
 	service := &TradingMessageService{
 		bookkeeperMsgSvc: bookkeeperMsgSvc,
 		messageBus:       messageBus,
+		wsHub:            wsHub,
 		logger:           logger,
 	}
 
@@ -108,7 +112,6 @@ func (s *TradingMessageService) handleOrderPlaced(ctx context.Context, msg *Rece
 	if err := s.lockOrderFunds(ctx, &orderMsg); err != nil {
 		return s.rejectOrder(ctx, &orderMsg, fmt.Sprintf("Insufficient funds: %v", err))
 	}
-
 	// Update order status to OPEN and publish event
 	orderMsg.Status = "OPEN"
 	orderMsg.BaseMessage = NewBaseMessage(MsgOrderUpdated, "trading-engine", orderMsg.CorrelationID)
@@ -116,6 +119,19 @@ func (s *TradingMessageService) handleOrderPlaced(ctx context.Context, msg *Rece
 	if err := s.messageBus.PublishOrderEvent(ctx, &orderMsg); err != nil {
 		s.logger.Error("Failed to publish order update", zap.Error(err))
 		return err
+	}
+
+	// Broadcast to WebSocket clients for user-specific order updates
+	if s.wsHub != nil {
+		if data, err := json.Marshal(orderMsg); err == nil {
+			userTopic := fmt.Sprintf("orders.%s", orderMsg.UserID)
+			s.wsHub.Broadcast(userTopic, data)
+			s.logger.Debug("Broadcasted order update to WebSocket clients",
+				zap.String("topic", userTopic),
+				zap.String("order_id", orderMsg.OrderID))
+		} else {
+			s.logger.Error("Failed to marshal order update for WebSocket broadcast", zap.Error(err))
+		}
 	}
 
 	// TODO: Forward to matching engine
@@ -146,12 +162,28 @@ func (s *TradingMessageService) handleOrderCanceled(ctx context.Context, msg *Re
 			zap.String("order_id", orderMsg.OrderID))
 		// Continue processing even if unlock fails - this should be handled by reconciliation
 	}
-
 	// Update order status and publish event
 	orderMsg.Status = "CANCELED"
 	orderMsg.BaseMessage = NewBaseMessage(MsgOrderUpdated, "trading-engine", orderMsg.CorrelationID)
 
-	return s.messageBus.PublishOrderEvent(ctx, &orderMsg)
+	if err := s.messageBus.PublishOrderEvent(ctx, &orderMsg); err != nil {
+		return err
+	}
+
+	// Broadcast to WebSocket clients for user-specific order updates
+	if s.wsHub != nil {
+		if data, err := json.Marshal(orderMsg); err == nil {
+			userTopic := fmt.Sprintf("orders.%s", orderMsg.UserID)
+			s.wsHub.Broadcast(userTopic, data)
+			s.logger.Debug("Broadcasted order cancellation to WebSocket clients",
+				zap.String("topic", userTopic),
+				zap.String("order_id", orderMsg.OrderID))
+		} else {
+			s.logger.Error("Failed to marshal order cancellation for WebSocket broadcast", zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // handleOrderFilled processes order fill events
@@ -180,7 +212,43 @@ func (s *TradingMessageService) handleOrderFilled(ctx context.Context, msg *Rece
 
 	// Publish order update event
 	orderMsg.BaseMessage = NewBaseMessage(MsgOrderUpdated, "trading-engine", orderMsg.CorrelationID)
-	return s.messageBus.PublishOrderEvent(ctx, &orderMsg)
+	if err := s.messageBus.PublishOrderEvent(ctx, &orderMsg); err != nil {
+		return err
+	}
+
+	// Broadcast to WebSocket clients for user-specific order updates
+	if s.wsHub != nil {
+		if data, err := json.Marshal(orderMsg); err == nil {
+			userTopic := fmt.Sprintf("orders.%s", orderMsg.UserID)
+			s.wsHub.Broadcast(userTopic, data)
+			s.logger.Debug("Broadcasted order fill to WebSocket clients",
+				zap.String("topic", userTopic),
+				zap.String("order_id", orderMsg.OrderID),
+				zap.String("status", orderMsg.Status))
+		} else {
+			s.logger.Error("Failed to marshal order fill for WebSocket broadcast", zap.Error(err))
+		}
+	}
+
+	// Also broadcast trade event to public feeds
+	if orderMsg.Status == "FILLED" || orderMsg.Status == "PARTIALLY_FILLED" {
+		tradeData := map[string]interface{}{
+			"symbol":    orderMsg.Symbol,
+			"price":     orderMsg.Price,
+			"quantity":  orderMsg.FilledQty,
+			"side":      orderMsg.Side,
+			"timestamp": orderMsg.Timestamp,
+		}
+		if data, err := json.Marshal(tradeData); err == nil {
+			tradeTopic := fmt.Sprintf("trades.%s", orderMsg.Symbol)
+			s.wsHub.Broadcast(tradeTopic, data)
+			s.logger.Debug("Broadcasted trade data to WebSocket clients",
+				zap.String("topic", tradeTopic),
+				zap.String("symbol", orderMsg.Symbol))
+		}
+	}
+
+	return nil
 }
 
 // validateOrder validates order parameters
