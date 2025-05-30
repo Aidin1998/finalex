@@ -520,10 +520,9 @@ func (pmc *PerformanceMetricsCollector) realTimeMetricsLoop(ctx context.Context)
 func (pmc *PerformanceMetricsCollector) updateRealTimeMetrics() {
 	pmc.realTimeMetrics.mu.Lock()
 	defer pmc.realTimeMetrics.mu.Unlock()
-
 	// Update pending transactions (would query from database)
 	var pendingCount int64
-	pmc.db.Model(&XATransaction{}).Where("state IN ?", []XAState{XAStatePreparing, XAStatePrepared}).Count(&pendingCount)
+	pmc.db.Model(&XATransaction{}).Where("state IN ?", []XATransactionState{XAStatePreparing, XAStatePrepared}).Count(&pendingCount)
 	pmc.realTimeMetrics.PendingTransactions = pendingCount
 
 	// Update system health metrics

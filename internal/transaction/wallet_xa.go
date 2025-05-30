@@ -104,7 +104,7 @@ func (w *WalletXAResource) End(xid string, flags int) error {
 		}
 	}
 
-	if flags&XAFlagTMSUCCESS != 0 {
+	if XAFlag(flags)&XAFlagTMSUCCESS != 0 {
 		w.state = XAResourceStateIdle
 	} else {
 		w.state = XAResourceStateRollbackOnly
@@ -118,19 +118,20 @@ func (w *WalletXAResource) End(xid string, flags int) error {
 	return nil
 }
 
-func (w *WalletXAResource) Prepare(xid string) error {
+func (w *WalletXAResource) Prepare(ctx context.Context, xid XID) (bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.xid != xid {
-		return &XAException{
+	xidStr := xid.String()
+	if w.xid != xidStr {
+		return false, &XAException{
 			ErrorCode: XAErrorXAER_NOTA,
 			Message:   "Transaction not associated with this resource",
 		}
 	}
 
 	if w.state == XAResourceStateRollbackOnly {
-		return &XAException{
+		return false, &XAException{
 			ErrorCode: XAErrorRB_ROLLBACK,
 			Message:   "Transaction marked for rollback only",
 		}
@@ -140,12 +141,12 @@ func (w *WalletXAResource) Prepare(xid string) error {
 	for _, op := range w.operations {
 		if err := w.validateOperation(op); err != nil {
 			w.logger.Error("Operation validation failed during prepare",
-				zap.String("xid", xid),
+				zap.String("xid", xidStr),
 				zap.String("operation_id", op.ID),
 				zap.String("type", string(op.Type)),
 				zap.Error(err))
 			w.state = XAResourceStateRollbackOnly
-			return &XAException{
+			return false, &XAException{
 				ErrorCode: XAErrorRB_ROLLBACK,
 				Message:   fmt.Sprintf("Operation validation failed: %v", err),
 			}
@@ -155,10 +156,10 @@ func (w *WalletXAResource) Prepare(xid string) error {
 	// Check for resource conflicts
 	if err := w.checkResourceConflicts(); err != nil {
 		w.logger.Error("Resource conflict detected during prepare",
-			zap.String("xid", xid),
+			zap.String("xid", xidStr),
 			zap.Error(err))
 		w.state = XAResourceStateRollbackOnly
-		return &XAException{
+		return false, &XAException{
 			ErrorCode: XAErrorRB_ROLLBACK,
 			Message:   fmt.Sprintf("Resource conflict: %v", err),
 		}
@@ -166,17 +167,18 @@ func (w *WalletXAResource) Prepare(xid string) error {
 
 	w.state = XAResourceStatePrepared
 	w.logger.Info("Prepared XA transaction for wallet operations",
-		zap.String("xid", xid),
+		zap.String("xid", xidStr),
 		zap.Int("operations_count", len(w.operations)))
 
-	return nil
+	return true, nil
 }
 
-func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
+func (w *WalletXAResource) Commit(ctx context.Context, xid XID, onePhase bool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.xid != xid {
+	xidStr := xid.String()
+	if w.xid != xidStr {
 		return &XAException{
 			ErrorCode: XAErrorXAER_NOTA,
 			Message:   "Transaction not associated with this resource",
@@ -203,7 +205,7 @@ func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
 		if r := recover(); r != nil {
 			tx.Rollback()
 			w.logger.Error("Panic during wallet XA commit, rolled back",
-				zap.String("xid", xid),
+				zap.String("xid", xidStr),
 				zap.Any("panic", r))
 		}
 	}()
@@ -213,7 +215,7 @@ func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
 		if err := w.executeOperation(tx, op); err != nil {
 			tx.Rollback()
 			w.logger.Error("Failed to execute wallet operation during commit",
-				zap.String("xid", xid),
+				zap.String("xid", xidStr),
 				zap.String("operation_id", op.ID),
 				zap.String("type", string(op.Type)),
 				zap.Error(err))
@@ -227,7 +229,7 @@ func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
 	// Commit the database transaction
 	if err := tx.Commit().Error; err != nil {
 		w.logger.Error("Failed to commit database transaction",
-			zap.String("xid", xid),
+			zap.String("xid", xidStr),
 			zap.Error(err))
 		return &XAException{
 			ErrorCode: XAErrorRMFAIL,
@@ -237,7 +239,7 @@ func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
 
 	w.state = XAResourceStateCommitted
 	w.logger.Info("Committed XA transaction for wallet operations",
-		zap.String("xid", xid),
+		zap.String("xid", xidStr),
 		zap.Bool("one_phase", onePhase),
 		zap.Int("operations_executed", len(w.operations)))
 
@@ -248,11 +250,12 @@ func (w *WalletXAResource) Commit(xid string, onePhase bool) error {
 	return nil
 }
 
-func (w *WalletXAResource) Rollback(xid string) error {
+func (w *WalletXAResource) Rollback(ctx context.Context, xid XID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.xid != xid {
+	xidStr := xid.String()
+	if w.xid != xidStr {
 		return &XAException{
 			ErrorCode: XAErrorXAER_NOTA,
 			Message:   "Transaction not associated with this resource",
@@ -264,7 +267,7 @@ func (w *WalletXAResource) Rollback(xid string) error {
 		comp := w.compensationOps[i]
 		if err := w.executeCompensation(comp); err != nil {
 			w.logger.Error("Failed to execute compensation operation",
-				zap.String("xid", xid),
+				zap.String("xid", xidStr),
 				zap.String("operation_id", comp.OperationID),
 				zap.String("type", string(comp.Type)),
 				zap.Error(err))
@@ -274,7 +277,7 @@ func (w *WalletXAResource) Rollback(xid string) error {
 
 	w.state = XAResourceStateRolledBack
 	w.logger.Info("Rolled back XA transaction for wallet operations",
-		zap.String("xid", xid),
+		zap.String("xid", xidStr),
 		zap.Int("compensations_executed", len(w.compensationOps)))
 
 	// Clear operations after rollback
@@ -284,11 +287,12 @@ func (w *WalletXAResource) Rollback(xid string) error {
 	return nil
 }
 
-func (w *WalletXAResource) Forget(xid string) error {
+func (w *WalletXAResource) Forget(ctx context.Context, xid XID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.xid != xid {
+	xidStr := xid.String()
+	if w.xid != xidStr {
 		return &XAException{
 			ErrorCode: XAErrorXAER_NOTA,
 			Message:   "Transaction not associated with this resource",
@@ -301,17 +305,17 @@ func (w *WalletXAResource) Forget(xid string) error {
 	w.compensationOps = make([]WalletCompensationData, 0)
 	w.xid = ""
 
-	w.logger.Info("Forgot XA transaction for wallet operations", zap.String("xid", xid))
+	w.logger.Info("Forgot XA transaction for wallet operations", zap.String("xid", xidStr))
 	return nil
 }
 
-func (w *WalletXAResource) Recover(flags int) ([]string, error) {
+func (w *WalletXAResource) Recover(ctx context.Context, flags int) ([]XID, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
 	// In a real implementation, this would scan persistent storage
 	// for in-doubt transactions and return their XIDs
-	var xids []string
+	var xids []XID
 
 	w.logger.Info("Recovered XA transactions for wallet operations",
 		zap.Int("flags", flags),
@@ -469,7 +473,7 @@ func (w *WalletXAResource) BroadcastWithdrawal(ctx context.Context, requestID uu
 }
 
 // UpdateWalletBalance adds balance update to XA transaction
-func (w *WalletXAResource) UpdateWalletBalance(ctx context.Context, walletID string, amount float64, operation string) error {
+func (w *WalletXAResource) UpdateWalletBalance(ctx context.Context, walletID string, amount float64, opType string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -504,7 +508,7 @@ func (w *WalletXAResource) UpdateWalletBalance(ctx context.Context, walletID str
 		Data: map[string]interface{}{
 			"wallet_id": walletID,
 			"amount":    amount,
-			"operation": operation,
+			"operation": opType,
 		},
 	}
 
@@ -890,4 +894,8 @@ func (w *WalletXAResource) GetOperations() []WalletOperation {
 	operations := make([]WalletOperation, len(w.operations))
 	copy(operations, w.operations)
 	return operations
+}
+
+func (w *WalletXAResource) GetResourceName() string {
+	return "wallet"
 }

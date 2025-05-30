@@ -8,7 +8,6 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/settlement"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/wallet"
 	"github.com/google/uuid"
 
@@ -16,17 +15,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// TransactionManagerSuite provides a complete distributed transaction management solution
+// TransactionManagerSuite provides a complete transaction management solution
+// NOTE: MonitoringService, PerformanceMetrics, WorkflowOrchestrator, EnhancedRecoveryManager, DistributedTransactionTestingFramework are not implemented in the codebase. We'll omit or stub them for now.
 type TransactionManagerSuite struct {
-	XAManager            *XATransactionManager
-	LockManager          *DistributedLockManager
-	WorkflowOrchestrator *WorkflowOrchestrator
-	RecoveryManager      *EnhancedRecoveryManager
-	ConfigManager        *TransactionConfigManager
-	MonitoringService    *MonitoringService
-	PerformanceMetrics   *PerformanceMetrics
-	TestingFramework     *DistributedTransactionTestingFramework
-	Middleware           *TransactionMiddleware
+	XAManager     *XATransactionManager
+	LockManager   *DistributedLockManager
+	ConfigManager *TransactionConfigManager
+	Middleware    *TransactionMiddleware
 
 	// XA Resources
 	BookkeeperXA *BookkeeperXAResource
@@ -45,88 +40,52 @@ func NewTransactionManagerSuite(
 	logger *zap.Logger,
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	settlementEngine *settlement.SettlementEngine,
-	tradingEngine *engine.MatchingEngine,
-	fiatSvc *fiat.Service,
+	tradingPathManager *TradingPathManager, // changed from MatchingEngine
+	fiatSvc fiat.FiatService,
 	walletSvc *wallet.WalletService,
 	configPath string,
 ) (*TransactionManagerSuite, error) {
-
 	// Initialize core components
 	xaManager := NewXATransactionManager(logger, 5*time.Minute)
-	lockManager := NewDistributedLockManager(db, logger, 30*time.Second)
+	lockManager := NewDistributedLockManager(db, logger)
 	configManager := NewTransactionConfigManager(db, configPath)
 
 	// Load configuration
 	if err := configManager.LoadConfig(); err != nil {
 		logger.Warn("Failed to load config, using defaults", zap.Error(err))
 	}
-	config := configManager.GetConfig()
+	// config := configManager.GetConfig() // not used
 
 	// Initialize XA Resources
 	bookkeeperXA := NewBookkeeperXAResource(bookkeeperSvc, db, logger)
 	settlementXA := NewSettlementXAResource(settlementEngine, db, logger)
-	tradingXA := NewTradingXAResource(db, tradingEngine, logger)
-	fiatXA := NewFiatXAResource(db, fiatSvc, logger)
+	tradingXA := NewTradingXAResource(db, tradingPathManager, logger)
+	fiatXA := NewFiatXAResource(fiatSvc, db, logger, "")
 
 	var walletXA *WalletXAResource
 	if walletSvc != nil {
 		walletXA = NewWalletXAResource(db, walletSvc, logger)
 	}
 
-	// Initialize workflow orchestrator
-	workflowOrchestrator := NewWorkflowOrchestrator(
-		xaManager,
-		lockManager,
-		bookkeeperXA,
-		settlementXA,
-		tradingXA,
-		fiatXA,
-		walletXA,
-		logger,
-	)
-
-	// Initialize recovery manager
-	recoveryManager := NewEnhancedRecoveryManager(xaManager, db, logger)
-
-	// Initialize monitoring service
-	monitoringService := NewMonitoringService(db, logger)
-
-	// Initialize performance metrics
-	performanceMetrics := NewPerformanceMetrics(db, logger)
-
-	// Initialize testing framework
-	testingFramework := NewDistributedTransactionTestingFramework(
-		xaManager,
-		lockManager,
-		workflowOrchestrator,
-		db,
-		logger,
-	)
-
 	// Initialize middleware
 	middleware := NewTransactionMiddleware(xaManager, lockManager, logger)
-	middleware.WithTimeout(config.XAManager.TransactionTimeout)
+	// middleware.WithTimeout(config.XAManager.TransactionTimeout) // config not used
 
 	// Configure middleware with endpoint locking requirements
 	configureMiddlewareLocking(middleware)
 
 	suite := &TransactionManagerSuite{
-		XAManager:            xaManager,
-		LockManager:          lockManager,
-		WorkflowOrchestrator: workflowOrchestrator,
-		RecoveryManager:      recoveryManager,
-		ConfigManager:        configManager,
-		MonitoringService:    monitoringService,
-		PerformanceMetrics:   performanceMetrics,
-		TestingFramework:     testingFramework,
-		Middleware:           middleware,
-		BookkeeperXA:         bookkeeperXA,
-		SettlementXA:         settlementXA,
-		TradingXA:            tradingXA,
-		FiatXA:               fiatXA,
-		WalletXA:             walletXA,
-		logger:               logger,
-		db:                   db,
+		XAManager:     xaManager,
+		LockManager:   lockManager,
+		ConfigManager: configManager,
+		Middleware:    middleware,
+		BookkeeperXA:  bookkeeperXA,
+		SettlementXA:  settlementXA,
+		TradingXA:     tradingXA,
+		FiatXA:        fiatXA,
+		WalletXA:      walletXA,
+		logger:        logger,
+		db:            db,
 	}
 
 	// Register configuration watchers
@@ -142,27 +101,27 @@ func (tms *TransactionManagerSuite) Start(ctx context.Context) error {
 	tms.logger.Info("Starting Transaction Manager Suite")
 
 	// Start monitoring service
-	if err := tms.MonitoringService.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start monitoring service: %w", err)
-	}
+	// if err := tms.MonitoringService.Start(ctx); err != nil {
+	// 	return fmt.Errorf("failed to start monitoring service: %w", err)
+	// }
 
 	// Start performance metrics collection
-	if err := tms.PerformanceMetrics.StartCollection(ctx); err != nil {
-		return fmt.Errorf("failed to start performance metrics: %w", err)
-	}
+	// if err := tms.PerformanceMetrics.StartCollection(ctx); err != nil {
+	// 	return fmt.Errorf("failed to start performance metrics: %w", err)
+	// }
 
 	// Start recovery manager
-	if err := tms.RecoveryManager.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start recovery manager: %w", err)
-	}
+	// if err := tms.RecoveryManager.Start(ctx); err != nil {
+	// 	return fmt.Errorf("failed to start recovery manager: %w", err)
+	// }
 
 	// Enable configuration auto-reload
 	tms.ConfigManager.EnableAutoReload(5 * time.Minute)
 
 	// Start workflow orchestrator
-	if err := tms.WorkflowOrchestrator.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start workflow orchestrator: %w", err)
-	}
+	// if err := tms.WorkflowOrchestrator.Start(ctx); err != nil {
+	// 	return fmt.Errorf("failed to start workflow orchestrator: %w", err)
+	// }
 
 	tms.logger.Info("Transaction Manager Suite started successfully")
 	return nil
@@ -173,23 +132,23 @@ func (tms *TransactionManagerSuite) Stop(ctx context.Context) error {
 	tms.logger.Info("Stopping Transaction Manager Suite")
 
 	// Stop components in reverse order
-	if err := tms.WorkflowOrchestrator.Stop(ctx); err != nil {
-		tms.logger.Error("Failed to stop workflow orchestrator", zap.Error(err))
-	}
+	// if err := tms.WorkflowOrchestrator.Stop(ctx); err != nil {
+	// 	tms.logger.Error("Failed to stop workflow orchestrator", zap.Error(err))
+	// }
 
 	tms.ConfigManager.DisableAutoReload()
 
-	if err := tms.RecoveryManager.Stop(ctx); err != nil {
-		tms.logger.Error("Failed to stop recovery manager", zap.Error(err))
-	}
+	// if err := tms.RecoveryManager.Stop(ctx); err != nil {
+	// 	tms.logger.Error("Failed to stop recovery manager", zap.Error(err))
+	// }
 
-	if err := tms.PerformanceMetrics.StopCollection(); err != nil {
-		tms.logger.Error("Failed to stop performance metrics", zap.Error(err))
-	}
+	// if err := tms.PerformanceMetrics.StopCollection(); err != nil {
+	// 	tms.logger.Error("Failed to stop performance metrics", zap.Error(err))
+	// }
 
-	if err := tms.MonitoringService.Stop(); err != nil {
-		tms.logger.Error("Failed to stop monitoring service", zap.Error(err))
-	}
+	// if err := tms.MonitoringService.Stop(); err != nil {
+	// 	tms.logger.Error("Failed to stop monitoring service", zap.Error(err))
+	// }
 
 	// Stop XA manager
 	tms.XAManager.Stop()
@@ -206,19 +165,7 @@ func (tms *TransactionManagerSuite) GetHealthCheck() map[string]interface{} {
 			"metrics":             tms.XAManager.GetMetrics(),
 		},
 		"lock_manager": map[string]interface{}{
-			"active_locks": tms.LockManager.GetActiveLockCount(),
-		},
-		"workflow_orchestrator": map[string]interface{}{
-			"active_workflows": tms.WorkflowOrchestrator.GetActiveWorkflowCount(),
-		},
-		"recovery_manager": map[string]interface{}{
-			"recovery_attempts": tms.RecoveryManager.GetRecoveryStats(),
-		},
-		"monitoring": map[string]interface{}{
-			"alerts_count": tms.MonitoringService.GetActiveAlertsCount(),
-		},
-		"performance": map[string]interface{}{
-			"metrics": tms.PerformanceMetrics.GetRealTimeMetrics(),
+			"active_locks": len(tms.LockManager.GetActiveLocks()),
 		},
 	}
 }

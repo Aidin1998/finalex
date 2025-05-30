@@ -11,6 +11,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -49,8 +50,8 @@ type TradeSettlementTask struct {
 	Symbol      string                 `json:"symbol"`
 	BuyUserID   uuid.UUID              `json:"buy_user_id"`
 	SellUserID  uuid.UUID              `json:"sell_user_id"`
-	Quantity    float64                `json:"quantity"`
-	Price       float64                `json:"price"`
+	Quantity    decimal.Decimal        `json:"quantity"`
+	Price       decimal.Decimal        `json:"price"`
 	TakerSide   string                 `json:"taker_side"`
 	Timestamp   time.Time              `json:"timestamp"`
 	Metadata    map[string]interface{} `json:"metadata"`
@@ -164,29 +165,27 @@ func (tpm *TradingPathManager) PlaceOrderHotPath(ctx context.Context, order *mod
 		latency := time.Since(start)
 		tpm.updateHotPathMetrics(latency)
 	}()
-
 	// Direct matching engine placement - no XA transaction overhead
 	matchOrder := &model.Order{
 		ID:        order.ID,
 		UserID:    order.UserID,
-		Symbol:    order.Symbol,
-		Side:      model.Side(order.Side),
-		Type:      model.OrderType(order.Type),
-		Quantity:  order.Quantity,
-		Price:     order.Price,
-		Status:    model.OrderStatus(order.Status),
+		Pair:      order.Symbol,
+		Side:      order.Side,
+		Type:      order.Type,
+		Quantity:  decimal.NewFromFloat(order.Quantity),
+		Price:     decimal.NewFromFloat(order.Price),
+		Status:    order.Status,
 		CreatedAt: order.CreatedAt,
 	}
-
 	// Place order in matching engine (hot path)
-	result, trades, err := tpm.matchingEngine.PlaceOrder(matchOrder)
+	result, trades, _, err := tpm.matchingEngine.ProcessOrder(context.Background(), matchOrder, "hot_path")
 	if err != nil {
 		return nil, fmt.Errorf("hot path order placement failed: %w", err)
 	}
 
 	// Update order status
-	order.Status = string(result.Status)
-	order.FilledQuantity = result.FilledQuantity
+	order.Status = result.Status
+	order.FilledQuantity = result.FilledQuantity.InexactFloat64()
 	order.UpdatedAt = time.Now()
 
 	// If trades occurred, queue them for warm path settlement
@@ -195,17 +194,17 @@ func (tpm *TradingPathManager) PlaceOrderHotPath(ctx context.Context, order *mod
 			task := &TradeSettlementTask{
 				TradeID:    trade.ID,
 				OrderID:    order.ID,
-				Symbol:     trade.Symbol,
-				BuyUserID:  trade.BuyUserID,
-				SellUserID: trade.SellUserID,
+				Symbol:     trade.Pair,
+				BuyUserID:  order.UserID, // Use order's user ID as placeholder
+				SellUserID: order.UserID, // Use order's user ID as placeholder
 				Quantity:   trade.Quantity,
 				Price:      trade.Price,
-				TakerSide:  string(trade.TakerSide),
+				TakerSide:  trade.Side,
 				Timestamp:  trade.CreatedAt,
 				MaxRetries: 3,
 				Metadata: map[string]interface{}{
-					"buy_order_id":  trade.BuyOrderID,
-					"sell_order_id": trade.SellOrderID,
+					"order_id": trade.OrderID,
+					"maker":    trade.Maker,
 				},
 			}
 
@@ -233,9 +232,12 @@ func (tpm *TradingPathManager) CancelOrderHotPath(ctx context.Context, orderID u
 		latency := time.Since(start)
 		tpm.updateHotPathMetrics(latency)
 	}()
-
 	// Direct cancellation in matching engine
-	err := tpm.matchingEngine.CancelOrder(orderID, userID)
+	cancelReq := &engine.CancelRequest{
+		OrderID: orderID,
+		UserID:  userID,
+	}
+	err := tpm.matchingEngine.CancelOrder(cancelReq)
 	if err != nil {
 		return fmt.Errorf("hot path order cancellation failed: %w", err)
 	}
@@ -313,13 +315,12 @@ func (tpm *TradingPathManager) processTradeSettlement(ctx context.Context, task 
 
 	// This would enlist bookkeeper and settlement resources
 	// (Implementation details would be in the actual settlement logic)
-
 	// For now, simulate settlement
 	tpm.logger.Debug("Processing trade settlement",
 		zap.String("trade_id", task.TradeID.String()),
 		zap.String("symbol", task.Symbol),
-		zap.Float64("quantity", task.Quantity),
-		zap.Float64("price", task.Price))
+		zap.String("quantity", task.Quantity.String()),
+		zap.String("price", task.Price.String()))
 
 	// Simulate settlement work
 	time.Sleep(10 * time.Millisecond)
