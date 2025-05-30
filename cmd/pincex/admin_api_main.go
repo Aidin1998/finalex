@@ -19,7 +19,7 @@ func main() {
 		}
 	}
 	mux := http.NewServeMux()
-	ratellimit.RegisterAdminRoutes(mux, cm)
+	ratelimit.RegisterAdminRoutes(mux, cm)
 	mux.Handle("/metrics", promhttp.Handler())
 	addr := ":8081"
 	log.Printf("[ratelimit] Admin API and Prometheus metrics listening on %s", addr)

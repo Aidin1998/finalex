@@ -1,4 +1,7 @@
-// testserver.go: TestServer for market data distribution benchmark
+//go:build ignore
+// +build ignore
+
+// testserver.go: moved to distribution package
 package marketdata
 
 import (
