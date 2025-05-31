@@ -1,4 +1,4 @@
-package orderqueue
+package test
 
 import (
 	"context"
@@ -9,20 +9,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/orderqueue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBadgerQueue_BasicOperations(t *testing.T) {
 	tempDir := t.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 	defer queue.Shutdown()
 
 	// Test basic enqueue/dequeue
-	order := &Order{
+	order := &orderqueue.orderqueue.Order{
 		ID:        "test-order-1",
-		Priority:  HighPriority,
+		Priority:  orderqueue.orderqueue.HighPriority,
 		Data:      []byte(`{"symbol":"BTC-USD","side":"buy","amount":100}`),
 		Timestamp: time.Now(),
 	}
@@ -48,16 +49,16 @@ func TestBadgerQueue_BasicOperations(t *testing.T) {
 
 func TestBadgerQueue_PriorityOrdering(t *testing.T) {
 	tempDir := t.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 	defer queue.Shutdown()
 
 	// Enqueue orders with different priorities
-	orders := []*Order{
-		{ID: "low-1", Priority: LowPriority, Data: []byte("low"), Timestamp: time.Now()},
-		{ID: "high-1", Priority: HighPriority, Data: []byte("high"), Timestamp: time.Now().Add(time.Millisecond)},
-		{ID: "medium-1", Priority: MediumPriority, Data: []byte("medium"), Timestamp: time.Now().Add(2 * time.Millisecond)},
-		{ID: "high-2", Priority: HighPriority, Data: []byte("high2"), Timestamp: time.Now().Add(3 * time.Millisecond)},
+	orders := []*orderqueue.Order{
+		{ID: "low-1", Priority: orderqueue.LowPriority, Data: []byte("low"), Timestamp: time.Now()},
+		{ID: "high-1", Priority: orderqueue.HighPriority, Data: []byte("high"), Timestamp: time.Now().Add(time.Millisecond)},
+		{ID: "medium-1", Priority: orderqueue.MediumPriority, Data: []byte("medium"), Timestamp: time.Now().Add(2 * time.Millisecond)},
+		{ID: "high-2", Priority: orderqueue.HighPriority, Data: []byte("high2"), Timestamp: time.Now().Add(3 * time.Millisecond)},
 	}
 
 	for _, order := range orders {
@@ -78,13 +79,13 @@ func TestBadgerQueue_PriorityOrdering(t *testing.T) {
 
 func TestBadgerQueue_DuplicateDetection(t *testing.T) {
 	tempDir := t.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 	defer queue.Shutdown()
 
-	order := &Order{
+	order := &orderqueue.Order{
 		ID:        "duplicate-test",
-		Priority:  MediumPriority,
+		Priority:  orderqueue.MediumPriority,
 		Data:      []byte("test"),
 		Timestamp: time.Now(),
 	}
@@ -101,13 +102,13 @@ func TestBadgerQueue_DuplicateDetection(t *testing.T) {
 
 func TestBadgerQueue_ReplayPending(t *testing.T) {
 	tempDir := t.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 
 	// Enqueue some orders
-	orders := []*Order{
-		{ID: "replay-1", Priority: HighPriority, Data: []byte("test1"), Timestamp: time.Now()},
-		{ID: "replay-2", Priority: MediumPriority, Data: []byte("test2"), Timestamp: time.Now().Add(time.Millisecond)},
+	orders := []*orderqueue.Order{
+		{ID: "replay-1", Priority: orderqueue.HighPriority, Data: []byte("test1"), Timestamp: time.Now()},
+		{ID: "replay-2", Priority: orderqueue.MediumPriority, Data: []byte("test2"), Timestamp: time.Now().Add(time.Millisecond)},
 	}
 
 	for _, order := range orders {
@@ -123,7 +124,7 @@ func TestBadgerQueue_ReplayPending(t *testing.T) {
 	// Close and reopen queue
 	queue.Shutdown()
 	
-	queue, err = NewBadgerQueue(tempDir)
+	queue, err = orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 	defer queue.Shutdown()
 
@@ -139,7 +140,7 @@ func TestBadgerQueue_ReplayPending(t *testing.T) {
 
 func TestBadgerQueue_ConcurrentOperations(t *testing.T) {
 	tempDir := t.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(t, err)
 	defer queue.Shutdown()
 
@@ -154,7 +155,7 @@ func TestBadgerQueue_ConcurrentOperations(t *testing.T) {
 		go func(producerID int) {
 			defer wg.Done()
 			for j := 0; j < ordersPerGoroutine; j++ {
-				order := &Order{
+				order := &orderqueue.Order{
 					ID:        fmt.Sprintf("prod-%d-order-%d", producerID, j),
 					Priority:  Priority(j % 3), // Distribute across priorities
 					Data:      []byte(fmt.Sprintf("data-%d-%d", producerID, j)),
@@ -200,13 +201,13 @@ func TestBadgerQueue_ConcurrentOperations(t *testing.T) {
 
 func BenchmarkBadgerQueue_Enqueue(b *testing.B) {
 	tempDir := b.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(b, err)
 	defer queue.Shutdown()
 
 	orders := make([]*Order, b.N)
 	for i := 0; i < b.N; i++ {
-		orders[i] = &Order{
+		orders[i] = &orderqueue.Order{
 			ID:        fmt.Sprintf("bench-order-%d", i),
 			Priority:  Priority(i % 3),
 			Data:      []byte(fmt.Sprintf("benchmark-data-%d", i)),
@@ -227,13 +228,13 @@ func BenchmarkBadgerQueue_Enqueue(b *testing.B) {
 
 func BenchmarkBadgerQueue_Dequeue(b *testing.B) {
 	tempDir := b.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(b, err)
 	defer queue.Shutdown()
 
 	// Pre-populate queue
 	for i := 0; i < b.N; i++ {
-		order := &Order{
+		order := &orderqueue.Order{
 			ID:        fmt.Sprintf("bench-order-%d", i),
 			Priority:  Priority(i % 3),
 			Data:      []byte(fmt.Sprintf("benchmark-data-%d", i)),
@@ -256,7 +257,7 @@ func BenchmarkBadgerQueue_Dequeue(b *testing.B) {
 
 func BenchmarkBadgerQueue_EnqueueDequeue(b *testing.B) {
 	tempDir := b.TempDir()
-	queue, err := NewBadgerQueue(tempDir)
+	queue, err := orderqueue.NewBadgerQueue(tempDir)
 	require.NoError(b, err)
 	defer queue.Shutdown()
 
@@ -264,7 +265,7 @@ func BenchmarkBadgerQueue_EnqueueDequeue(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		order := &Order{
+		order := &orderqueue.Order{
 			ID:        fmt.Sprintf("bench-order-%d", i),
 			Priority:  Priority(i % 3),
 			Data:      []byte(fmt.Sprintf("benchmark-data-%d", i)),

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v3"
 )
 
 // SnapshotStore defines interface for persisting order queue snapshots for fast recovery.

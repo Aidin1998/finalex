@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v3"
 	"go.uber.org/zap"
 )
 
@@ -283,8 +281,6 @@ func (eq *EnhancedBadgerQueue) DequeueBatch(ctx context.Context, maxCount int) (
 
 // AcknowledgeBatch removes multiple processed orders from storage.
 func (eq *EnhancedBadgerQueue) AcknowledgeBatch(ctx context.Context, orderIDs []string) error {
-	startTime := time.Now()
-	
 	err := eq.db.Update(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()

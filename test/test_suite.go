@@ -31,9 +31,9 @@ type TestCategory int
 const (
 	UnitTest TestCategory = iota
 	IntegrationTest
-	ChaosTest
+	ChaosTestSuite
 	PerformanceTest
-	DataIntegrityTest
+	DataIntegrityTestSuite
 )
 
 type TestResult struct {
@@ -91,25 +91,24 @@ func TestCompleteOrderQueueSystem(t *testing.T) {
 				RunFunc:  runConcurrentOperationsTest,
 				Required: true,
 			},
-			
-			// Chaos Engineering Tests
+					// Chaos Engineering Tests
 			{
 				Name:     "Sudden Shutdown",
-				Category: ChaosTest,
+				Category: ChaosTestSuite,
 				Timeout:  180 * time.Second,
 				RunFunc:  runSuddenShutdownChaosTest,
 				Required: true,
 			},
 			{
 				Name:     "Memory Pressure",
-				Category: ChaosTest,
+				Category: ChaosTestSuite,
 				Timeout:  180 * time.Second,
 				RunFunc:  runMemoryPressureChaosTest,
 				Required: false,
 			},
 			{
 				Name:     "Concurrent Failures",
-				Category: ChaosTest,
+				Category: ChaosTestSuite,
 				Timeout:  300 * time.Second,
 				RunFunc:  runConcurrentFailuresChaosTest,
 				Required: true,

@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v3"
 )
 
 // BadgerQueue is a disk-backed implementation of Queue using BadgerDB.
