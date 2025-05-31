@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -23,6 +24,17 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/scaling/predictor"
 )
+
+// ScalingConstraints defines global scaling constraints
+type ScalingConstraints struct {
+	MaxTotalReplicas     int32         `json:"max_total_replicas"`
+	MinTotalReplicas     int32         `json:"min_total_replicas"`
+	MaxScaleUpPercent    float64       `json:"max_scale_up_percent"`
+	MaxScaleDownPercent  float64       `json:"max_scale_down_percent"`
+	CooldownPeriod       time.Duration `json:"cooldown_period"`
+	StabilizationWindow  time.Duration `json:"stabilization_window"`
+	MaxConcurrentScaling int           `json:"max_concurrent_scaling"`
+}
 
 // AutoScaler manages intelligent auto-scaling with ML predictions
 type AutoScaler struct {
@@ -81,6 +93,7 @@ type DeploymentConfig struct {
 	Labels          map[string]string     `json:"labels"`
 	Annotations     map[string]string     `json:"annotations"`
 	Strategy        string                `json:"strategy"` // "predictive", "reactive", "hybrid"
+	HPAConfig       *HPAConfig            `json:"hpa_config"`
 }
 
 // CustomMetric defines custom metrics for HPA
@@ -657,7 +670,7 @@ func (a *AutoScaler) createOrUpdateHPA(ctx context.Context, deploymentName strin
 		a.logger.Infow("Created HPA", "deployment", deploymentName, "hpa", hpa.Name)
 	} else {
 		// HPA exists, update it
-		existing.Spec = hpaSpec
+		existing.Spec = *hpaSpec
 		_, err = a.k8sClient.AutoscalingV2().HorizontalPodAutoscalers(a.config.Namespace).Update(
 			ctx, existing, metav1.UpdateOptions{})
 		if err != nil {
@@ -1208,4 +1221,234 @@ func (a *AutoScaler) scheduledScalingLoop(ctx context.Context) {
 			a.checkScheduledScaling(ctx)
 		}
 	}
+}
+
+// NewDefaultHealthChecker creates a default health checker implementation
+func NewDefaultHealthChecker(k8sClient kubernetes.Interface, config *HealthCheckConfig, logger *zap.SugaredLogger) HealthChecker {
+	return &defaultHealthChecker{
+		k8sClient: k8sClient,
+		config:    config,
+		logger:    logger,
+	}
+}
+
+type defaultHealthChecker struct {
+	k8sClient kubernetes.Interface
+	config    *HealthCheckConfig
+	logger    *zap.SugaredLogger
+}
+
+func (h *defaultHealthChecker) CheckHealth(ctx context.Context, deployment string) (*DeploymentHealth, error) {
+	// Stub implementation - returns healthy status
+	return &DeploymentHealth{
+		Status:            "healthy",
+		ReadyReplicas:     1,
+		AvailableReplicas: 1,
+		LastHealthCheck:   time.Now(),
+		HealthScore:       1.0,
+		Issues:            []string{},
+	}, nil
+}
+
+func (h *defaultHealthChecker) StartMonitoring(ctx context.Context) error {
+	// Stub implementation
+	return nil
+}
+
+func (h *defaultHealthChecker) StopMonitoring() error {
+	// Stub implementation
+	return nil
+}
+
+// initializeDeployments initializes deployment states and configurations
+func (a *AutoScaler) initializeDeployments(ctx context.Context) error {
+	// Stub implementation
+	for deploymentName := range a.config.Deployments {
+		a.activeDeployments[deploymentName] = &DeploymentState{
+			Name:              deploymentName,
+			CurrentReplicas:   1,
+			TargetReplicas:    1,
+			LastScaled:        time.Now(),
+			ScalingInProgress: false,
+			Health: &DeploymentHealth{
+				Status:      "healthy",
+				HealthScore: 1.0,
+			},
+			Metrics: &DeploymentMetrics{
+				CPUUtilization:    50.0,
+				MemoryUtilization: 50.0,
+				LastUpdated:       time.Now(),
+			},
+			Cost: &DeploymentCost{
+				HourlyCost:     decimal.NewFromFloat(1.0),
+				LastCalculated: time.Now(),
+			},
+		}
+	}
+	return nil
+}
+
+// convertScalingBehavior converts scaling behavior configuration
+func (a *AutoScaler) convertScalingBehavior(behavior *ScalingBehavior) (*autoscalingv2.HorizontalPodAutoscalerBehavior, error) {
+	if behavior == nil {
+		return nil, nil
+	}
+	// Stub implementation - returns empty behavior
+	return &autoscalingv2.HorizontalPodAutoscalerBehavior{}, nil
+}
+
+// parseTargetValue parses target value from string
+func (a *AutoScaler) parseTargetValue(target string) *int32 {
+	// Stub implementation
+	val := int32(80)
+	return &val
+}
+
+// extractMetricName extracts metric name from metric configuration
+func (a *AutoScaler) extractMetricName(metric map[string]interface{}) string {
+	if name, ok := metric["name"].(string); ok {
+		return name
+	}
+	return "unknown"
+}
+
+// extractMetricSelector extracts metric selector from metric configuration
+func (a *AutoScaler) extractMetricSelector(metric map[string]interface{}) map[string]string {
+	// Stub implementation
+	return map[string]string{}
+}
+
+// parseTargetQuantity parses target quantity from configuration
+func (a *AutoScaler) parseTargetQuantity(target map[string]interface{}) *resource.Quantity {
+	// Stub implementation
+	quantity := resource.MustParse("100m")
+	return &quantity
+}
+
+// cleanupPreWarmingInstances cleans up expired pre-warming instances
+func (a *AutoScaler) cleanupPreWarmingInstances(ctx context.Context) error {
+	// Stub implementation
+	return nil
+}
+
+// canScale checks if a deployment can be scaled based on constraints
+func (a *AutoScaler) canScale(deploymentName string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Check if scaling is already in progress
+	if a.scalingInProgress[deploymentName] {
+		return false
+	}
+
+	// Check cooldown period
+	if lastScaling, exists := a.lastScalingAction[deploymentName]; exists {
+		if time.Since(lastScaling) < a.config.ScalingConstraints.CooldownPeriod {
+			return false
+		}
+	}
+
+	return true
+}
+
+// recordScalingEvent records a scaling event in history
+func (a *AutoScaler) recordScalingEvent(event *ScalingEvent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.scalingHistory = append(a.scalingHistory, event)
+
+	// Keep only last 1000 events
+	if len(a.scalingHistory) > 1000 {
+		a.scalingHistory = a.scalingHistory[len(a.scalingHistory)-1000:]
+	}
+}
+
+// getAvailablePreWarmInstances returns count of available pre-warm instances
+func (a *AutoScaler) getAvailablePreWarmInstances(deploymentName string) int {
+	// Stub implementation
+	return 0
+}
+
+// consumePreWarmInstances consumes pre-warm instances for scaling
+func (a *AutoScaler) consumePreWarmInstances(deploymentName string, count int) {
+	// Stub implementation
+}
+
+// getPreWarmInstances returns pre-warm instances for a deployment
+func (a *AutoScaler) getPreWarmInstances(deploymentName string) []*PreWarmInstance {
+	// Stub implementation
+	return []*PreWarmInstance{}
+}
+
+// calculatePreWarmCost calculates cost of pre-warming instances
+func (a *AutoScaler) calculatePreWarmCost(deploymentName string, count int) decimal.Decimal {
+	// Stub implementation
+	return decimal.NewFromFloat(float64(count) * 0.1)
+}
+
+// calculateInstanceCost calculates cost of a single instance
+func (a *AutoScaler) calculateInstanceCost(deploymentName string) decimal.Decimal {
+	// Stub implementation
+	return decimal.NewFromFloat(0.1)
+}
+
+// getPodsToTerminate returns pods that should be terminated during scale-down
+func (a *AutoScaler) getPodsToTerminate(ctx context.Context, deploymentName string, targetReplicas int32) ([]corev1.Pod, error) {
+	// Stub implementation
+	return []corev1.Pod{}, nil
+}
+
+// drainPodConnections drains connections from a pod before termination
+func (a *AutoScaler) drainPodConnections(ctx context.Context, pod corev1.Pod, config *ConnectionDraining) error {
+	// Stub implementation
+	return nil
+}
+
+// executePreStopHook executes pre-stop hook for a pod
+func (a *AutoScaler) executePreStopHook(ctx context.Context, pod corev1.Pod, config *PreStopHook) error {
+	// Stub implementation
+	return nil
+}
+
+// persistPodData persists pod data during scale-down
+func (a *AutoScaler) persistPodData(ctx context.Context, pod corev1.Pod, config *DataPersistence) error {
+	// Stub implementation
+	return nil
+}
+
+// sendScaleDownNotification sends notification about scale-down event
+func (a *AutoScaler) sendScaleDownNotification(deploymentName string, podCount int) {
+	// Stub implementation
+	a.logger.Infow("Scale down notification", "deployment", deploymentName, "pods", podCount)
+}
+
+// updateDeploymentStates updates the state of all deployments
+func (a *AutoScaler) updateDeploymentStates(ctx context.Context) {
+	// Stub implementation
+}
+
+// updateCostTracking updates cost tracking information
+func (a *AutoScaler) updateCostTracking(ctx context.Context) {
+	// Stub implementation
+}
+
+// managePreWarmingInstances manages pre-warming instances
+func (a *AutoScaler) managePreWarmingInstances(ctx context.Context) {
+	// Stub implementation
+}
+
+// performHealthChecks performs health checks on deployments
+func (a *AutoScaler) performHealthChecks(ctx context.Context) {
+	// Stub implementation
+}
+
+// checkEmergencyConditions checks for emergency scaling conditions
+func (a *AutoScaler) checkEmergencyConditions(ctx context.Context) {
+	// Stub implementation
+}
+
+// checkScheduledScaling checks for scheduled scaling rules
+func (a *AutoScaler) checkScheduledScaling(ctx context.Context) {
+	// Stub implementation
 }

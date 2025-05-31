@@ -555,190 +555,83 @@ type DriftAlert struct {
 	ModelVersion     string    `json:"model_version"`
 }
 
-// DataBuffer manages training data buffering
+// DataBuffer manages circular data buffers for training data
 type DataBuffer struct {
-	mu        sync.RWMutex
-	data      []*TrainingDataPoint
-	maxSize   int
-	flushSize int
+	data     []*TrainingDataPoint
+	capacity int
+	size     int
+	head     int
+	mu       sync.RWMutex
 }
 
-// TrainingDataPoint represents a single training data point
-type TrainingDataPoint struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Features  map[string]float64     `json:"features"`
-	Target    float64                `json:"target"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	Quality   float64                `json:"quality"`
-	Source    string                 `json:"source"`
+// NewDataBuffer creates a new data buffer with the specified capacity and initial size
+func NewDataBuffer(capacity, initialSize int) *DataBuffer {
+	return &DataBuffer{
+		data:     make([]*TrainingDataPoint, capacity),
+		capacity: capacity,
+		size:     0,
+		head:     0,
+	}
 }
 
-// TrainingScheduler manages training job scheduling
-type TrainingScheduler struct {
-	mu              sync.RWMutex
-	queue           []*ScheduledJob
-	running         map[string]*TrainingJob
-	maxConcurrent   int
-	priorityWeights map[string]float64
+// Add adds a data point to the buffer
+func (db *DataBuffer) Add(point *TrainingDataPoint) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.data[db.head] = point
+	db.head = (db.head + 1) % db.capacity
+	if db.size < db.capacity {
+		db.size++
+	}
 }
 
-// ScheduledJob represents a scheduled training job
-type ScheduledJob struct {
-	ID           string               `json:"id"`
-	ModelType    string               `json:"model_type"`
-	Priority     int                  `json:"priority"`
-	ScheduledAt  time.Time            `json:"scheduled_at"`
-	Config       *ModelTrainingConfig `json:"config"`
-	Dependencies []string             `json:"dependencies"`
-	Status       string               `json:"status"`
+// GetAll returns all data points in the buffer
+func (db *DataBuffer) GetAll() []*TrainingDataPoint {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	result := make([]*TrainingDataPoint, db.size)
+	for i := 0; i < db.size; i++ {
+		idx := (db.head - db.size + i + db.capacity) % db.capacity
+		result[i] = db.data[idx]
+	}
+	return result
 }
 
-// PerformanceTracker tracks model performance over time
-type PerformanceTracker struct {
-	mu                 sync.RWMutex
-	performanceHistory map[string][]*PerformancePoint
-	degradationAlerts  []*PerformanceDegradationAlert
+// Size returns the current size of the buffer
+func (db *DataBuffer) Size() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.size
 }
 
-// PerformancePoint represents a performance measurement
-type PerformancePoint struct {
-	Timestamp    time.Time          `json:"timestamp"`
-	ModelVersion string             `json:"model_version"`
-	Metrics      map[string]float64 `json:"metrics"`
-	SampleSize   int                `json:"sample_size"`
-	DataQuality  float64            `json:"data_quality"`
+// Add missing methods for DataBuffer
+func (db *DataBuffer) ShouldFlush() bool {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.size >= db.capacity*8/10 // Flush when 80% full
 }
 
-// PerformanceDegradationAlert represents a performance degradation alert
-type PerformanceDegradationAlert struct {
-	ID              string    `json:"id"`
-	Timestamp       time.Time `json:"timestamp"`
-	ModelVersion    string    `json:"model_version"`
-	MetricName      string    `json:"metric_name"`
-	CurrentValue    float64   `json:"current_value"`
-	BaselineValue   float64   `json:"baseline_value"`
-	DegradationPct  float64   `json:"degradation_pct"`
-	Severity        string    `json:"severity"`
-	TrendDirection  string    `json:"trend_direction"`
-	Recommendations []string  `json:"recommendations"`
+func (db *DataBuffer) Flush() []*TrainingDataPoint {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// Get all data and reset buffer
+	result := make([]*TrainingDataPoint, db.size)
+	for i := 0; i < db.size; i++ {
+		idx := (db.head - db.size + i + db.capacity) % db.capacity
+		result[i] = db.data[idx]
+	}
+
+	// Reset buffer
+	db.size = 0
+	db.head = 0
+
+	return result
 }
 
-// Interfaces
-
-// DataCollector interface for collecting training data
-type DataCollector interface {
-	CollectData(ctx context.Context, timeRange TimeRange) ([]*TrainingDataPoint, error)
-	StreamData(ctx context.Context, buffer *DataBuffer) error
-	ValidateData(data []*TrainingDataPoint) (*DataValidationResult, error)
-}
-
-// FeatureEngineering interface for feature engineering
-type FeatureEngineering interface {
-	EngineerFeatures(ctx context.Context, data []*TrainingDataPoint) ([]*TrainingDataPoint, error)
-	SelectFeatures(ctx context.Context, data []*TrainingDataPoint, config *FeatureEngineeringConfig) ([]string, error)
-	TransformFeatures(ctx context.Context, data []*TrainingDataPoint, transformations []*FeatureTransformation) ([]*TrainingDataPoint, error)
-}
-
-// ModelRegistry interface for managing model versions
-type ModelRegistry interface {
-	RegisterModel(ctx context.Context, model *ModelVersion) error
-	GetModel(ctx context.Context, modelID string) (*ModelVersion, error)
-	ListModels(ctx context.Context, filters map[string]interface{}) ([]*ModelVersion, error)
-	UpdateModelStatus(ctx context.Context, modelID string, status string) error
-	DeleteModel(ctx context.Context, modelID string) error
-}
-
-// EvaluationEngine interface for model evaluation
-type EvaluationEngine interface {
-	EvaluateModel(ctx context.Context, model *ModelVersion, testData []*TrainingDataPoint) (*EvaluationResult, error)
-	CompareModels(ctx context.Context, models []*ModelVersion, testData []*TrainingDataPoint) (*ModelComparison, error)
-	RunBacktest(ctx context.Context, model *ModelVersion, config *BacktestingConfig) (*BacktestResults, error)
-}
-
-// ABTestManager interface for A/B testing
-type ABTestManager interface {
-	StartABTest(ctx context.Context, config *ABTestConfig, championModel, challengerModel string) (*ABTestResult, error)
-	StopABTest(ctx context.Context, testID string) error
-	GetABTestResults(ctx context.Context, testID string) (*ABTestResult, error)
-	UpdateABTest(ctx context.Context, testID string, metrics map[string]*ABTestMetric) error
-}
-
-// DriftDetector interface for drift detection
-type DriftDetector interface {
-	DetectDrift(ctx context.Context, referenceData, currentData []*TrainingDataPoint) (*DriftDetectionResult, error)
-	MonitorDrift(ctx context.Context, modelVersion string) error
-	GetDriftAlerts(ctx context.Context, modelVersion string) ([]*DriftAlert, error)
-}
-
-// Support structures
-
-// TimeRange represents a time range for data collection
-type TimeRange struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-}
-
-// DataValidationResult contains data validation results
-type DataValidationResult struct {
-	Valid             bool               `json:"valid"`
-	QualityScore      float64            `json:"quality_score"`
-	ValidationErrors  []*ValidationError `json:"validation_errors"`
-	DataStatistics    *DataStatistics    `json:"data_statistics"`
-	AnomaliesDetected []*Anomaly         `json:"anomalies_detected"`
-}
-
-// ValidationError represents a data validation error
-type ValidationError struct {
-	RuleName   string  `json:"rule_name"`
-	Severity   string  `json:"severity"`
-	Message    string  `json:"message"`
-	Column     string  `json:"column"`
-	RowCount   int     `json:"row_count"`
-	Percentage float64 `json:"percentage"`
-}
-
-// DataStatistics contains data statistics
-type DataStatistics struct {
-	TotalRows     int                     `json:"total_rows"`
-	FeatureStats  map[string]*FeatureStat `json:"feature_stats"`
-	MissingValues map[string]int          `json:"missing_values"`
-	OutlierCounts map[string]int          `json:"outlier_counts"`
-	DataTypes     map[string]string       `json:"data_types"`
-}
-
-// FeatureStat contains statistics for a single feature
-type FeatureStat struct {
-	Count    int     `json:"count"`
-	Mean     float64 `json:"mean"`
-	Std      float64 `json:"std"`
-	Min      float64 `json:"min"`
-	Max      float64 `json:"max"`
-	Median   float64 `json:"median"`
-	Skewness float64 `json:"skewness"`
-	Kurtosis float64 `json:"kurtosis"`
-}
-
-// Anomaly represents a detected anomaly
-type Anomaly struct {
-	Type        string                 `json:"type"`
-	Severity    string                 `json:"severity"`
-	Description string                 `json:"description"`
-	RowIndex    int                    `json:"row_index"`
-	Columns     []string               `json:"columns"`
-	Score       float64                `json:"score"`
-	Metadata    map[string]interface{} `json:"metadata"`
-}
-
-// DriftDetectionResult contains drift detection results
-type DriftDetectionResult struct {
-	DriftDetected      bool                   `json:"drift_detected"`
-	DriftScore         float64                `json:"drift_score"`
-	DriftType          string                 `json:"drift_type"` // "data_drift", "concept_drift"
-	AffectedFeatures   []string               `json:"affected_features"`
-	FeatureDriftScores map[string]float64     `json:"feature_drift_scores"`
-	TestResults        map[string]*TestResult `json:"test_results"`
-	Recommendations    []string               `json:"recommendations"`
-}
+// TrainingPipeline constructor and methods
 
 // NewTrainingPipeline creates a new training pipeline
 func NewTrainingPipeline(
@@ -787,12 +680,10 @@ func NewTrainingPipeline(
 		performanceTracker: &PerformanceTracker{
 			performanceHistory: make(map[string][]*PerformancePoint),
 			degradationAlerts:  make([]*PerformanceDegradationAlert, 0),
-		},
-		trainingScheduler: &TrainingScheduler{
-			queue:           make([]*ScheduledJob, 0),
-			running:         make(map[string]*TrainingJob),
-			maxConcurrent:   config.MaxConcurrentJobs,
-			priorityWeights: make(map[string]float64),
+		}, trainingScheduler: &TrainingScheduler{
+			queue:         make([]*ScheduledJob, 0),
+			running:       make(map[string]*TrainingJob),
+			maxConcurrent: config.MaxConcurrentJobs,
 		},
 	}
 
@@ -802,7 +693,6 @@ func NewTrainingPipeline(
 // Start begins the training pipeline
 func (tp *TrainingPipeline) Start(ctx context.Context) error {
 	tp.logger.Info("Starting training pipeline")
-
 	// Start data collection
 	if tp.config.DataSources.StreamingConfig != nil && tp.config.DataSources.StreamingConfig.Enabled {
 		go tp.dataCollectionLoop(ctx)
@@ -861,15 +751,14 @@ func (tp *TrainingPipeline) TriggerTraining(ctx context.Context, modelType strin
 		Metrics:         make(map[string]float64),
 		ResourceUsage:   &ResourceUsage{},
 	}
-
 	// Add to scheduler
 	scheduledJob := &ScheduledJob{
-		ID:          jobID,
-		ModelType:   modelType,
-		Priority:    config.Priority,
-		ScheduledAt: time.Now(),
-		Config:      config,
-		Status:      "queued",
+		ID:           jobID,
+		ModelType:    modelType,
+		Priority:     config.Priority,
+		ScheduleTime: time.Now(),
+		Config:       config,
+		Status:       "queued",
 	}
 
 	tp.trainingScheduler.mu.Lock()
@@ -960,9 +849,8 @@ func (tp *TrainingPipeline) executeTrainingJob(ctx context.Context, job *Trainin
 	// Update job progress
 	job.Progress = 0.1
 	job.Status = "data_preparation"
-
 	// Collect training data
-	trainingData, err := tp.dataCollector.CollectData(ctx, TimeRange{
+	trainingData, err := tp.dataCollector.CollectData(ctx, &TimeRange{
 		Start: time.Now().Add(-tp.config.DataRetentionPeriod),
 		End:   time.Now(),
 	})
@@ -1347,161 +1235,140 @@ func (tp *TrainingPipeline) generateDegradationRecommendations(degradationPct fl
 	return recommendations
 }
 
-// A/B testing helper methods
+// Core interfaces and types for training pipeline
 
-// collectABTestMetrics collects metrics for A/B testing
-func (tp *TrainingPipeline) collectABTestMetrics(ctx context.Context, modelID string) (map[string]*ABTestMetric, error) {
-	metrics := make(map[string]*ABTestMetric)
-
-	// Collect performance data for the model
-	testData, err := tp.dataCollector.CollectData(ctx, TimeRange{
-		Start: time.Now().Add(-tp.config.ABTestingConfig.TestDuration),
-		End:   time.Now(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Calculate metrics
-	performanceMetrics := tp.calculatePerformanceMetrics(testData, &ModelVersion{ID: modelID})
-
-	for metricName, value := range performanceMetrics {
-		metrics[metricName] = &ABTestMetric{
-			Value:      value,
-			SampleSize: len(testData),
-			StdDev:     value * 0.1, // Simplified standard deviation
-			ConfidenceInterval: [2]float64{
-				value * 0.95,
-				value * 1.05,
-			},
-		}
-	}
-
-	return metrics, nil
+// DataCollector interface for collecting training data
+type DataCollector interface {
+	CollectData(ctx context.Context, timeRange *TimeRange) ([]*TrainingDataPoint, error)
+	GetRealTimeData(ctx context.Context) ([]*TrainingDataPoint, error)
 }
 
-// performStatisticalTest performs statistical significance testing
-func (tp *TrainingPipeline) performStatisticalTest(championMetrics, challengerMetrics map[string]*ABTestMetric) bool {
-	// Simplified statistical test - in practice would use proper t-test or similar
-
-	for metricName, challengerMetric := range challengerMetrics {
-		championMetric, exists := championMetrics[metricName]
-		if !exists {
-			continue
-		}
-
-		// Check if challenger is significantly better
-		improvement := (championMetric.Value - challengerMetric.Value) / championMetric.Value
-
-		// For error metrics (lower is better), check if challenger has lower values
-		if metricName == "mae" || metricName == "rmse" || metricName == "mape" {
-			if improvement > 0.05 { // 5% improvement threshold
-				return true
-			}
-		} else {
-			// For metrics where higher is better
-			if improvement < -0.05 { // 5% improvement threshold
-				return true
-			}
-		}
-	}
-
-	return false
+// FeatureEngineering interface for feature processing
+type FeatureEngineering interface {
+	ProcessFeatures(ctx context.Context, data []*TrainingDataPoint) ([]*TrainingDataPoint, error)
+	ExtractFeatures(ctx context.Context, rawData interface{}) (map[string]float64, error)
 }
 
-// promoteModel promotes a challenger model to champion
-func (tp *TrainingPipeline) promoteModel(ctx context.Context, modelID string) {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-
-	if model, exists := tp.modelVersions[modelID]; exists {
-		model.Status = "deployed"
-		model.Tags["promoted_at"] = time.Now().Format(time.RFC3339)
-		tp.logger.Infow("Model promoted to champion", "model_id", modelID)
-	}
+// ModelRegistry interface for model management
+type ModelRegistry interface {
+	RegisterModel(ctx context.Context, model *ModelVersion) error
+	GetModel(ctx context.Context, modelID string) (*ModelVersion, error)
+	ListModels(ctx context.Context, modelType string) ([]*ModelVersion, error)
+	PromoteModel(ctx context.Context, modelID string) error
 }
 
-// calculateEffectSize calculates effect size between champion and challenger
-func (tp *TrainingPipeline) calculateEffectSize(championMetrics, challengerMetrics map[string]*ABTestMetric) float64 {
-	// Cohen's d calculation (simplified)
-	var totalEffectSize float64
-	var count int
-
-	for metricName, challengerMetric := range challengerMetrics {
-		championMetric, exists := championMetrics[metricName]
-		if !exists {
-			continue
-		}
-
-		pooledStdDev := math.Sqrt((championMetric.StdDev*championMetric.StdDev +
-			challengerMetric.StdDev*challengerMetric.StdDev) / 2)
-
-		if pooledStdDev > 0 {
-			effectSize := math.Abs(championMetric.Value-challengerMetric.Value) / pooledStdDev
-			totalEffectSize += effectSize
-			count++
-		}
-	}
-
-	if count > 0 {
-		return totalEffectSize / float64(count)
-	}
-
-	return 0.0
+// EvaluationEngine interface for model evaluation
+type EvaluationEngine interface {
+	EvaluateModel(ctx context.Context, model *ModelVersion, testData []*TrainingDataPoint) (*ModelEvaluation, error)
+	CompareModels(ctx context.Context, models []*ModelVersion, testData []*TrainingDataPoint) (*ModelComparison, error)
 }
 
-// calculateConfidenceInterval calculates confidence interval for effect
-func (tp *TrainingPipeline) calculateConfidenceInterval(championMetrics, challengerMetrics map[string]*ABTestMetric) [2]float64 {
-	// Simplified confidence interval calculation
-	// In practice would use proper statistical methods
-
-	var meanDifference float64
-	var count int
-
-	for metricName, challengerMetric := range challengerMetrics {
-		championMetric, exists := championMetrics[metricName]
-		if !exists {
-			continue
-		}
-
-		difference := challengerMetric.Value - championMetric.Value
-		meanDifference += difference
-		count++
-	}
-
-	if count > 0 {
-		meanDifference /= float64(count)
-		margin := meanDifference * 0.1 // 10% margin
-		return [2]float64{
-			meanDifference - margin,
-			meanDifference + margin,
-		}
-	}
-
-	return [2]float64{0, 0}
+// ABTestManager interface for A/B testing
+type ABTestManager interface {
+	CreateTest(ctx context.Context, config *ABTestConfig) (*ABTest, error)
+	UpdateTest(ctx context.Context, testID string, metrics map[string]*ABTestMetric) error
+	GetTestResults(ctx context.Context, testID string) (*ABTestResult, error)
 }
 
-// dataCollectionLoop implementation
-func (tp *TrainingPipeline) dataCollectionLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Collect real-time data and add to buffer
-			err := tp.dataCollector.StreamData(ctx, tp.trainingDataBuffer)
-			if err != nil {
-				tp.logger.Errorw("Data streaming failed", "error", err)
-			}
-
-			// Flush buffer if needed
-			if tp.trainingDataBuffer.ShouldFlush() {
-				data := tp.trainingDataBuffer.Flush()
-				tp.logger.Debugw("Flushed training data buffer", "data_points", len(data))
-			}
-		}
-	}
+// DriftDetector interface for drift detection
+type DriftDetector interface {
+	DetectDrift(ctx context.Context, baseline, current []*TrainingDataPoint) (*DriftDetectionResult, error)
+	UpdateBaseline(ctx context.Context, data []*TrainingDataPoint) error
 }
+
+// TrainingDataPoint represents a single training data point
+type TrainingDataPoint struct {
+	Timestamp time.Time              `json:"timestamp"`
+	Features  map[string]float64     `json:"features"`
+	Target    float64                `json:"target"`
+	Metadata  map[string]interface{} `json:"metadata"`
+}
+
+// TimeRange represents a time range for data collection
+type TimeRange struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
+// PerformancePoint represents a performance measurement point
+type PerformancePoint struct {
+	Timestamp     time.Time              `json:"timestamp"`
+	ModelID       string                 `json:"model_id"`
+	Accuracy      float64                `json:"accuracy"`
+	Precision     float64                `json:"precision"`
+	Recall        float64                `json:"recall"`
+	F1Score       float64                `json:"f1_score"`
+	Latency       float64                `json:"latency"`
+	Throughput    float64                `json:"throughput"`
+	ErrorRate     float64                `json:"error_rate"`
+	FeatureCount  int                    `json:"feature_count"`
+	QualityScore  float64                `json:"quality_score"`
+	CustomMetrics map[string]float64     `json:"custom_metrics"`
+	Metadata      map[string]interface{} `json:"metadata"`
+}
+
+// PerformanceDegradationAlert represents a performance degradation alert
+type PerformanceDegradationAlert struct {
+	Timestamp        time.Time `json:"timestamp"`
+	ModelID          string    `json:"model_id"`
+	MetricName       string    `json:"metric_name"`
+	CurrentValue     float64   `json:"current_value"`
+	BaselineValue    float64   `json:"baseline_value"`
+	DegradationPct   float64   `json:"degradation_pct"`
+	Severity         string    `json:"severity"`
+	Recommendations  []string  `json:"recommendations"`
+	TriggeredBy      string    `json:"triggered_by"`
+	AffectedServices []string  `json:"affected_services"`
+}
+
+// DriftDetectionResult represents drift detection results
+type DriftDetectionResult struct {
+	HasDrift         bool                   `json:"has_drift"`
+	DriftScore       float64                `json:"drift_score"`
+	DriftType        string                 `json:"drift_type"`
+	AffectedFeatures []string               `json:"affected_features"`
+	Recommendations  []string               `json:"recommendations"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+// ScheduledJob represents a scheduled training job
+type ScheduledJob struct {
+	ID           string                 `json:"id"`
+	ModelType    string                 `json:"model_type"`
+	ScheduleTime time.Time              `json:"schedule_time"`
+	Config       *ModelTrainingConfig   `json:"config"`
+	Priority     int                    `json:"priority"`
+	Status       string                 `json:"status"`
+	Metadata     map[string]interface{} `json:"metadata"`
+}
+
+// TrainingScheduler manages scheduled training jobs
+type TrainingScheduler struct {
+	mu            sync.RWMutex
+	queue         []*ScheduledJob
+	running       map[string]*TrainingJob
+	maxConcurrent int
+}
+
+// PerformanceTracker tracks model performance over time
+type PerformanceTracker struct {
+	mu                 sync.RWMutex
+	performanceHistory map[string][]*PerformancePoint
+	degradationAlerts  []*PerformanceDegradationAlert
+	alertThresholds    map[string]float64
+}
+
+// ABTestConfig represents A/B test configuration
+type ABTestConfig struct {
+	TestID            string                 `json:"test_id"`
+	ChampionModelID   string                 `json:"champion_model_id"`
+	ChallengerModelID string                 `json:"challenger_model_id"`
+	TrafficSplit      float64                `json:"traffic_split"`
+	Duration          time.Duration          `json:"duration"`
+	Metrics           []string               `json:"metrics"`
+	SuccessCriteria   map[string]float64     `json:"success_criteria"`
+	Metadata          map[string]interface{} `json:"metadata"`
+}
+
+// Update ABTestMetric to have the correct fields
+// ABTestMetric represents metrics for A/B testing
