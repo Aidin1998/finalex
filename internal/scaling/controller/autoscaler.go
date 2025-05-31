@@ -9,8 +9,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +16,6 @@ import (
 	"go.uber.org/zap"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -1200,4 +1197,15 @@ func (a *AutoScaler) emergencyMonitoringLoop(ctx context.Context) {
 }
 
 func (a *AutoScaler) scheduledScalingLoop(ctx context.Context) {
-	ticker := time.NewTicker 
+	ticker := time.NewTicker(time.Minute * 5) // Check every 5 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.checkScheduledScaling(ctx)
+		}
+	}
+}

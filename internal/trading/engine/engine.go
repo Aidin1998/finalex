@@ -949,7 +949,7 @@ func recordLatencyCheckpoint(ctx context.Context, logger *zap.Logger, stage stri
 }
 
 // Example: Instrument MatchOrders with trace ID and latency checkpoints
-func (e *Engine) MatchOrders(ctx context.Context, logger *zap.Logger) error {
+func (me *MatchingEngine) MatchOrders(ctx context.Context, logger *zap.Logger) error {
 	recordLatencyCheckpoint(ctx, logger, "engine_match_start", nil)
 	// ...existing match logic...
 	recordLatencyCheckpoint(ctx, logger, "engine_match_done", nil)
@@ -957,21 +957,21 @@ func (e *Engine) MatchOrders(ctx context.Context, logger *zap.Logger) error {
 }
 
 // Example: Instrument TradeGeneration with trace ID and latency checkpoints
-func (e *Engine) GenerateTrade(ctx context.Context, trade *model.Trade, logger *zap.Logger) error {
+func (me *MatchingEngine) GenerateTrade(ctx context.Context, trade *model.Trade, logger *zap.Logger) error {
 	recordLatencyCheckpoint(ctx, logger, "engine_trade_generation", map[string]interface{}{"trade_id": trade.ID})
 	// ...existing trade generation logic...
 	return nil
 }
 
 // Example: Instrument SettlementInitiation with trace ID and latency checkpoints
-func (e *Engine) InitiateSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
+func (me *MatchingEngine) InitiateSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
 	recordLatencyCheckpoint(ctx, logger, "engine_settlement_initiation", map[string]interface{}{"settlement_id": settlementID})
 	// ...existing settlement initiation logic...
 	return nil
 }
 
 // Example: Instrument SettlementConfirmation with trace ID and latency checkpoints
-func (e *Engine) ConfirmSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
+func (me *MatchingEngine) ConfirmSettlement(ctx context.Context, settlementID string, logger *zap.Logger) error {
 	recordLatencyCheckpoint(ctx, logger, "engine_settlement_confirmation", map[string]interface{}{"settlement_id": settlementID})
 	// ...existing settlement confirmation logic...
 	return nil

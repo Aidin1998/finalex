@@ -468,7 +468,7 @@ func (l *LSTMModel) Predict(ctx context.Context, horizon time.Duration) (*Predic
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	if !a.isReady {
+	if !l.isReady {
 		return nil, fmt.Errorf("model not ready for prediction")
 	}
 

@@ -23,6 +23,7 @@ const (
 	PhasePrepare
 	PhaseCommit
 	PhaseAbort
+	PhaseAborted // Adding this for consistency
 	PhaseCompleted
 	PhaseFailed
 )
@@ -37,6 +38,8 @@ func (p MigrationPhase) String() string {
 		return "commit"
 	case PhaseAbort:
 		return "abort"
+	case PhaseAborted:
+		return "aborted"
 	case PhaseCompleted:
 		return "completed"
 	case PhaseFailed:

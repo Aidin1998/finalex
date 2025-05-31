@@ -342,6 +342,8 @@ type VolatilityConfig struct {
 // RawMetrics contains raw metric data
 type RawMetrics struct {
 	Timestamp      time.Time              `json:"timestamp"`
+	Data           map[string]float64     `json:"data"`
+	Source         string                 `json:"source"`
 	PrometheusData map[string]model.Value `json:"prometheus_data"`
 	TradingData    *TradingMetricsData    `json:"trading_data"`
 	SystemData     *SystemMetricsData     `json:"system_data"`
@@ -505,6 +507,7 @@ type QualityIssue struct {
 // ProcessedFeatures contains processed feature data
 type ProcessedFeatures struct {
 	Timestamp           time.Time                     `json:"timestamp"`
+	Features            map[string]float64            `json:"features"`
 	RawFeatures         map[string]float64            `json:"raw_features"`
 	TransformedFeatures map[string]float64            `json:"transformed_features"`
 	SelectedFeatures    []string                      `json:"selected_features"`
@@ -515,7 +518,19 @@ type ProcessedFeatures struct {
 	VolatilityFeatures  map[string]float64            `json:"volatility_features"`
 	QualityScore        float64                       `json:"quality_score"`
 	ProcessingTime      time.Duration                 `json:"processing_time"`
-	Metadata            map[string]interface{}        `json:"metadata"`
+	Metadata            *FeatureMetadata              `json:"metadata"`
+}
+
+// FeatureMetadata contains metadata about processed features
+type FeatureMetadata struct {
+	FeatureCount    int           `json:"feature_count"`
+	ProcessingSteps []string      `json:"processing_steps"`
+	SourceMetrics   int           `json:"source_metrics"`
+	Transformations []string      `json:"transformations"`
+	QualityChecks   []string      `json:"quality_checks"`
+	Version         string        `json:"version"`
+	ProcessingTime  time.Duration `json:"processing_time"`
+	DataQuality     float64       `json:"data_quality"`
 }
 
 // WindowFeatureData contains windowed feature data
@@ -626,6 +641,8 @@ type PerformancePoint struct {
 	ErrorRate      float64        `json:"error_rate"`
 	CacheHitRate   float64        `json:"cache_hit_rate"`
 	ResourceUsage  *ResourceUsage `json:"resource_usage"`
+	FeatureCount   int            `json:"feature_count"`
+	QualityScore   float64        `json:"quality_score"`
 }
 
 // ResourceUsage represents resource usage
@@ -712,6 +729,7 @@ type FeatureSelector interface {
 	Select(ctx context.Context, features map[string]float64, target float64) ([]string, error)
 	Score(ctx context.Context, features map[string]float64, target float64) (map[string]float64, error)
 	Fit(ctx context.Context, data []map[string]float64, targets []float64) error
+	SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error)
 }
 
 // FeatureScaler interface for feature scaling
@@ -860,7 +878,9 @@ func (fe *FeatureEngineer) GetFeatures(ctx context.Context) (*ProcessedFeatures,
 	// Get latest from cache
 	latest := fe.featureCache.GetLatest()
 	if latest != nil {
-		return latest, nil
+		if processed, ok := latest.(*ProcessedFeatures); ok {
+			return processed, nil
+		}
 	}
 
 	// If no cached features, fetch and process latest metrics
@@ -943,7 +963,7 @@ func (fe *FeatureEngineer) featureProcessingLoop(ctx context.Context) {
 
 // qualityMonitoringLoop monitors feature quality
 func (fe *FeatureEngineer) qualityMonitoringLoop(ctx context.Context) {
-	ticker := time.NewTicker(fe.config.QualityConfig.MonitoringInterval)
+	ticker := time.NewTicker(fe.config.QualityConfig.MonitoringFrequency)
 	defer ticker.Stop()
 
 	for {
@@ -1189,12 +1209,18 @@ func (fe *FeatureEngineer) combineFeatures(base, lag, window map[string]float64)
 
 // createFeatureMetadata creates metadata for the processed features
 func (fe *FeatureEngineer) createFeatureMetadata(raw *RawMetrics, features map[string]float64) *FeatureMetadata {
+	qualityResults := fe.getQualityCheckResults()
+	qualityChecks := make([]string, 0, len(qualityResults))
+	for key := range qualityResults {
+		qualityChecks = append(qualityChecks, key)
+	}
+
 	return &FeatureMetadata{
 		FeatureCount:    len(features),
 		ProcessingSteps: []string{"transformation", "selection", "scaling", "lag", "window"},
 		SourceMetrics:   len(raw.Data),
 		Transformations: fe.getAppliedTransformations(),
-		QualityChecks:   fe.getQualityCheckResults(),
+		QualityChecks:   qualityChecks,
 		Version:         "1.0",
 	}
 }
@@ -1235,7 +1261,6 @@ func (fe *FeatureEngineer) performQualityCheck(ctx context.Context) {
 func (fe *FeatureEngineer) initializeTransformers() error {
 	for _, transformConfig := range fe.config.Transformations {
 		var transformer FeatureTransformer
-		var err error
 
 		switch transformConfig.Type {
 		case "log":
@@ -1356,486 +1381,154 @@ func (fe *FeatureEngineer) getQualityCheckResults() map[string]interface{} {
 	}
 }
 
-// Additional transformer implementations
+// FeatureCache methods
 
-type SqrtTransformer struct {
-	params map[string]interface{}
-}
+// Set stores a value in the feature cache
+func (fc *FeatureCache) Set(key string, value interface{}) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
 
-func NewSqrtTransformer(params map[string]interface{}) *SqrtTransformer {
-	return &SqrtTransformer{params: params}
-}
+	if fc.cache == nil {
+		fc.cache = make(map[string]*CacheEntry)
+	}
 
-func (st *SqrtTransformer) Transform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-	for k, v := range data {
-		if v >= 0 {
-			result[k+"_sqrt"] = math.Sqrt(v)
+	fc.cache[key] = &CacheEntry{
+		Value:     value,
+		Timestamp: time.Now(),
+		HitCount:  0,
+		Size:      1, // simplified size calculation
+	}
+
+	// Simple eviction policy
+	if len(fc.cache) > fc.maxSize {
+		for k := range fc.cache {
+			delete(fc.cache, k)
+			break
 		}
 	}
-	return result, nil
 }
 
-func (st *SqrtTransformer) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
+// GetLatest retrieves the latest value from the feature cache
+func (fc *FeatureCache) GetLatest() interface{} {
+	fc.mu.RLock()
+	defer fc.mu.RUnlock()
 
-func (st *SqrtTransformer) GetParameters() map[string]interface{} {
-	return st.params
-}
-
-func (st *SqrtTransformer) SetParameters(params map[string]interface{}) error {
-	st.params = params
-	return nil
-}
-
-type StandardizeTransformer struct {
-	params map[string]interface{}
-	means  map[string]float64
-	stds   map[string]float64
-}
-
-func NewStandardizeTransformer(params map[string]interface{}) *StandardizeTransformer {
-	return &StandardizeTransformer{
-		params: params,
-		means:  make(map[string]float64),
-		stds:   make(map[string]float64),
+	if fc.cache == nil {
+		return nil
 	}
-}
 
-func (st *StandardizeTransformer) Transform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-	for k, v := range data {
-		if mean, exists := st.means[k]; exists {
-			if std := st.stds[k]; std > 0 {
-				result[k+"_std"] = (v - mean) / std
-			}
-		}
-	}
-	return result, nil
-}
+	var latest *CacheEntry
 
-func (st *StandardizeTransformer) Fit(ctx context.Context, data []map[string]float64) error {
-	// Calculate means and standard deviations
-	featureSums := make(map[string]float64)
-	featureCounts := make(map[string]int)
-
-	// Calculate means
-	for _, row := range data {
-		for k, v := range row {
-			featureSums[k] += v
-			featureCounts[k]++
+	for _, entry := range fc.cache {
+		if latest == nil || entry.Timestamp.After(latest.Timestamp) {
+			latest = entry
 		}
 	}
 
-	for k, sum := range featureSums {
-		st.means[k] = sum / float64(featureCounts[k])
-	}
-
-	// Calculate standard deviations
-	featureSquaredDiffs := make(map[string]float64)
-	for _, row := range data {
-		for k, v := range row {
-			if mean, exists := st.means[k]; exists {
-				diff := v - mean
-				featureSquaredDiffs[k] += diff * diff
-			}
-		}
-	}
-
-	for k, squaredDiff := range featureSquaredDiffs {
-		st.stds[k] = math.Sqrt(squaredDiff / float64(featureCounts[k]))
+	if latest != nil {
+		latest.HitCount++
+		return latest.Value
 	}
 
 	return nil
 }
 
-func (st *StandardizeTransformer) GetParameters() map[string]interface{} {
-	return st.params
-}
+// WindowCache methods
 
-func (st *StandardizeTransformer) SetParameters(params map[string]interface{}) error {
-	st.params = params
-	return nil
-}
+// GetHistoricalValue retrieves a historical value from the window cache
+func (wc *WindowCache) GetHistoricalValue(featureName string, lag int) (float64, bool) {
+	wc.mu.RLock()
+	defer wc.mu.RUnlock()
 
-type NormalizeTransformer struct {
-	params map[string]interface{}
-}
-
-func NewNormalizeTransformer(params map[string]interface{}) *NormalizeTransformer {
-	return &NormalizeTransformer{params: params}
-}
-
-func (nt *NormalizeTransformer) Transform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	// Simple min-max normalization placeholder
-	result := make(map[string]float64)
-	for k, v := range data {
-		result[k+"_norm"] = v // Placeholder - would implement actual normalization
-	}
-	return result, nil
-}
-
-func (nt *NormalizeTransformer) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (nt *NormalizeTransformer) GetParameters() map[string]interface{} {
-	return nt.params
-}
-
-func (nt *NormalizeTransformer) SetParameters(params map[string]interface{}) error {
-	nt.params = params
-	return nil
-}
-
-type PolynomialTransformer struct {
-	params map[string]interface{}
-}
-
-func NewPolynomialTransformer(params map[string]interface{}) *PolynomialTransformer {
-	return &PolynomialTransformer{params: params}
-}
-
-func (pt *PolynomialTransformer) Transform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-	degree := 2 // Default degree
-	if d, ok := pt.params["degree"].(int); ok {
-		degree = d
+	if wc.windows == nil {
+		return 0, false
 	}
 
-	for k, v := range data {
-		for i := 2; i <= degree; i++ {
-			result[fmt.Sprintf("%s_pow_%d", k, i)] = math.Pow(v, float64(i))
-		}
-	}
-	return result, nil
-}
-
-func (pt *PolynomialTransformer) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (pt *PolynomialTransformer) GetParameters() map[string]interface{} {
-	return pt.params
-}
-
-func (pt *PolynomialTransformer) SetParameters(params map[string]interface{}) error {
-	pt.params = params
-	return nil
-}
-
-// Feature selector implementations
-
-type VarianceThresholdSelector struct {
-	params    map[string]interface{}
-	threshold float64
-}
-
-func NewVarianceThresholdSelector(params map[string]interface{}) *VarianceThresholdSelector {
-	threshold := 0.01 // Default threshold
-	if t, ok := params["threshold"].(float64); ok {
-		threshold = t
+	buffer, exists := wc.windows[featureName]
+	if !exists || buffer == nil {
+		return 0, false
 	}
 
-	return &VarianceThresholdSelector{
-		params:    params,
-		threshold: threshold,
+	if lag >= buffer.size || lag < 0 {
+		return 0, false
 	}
-}
 
-func (vts *VarianceThresholdSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	// Placeholder implementation - would calculate variance over time windows
-	result := make(map[string]float64)
-	for k, v := range data {
-		// Simple placeholder - keep all features
-		result[k] = v
-	}
-	return result, nil
-}
-
-func (vts *VarianceThresholdSelector) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (vts *VarianceThresholdSelector) GetSelectedFeatures() []string {
-	return []string{} // Placeholder
-}
-
-func (vts *VarianceThresholdSelector) GetFeatureScores() map[string]float64 {
-	return make(map[string]float64) // Placeholder
-}
-
-type CorrelationSelector struct {
-	params map[string]interface{}
-}
-
-func NewCorrelationSelector(params map[string]interface{}) *CorrelationSelector {
-	return &CorrelationSelector{params: params}
-}
-
-func (cs *CorrelationSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil // Placeholder
-}
-
-func (cs *CorrelationSelector) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (cs *CorrelationSelector) GetSelectedFeatures() []string {
-	return []string{}
-}
-
-func (cs *CorrelationSelector) GetFeatureScores() map[string]float64 {
-	return make(map[string]float64)
-}
-
-type MutualInfoSelector struct {
-	params map[string]interface{}
-}
-
-func NewMutualInfoSelector(params map[string]interface{}) *MutualInfoSelector {
-	return &MutualInfoSelector{params: params}
-}
-
-func (mis *MutualInfoSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil // Placeholder
-}
-
-func (mis *MutualInfoSelector) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (mis *MutualInfoSelector) GetSelectedFeatures() []string {
-	return []string{}
-}
-
-func (mis *MutualInfoSelector) GetFeatureScores() map[string]float64 {
-	return make(map[string]float64)
-}
-
-type Chi2Selector struct {
-	params map[string]interface{}
-}
-
-func NewChi2Selector(params map[string]interface{}) *Chi2Selector {
-	return &Chi2Selector{params: params}
-}
-
-func (c2s *Chi2Selector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil // Placeholder
-}
-
-func (c2s *Chi2Selector) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (c2s *Chi2Selector) GetSelectedFeatures() []string {
-	return []string{}
-}
-
-func (c2s *Chi2Selector) GetFeatureScores() map[string]float64 {
-	return make(map[string]float64)
-}
-
-// Feature scaler implementations
-
-type MinMaxScaler struct {
-	params map[string]interface{}
-	mins   map[string]float64
-	maxs   map[string]float64
-}
-
-func NewMinMaxScaler(params map[string]interface{}) *MinMaxScaler {
-	return &MinMaxScaler{
-		params: params,
-		mins:   make(map[string]float64),
-		maxs:   make(map[string]float64),
-	}
-}
-
-func (mms *MinMaxScaler) Scale(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-
-	for k, v := range data {
-		if min, minExists := mms.mins[k]; minExists {
-			if max, maxExists := mms.maxs[k]; maxExists && max > min {
-				result[k] = (v - min) / (max - min)
-			} else {
-				result[k] = v
-			}
+	// Calculate position for lag
+	pos := buffer.position - lag - 1
+	if pos < 0 {
+		if buffer.full {
+			pos += buffer.size
 		} else {
-			result[k] = v
+			return 0, false
 		}
 	}
 
-	return result, nil
+	return buffer.data[pos], true
 }
 
-func (mms *MinMaxScaler) Fit(ctx context.Context, data []map[string]float64) error {
-	// Initialize mins and maxs
-	for _, row := range data {
-		for k, v := range row {
-			if _, exists := mms.mins[k]; !exists {
-				mms.mins[k] = v
-				mms.maxs[k] = v
+// GetWindow retrieves a window of data from the cache
+func (wc *WindowCache) GetWindow(featureName string, windowSize int) []float64 {
+	wc.mu.RLock()
+	defer wc.mu.RUnlock()
+
+	if wc.windows == nil {
+		return nil
+	}
+
+	buffer, exists := wc.windows[featureName]
+	if !exists || buffer == nil {
+		return nil
+	}
+
+	size := windowSize
+	if size > buffer.size {
+		size = buffer.size
+	}
+
+	result := make([]float64, 0, size)
+	for i := 0; i < size; i++ {
+		pos := buffer.position - i - 1
+		if pos < 0 {
+			if buffer.full {
+				pos += buffer.size
 			} else {
-				if v < mms.mins[k] {
-					mms.mins[k] = v
-				}
-				if v > mms.maxs[k] {
-					mms.maxs[k] = v
-				}
+				break
 			}
 		}
+		result = append(result, buffer.data[pos])
 	}
 
-	return nil
+	return result
 }
 
-func (mms *MinMaxScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
+// Update updates the window cache with new data
+func (wc *WindowCache) Update(data map[string]float64) {
+	wc.mu.Lock()
+	defer wc.mu.Unlock()
 
-	for k, v := range data {
-		if min, minExists := mms.mins[k]; minExists {
-			if max, maxExists := mms.maxs[k]; maxExists {
-				result[k] = v*(max-min) + min
-			} else {
-				result[k] = v
+	if wc.windows == nil {
+		wc.windows = make(map[string]*CircularBuffer)
+	}
+
+	for featureName, value := range data {
+		buffer, exists := wc.windows[featureName]
+		if !exists {
+			buffer = &CircularBuffer{
+				data:     make([]float64, 100), // default size
+				size:     100,
+				position: 0,
+				full:     false,
 			}
-		} else {
-			result[k] = v
+			wc.windows[featureName] = buffer
+		}
+
+		buffer.data[buffer.position] = value
+		buffer.position = (buffer.position + 1) % buffer.size
+
+		if buffer.position == 0 {
+			buffer.full = true
 		}
 	}
-
-	return result, nil
-}
-
-type StandardScaler struct {
-	params map[string]interface{}
-	means  map[string]float64
-	stds   map[string]float64
-}
-
-func NewStandardScaler(params map[string]interface{}) *StandardScaler {
-	return &StandardScaler{
-		params: params,
-		means:  make(map[string]float64),
-		stds:   make(map[string]float64),
-	}
-}
-
-func (ss *StandardScaler) Scale(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-
-	for k, v := range data {
-		if mean, meanExists := ss.means[k]; meanExists {
-			if std, stdExists := ss.stds[k]; stdExists && std > 0 {
-				result[k] = (v - mean) / std
-			} else {
-				result[k] = v
-			}
-		} else {
-			result[k] = v
-		}
-	}
-
-	return result, nil
-}
-
-func (ss *StandardScaler) Fit(ctx context.Context, data []map[string]float64) error {
-	// Similar to StandardizeTransformer implementation
-	featureSums := make(map[string]float64)
-	featureCounts := make(map[string]int)
-
-	// Calculate means
-	for _, row := range data {
-		for k, v := range row {
-			featureSums[k] += v
-			featureCounts[k]++
-		}
-	}
-
-	for k, sum := range featureSums {
-		ss.means[k] = sum / float64(featureCounts[k])
-	}
-
-	// Calculate standard deviations
-	featureSquaredDiffs := make(map[string]float64)
-	for _, row := range data {
-		for k, v := range row {
-			if mean, exists := ss.means[k]; exists {
-				diff := v - mean
-				featureSquaredDiffs[k] += diff * diff
-			}
-		}
-	}
-
-	for k, squaredDiff := range featureSquaredDiffs {
-		ss.stds[k] = math.Sqrt(squaredDiff / float64(featureCounts[k]))
-	}
-
-	return nil
-}
-
-func (ss *StandardScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	result := make(map[string]float64)
-
-	for k, v := range data {
-		if mean, meanExists := ss.means[k]; meanExists {
-			if std, stdExists := ss.stds[k]; stdExists {
-				result[k] = v*std + mean
-			} else {
-				result[k] = v
-			}
-		} else {
-			result[k] = v
-		}
-	}
-
-	return result, nil
-}
-
-// Placeholder implementations for remaining scalers
-
-type RobustScaler struct {
-	params map[string]interface{}
-}
-
-func NewRobustScaler(params map[string]interface{}) *RobustScaler {
-	return &RobustScaler{params: params}
-}
-
-func (rs *RobustScaler) Scale(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil // Placeholder
-}
-
-func (rs *RobustScaler) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (rs *RobustScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil
-}
-
-type QuantileScaler struct {
-	params map[string]interface{}
-}
-
-func NewQuantileScaler(params map[string]interface{}) *QuantileScaler {
-	return &QuantileScaler{params: params}
-}
-
-func (qs *QuantileScaler) Scale(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil // Placeholder
-}
-
-func (qs *QuantileScaler) Fit(ctx context.Context, data []map[string]float64) error {
-	return nil
-}
-
-func (qs *QuantileScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
-	return data, nil
 }
 
 // NewFeatureCache creates a new feature cache
@@ -2095,3 +1788,705 @@ func (lt *LogTransformer) SetParameters(params map[string]interface{}) error {
 }
 
 // Similar placeholder implementations for other transformers, selectors, and scalers...
+
+// Constructor functions for transformers
+func NewSqrtTransformer(params map[string]interface{}) FeatureTransformer {
+	return &SqrtTransformer{
+		params: params,
+	}
+}
+
+func NewStandardizeTransformer(params map[string]interface{}) FeatureTransformer {
+	return &StandardizeTransformer{
+		params: params,
+	}
+}
+
+func NewNormalizeTransformer(params map[string]interface{}) FeatureTransformer {
+	return &NormalizeTransformer{
+		params: params,
+	}
+}
+
+func NewPolynomialTransformer(params map[string]interface{}) FeatureTransformer {
+	return &PolynomialTransformer{
+		params: params,
+	}
+}
+
+// Constructor functions for selectors
+func NewVarianceThresholdSelector(params map[string]interface{}) FeatureSelector {
+	return &VarianceThresholdSelector{
+		params: params,
+	}
+}
+
+func NewCorrelationSelector(params map[string]interface{}) FeatureSelector {
+	return &CorrelationSelector{
+		params: params,
+	}
+}
+
+func NewMutualInfoSelector(params map[string]interface{}) FeatureSelector {
+	return &MutualInfoSelector{
+		params: params,
+	}
+}
+
+func NewChi2Selector(params map[string]interface{}) FeatureSelector {
+	return &Chi2Selector{
+		params: params,
+	}
+}
+
+// Constructor functions for scalers
+func NewMinMaxScaler(params map[string]interface{}) FeatureScaler {
+	return &MinMaxScaler{
+		params: params,
+	}
+}
+
+func NewStandardScaler(params map[string]interface{}) FeatureScaler {
+	return &StandardScaler{
+		params: params,
+	}
+}
+
+func NewRobustScaler(params map[string]interface{}) FeatureScaler {
+	return &RobustScaler{
+		params: params,
+	}
+}
+
+func NewQuantileScaler(params map[string]interface{}) FeatureScaler {
+	return &QuantileScaler{
+		params: params,
+	}
+}
+
+// Placeholder struct implementations for the new transformers
+type SqrtTransformer struct {
+	params map[string]interface{}
+}
+
+func (st *SqrtTransformer) Transform(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	transformed := make(map[string]float64)
+	for k, v := range features {
+		if v >= 0 {
+			transformed[k] = math.Sqrt(v)
+		} else {
+			transformed[k] = 0 // Handle negative values
+		}
+	}
+	return transformed, nil
+}
+
+func (st *SqrtTransformer) Fit(ctx context.Context, data []map[string]float64) error {
+	return nil // No fitting required for sqrt transformation
+}
+
+func (st *SqrtTransformer) GetParameters() map[string]interface{} {
+	return st.params
+}
+
+func (st *SqrtTransformer) SetParameters(params map[string]interface{}) error {
+	st.params = params
+	return nil
+}
+
+type StandardizeTransformer struct {
+	params map[string]interface{}
+	mean   map[string]float64
+	std    map[string]float64
+}
+
+func (st *StandardizeTransformer) Transform(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	transformed := make(map[string]float64)
+	for k, v := range features {
+		if mean, ok := st.mean[k]; ok {
+			if std, ok := st.std[k]; ok && std != 0 {
+				transformed[k] = (v - mean) / std
+			} else {
+				transformed[k] = v - mean
+			}
+		} else {
+			transformed[k] = v
+		}
+	}
+	return transformed, nil
+}
+
+func (st *StandardizeTransformer) Fit(ctx context.Context, data []map[string]float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	st.mean = make(map[string]float64)
+	st.std = make(map[string]float64)
+
+	// Calculate means
+	counts := make(map[string]int)
+	for _, sample := range data {
+		for k, v := range sample {
+			st.mean[k] += v
+			counts[k]++
+		}
+	}
+	for k := range st.mean {
+		if counts[k] > 0 {
+			st.mean[k] /= float64(counts[k])
+		}
+	}
+
+	// Calculate standard deviations
+	for _, sample := range data {
+		for k, v := range sample {
+			if mean, ok := st.mean[k]; ok {
+				diff := v - mean
+				st.std[k] += diff * diff
+			}
+		}
+	}
+	for k := range st.std {
+		if counts[k] > 1 {
+			st.std[k] = math.Sqrt(st.std[k] / float64(counts[k]-1))
+		}
+	}
+
+	return nil
+}
+
+func (st *StandardizeTransformer) GetParameters() map[string]interface{} {
+	return st.params
+}
+
+func (st *StandardizeTransformer) SetParameters(params map[string]interface{}) error {
+	st.params = params
+	return nil
+}
+
+type NormalizeTransformer struct {
+	params map[string]interface{}
+	min    map[string]float64
+	max    map[string]float64
+}
+
+func (nt *NormalizeTransformer) Transform(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	transformed := make(map[string]float64)
+	for k, v := range features {
+		if min, okMin := nt.min[k]; okMin {
+			if max, okMax := nt.max[k]; okMax && max != min {
+				transformed[k] = (v - min) / (max - min)
+			} else {
+				transformed[k] = 0
+			}
+		} else {
+			transformed[k] = v
+		}
+	}
+	return transformed, nil
+}
+
+func (nt *NormalizeTransformer) Fit(ctx context.Context, data []map[string]float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	nt.min = make(map[string]float64)
+	nt.max = make(map[string]float64)
+
+	// Initialize with first values
+	for k, v := range data[0] {
+		nt.min[k] = v
+		nt.max[k] = v
+	}
+
+	// Find min/max values
+	for _, sample := range data[1:] {
+		for k, v := range sample {
+			if v < nt.min[k] {
+				nt.min[k] = v
+			}
+			if v > nt.max[k] {
+				nt.max[k] = v
+			}
+		}
+	}
+
+	return nil
+}
+
+func (nt *NormalizeTransformer) GetParameters() map[string]interface{} {
+	return nt.params
+}
+
+func (nt *NormalizeTransformer) SetParameters(params map[string]interface{}) error {
+	nt.params = params
+	return nil
+}
+
+type PolynomialTransformer struct {
+	params map[string]interface{}
+}
+
+func (pt *PolynomialTransformer) Transform(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	transformed := make(map[string]float64)
+	degree := 2
+	if d, ok := pt.params["degree"].(int); ok {
+		degree = d
+	}
+
+	// Copy original features
+	for k, v := range features {
+		transformed[k] = v
+	}
+
+	// Add polynomial features
+	for k, v := range features {
+		for i := 2; i <= degree; i++ {
+			newKey := fmt.Sprintf("%s_pow_%d", k, i)
+			transformed[newKey] = math.Pow(v, float64(i))
+		}
+	}
+
+	return transformed, nil
+}
+
+func (pt *PolynomialTransformer) Fit(ctx context.Context, data []map[string]float64) error {
+	return nil // No fitting required for polynomial transformation
+}
+
+func (pt *PolynomialTransformer) GetParameters() map[string]interface{} {
+	return pt.params
+}
+
+func (pt *PolynomialTransformer) SetParameters(params map[string]interface{}) error {
+	pt.params = params
+	return nil
+}
+
+// Placeholder selector implementations
+type VarianceThresholdSelector struct {
+	params    map[string]interface{}
+	threshold float64
+}
+
+func (vts *VarianceThresholdSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	// Simple implementation - just return all features for now
+	return data, nil
+}
+
+func (vts *VarianceThresholdSelector) Fit(ctx context.Context, data []map[string]float64, targets []float64) error {
+	if t, ok := vts.params["threshold"].(float64); ok {
+		vts.threshold = t
+	} else {
+		vts.threshold = 0.0
+	}
+	return nil
+}
+
+func (vts *VarianceThresholdSelector) Select(ctx context.Context, features map[string]float64, target float64) ([]string, error) {
+	// Simple implementation - return all feature names
+	var names []string
+	for k := range features {
+		names = append(names, k)
+	}
+	return names, nil
+}
+
+func (vts *VarianceThresholdSelector) Score(ctx context.Context, features map[string]float64, target float64) (map[string]float64, error) {
+	// Simple implementation - assign equal scores
+	scores := make(map[string]float64)
+	for k := range features {
+		scores[k] = 1.0
+	}
+	return scores, nil
+}
+
+func (vts *VarianceThresholdSelector) GetParameters() map[string]interface{} {
+	return vts.params
+}
+
+func (vts *VarianceThresholdSelector) SetParameters(params map[string]interface{}) error {
+	vts.params = params
+	return nil
+}
+
+type CorrelationSelector struct {
+	params map[string]interface{}
+}
+
+func (cs *CorrelationSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	return data, nil
+}
+
+func (cs *CorrelationSelector) Select(ctx context.Context, features map[string]float64, target float64) ([]string, error) {
+	var names []string
+	for k := range features {
+		names = append(names, k)
+	}
+	return names, nil
+}
+
+func (cs *CorrelationSelector) Score(ctx context.Context, features map[string]float64, target float64) (map[string]float64, error) {
+	scores := make(map[string]float64)
+	for k := range features {
+		scores[k] = 1.0
+	}
+	return scores, nil
+}
+
+func (cs *CorrelationSelector) Fit(ctx context.Context, data []map[string]float64, targets []float64) error {
+	return nil
+}
+
+func (cs *CorrelationSelector) GetParameters() map[string]interface{} {
+	return cs.params
+}
+
+func (cs *CorrelationSelector) SetParameters(params map[string]interface{}) error {
+	cs.params = params
+	return nil
+}
+
+type MutualInfoSelector struct {
+	params map[string]interface{}
+}
+
+func (mis *MutualInfoSelector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	return data, nil
+}
+
+func (mis *MutualInfoSelector) Select(ctx context.Context, features map[string]float64, target float64) ([]string, error) {
+	var names []string
+	for k := range features {
+		names = append(names, k)
+	}
+	return names, nil
+}
+
+func (mis *MutualInfoSelector) Score(ctx context.Context, features map[string]float64, target float64) (map[string]float64, error) {
+	scores := make(map[string]float64)
+	for k := range features {
+		scores[k] = 1.0
+	}
+	return scores, nil
+}
+
+func (mis *MutualInfoSelector) Fit(ctx context.Context, data []map[string]float64, targets []float64) error {
+	return nil
+}
+
+func (mis *MutualInfoSelector) GetParameters() map[string]interface{} {
+	return mis.params
+}
+
+func (mis *MutualInfoSelector) SetParameters(params map[string]interface{}) error {
+	mis.params = params
+	return nil
+}
+
+type Chi2Selector struct {
+	params map[string]interface{}
+}
+
+func (c2s *Chi2Selector) SelectFeatures(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	return data, nil
+}
+
+func (c2s *Chi2Selector) Select(ctx context.Context, features map[string]float64, target float64) ([]string, error) {
+	var names []string
+	for k := range features {
+		names = append(names, k)
+	}
+	return names, nil
+}
+
+func (c2s *Chi2Selector) Score(ctx context.Context, features map[string]float64, target float64) (map[string]float64, error) {
+	scores := make(map[string]float64)
+	for k := range features {
+		scores[k] = 1.0
+	}
+	return scores, nil
+}
+
+func (c2s *Chi2Selector) Fit(ctx context.Context, data []map[string]float64, targets []float64) error {
+	return nil
+}
+
+func (c2s *Chi2Selector) GetParameters() map[string]interface{} {
+	return c2s.params
+}
+
+func (c2s *Chi2Selector) SetParameters(params map[string]interface{}) error {
+	c2s.params = params
+	return nil
+}
+
+// Placeholder scaler implementations
+type MinMaxScaler struct {
+	params map[string]interface{}
+	min    map[string]float64
+	max    map[string]float64
+}
+
+func (mms *MinMaxScaler) Scale(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	scaled := make(map[string]float64)
+	for k, v := range features {
+		if min, okMin := mms.min[k]; okMin {
+			if max, okMax := mms.max[k]; okMax && max != min {
+				scaled[k] = (v - min) / (max - min)
+			} else {
+				scaled[k] = 0
+			}
+		} else {
+			scaled[k] = v
+		}
+	}
+	return scaled, nil
+}
+
+func (mms *MinMaxScaler) Fit(ctx context.Context, data []map[string]float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	mms.min = make(map[string]float64)
+	mms.max = make(map[string]float64)
+
+	// Initialize with first values
+	for k, v := range data[0] {
+		mms.min[k] = v
+		mms.max[k] = v
+	}
+
+	// Find min/max values
+	for _, sample := range data[1:] {
+		for k, v := range sample {
+			if v < mms.min[k] {
+				mms.min[k] = v
+			}
+			if v > mms.max[k] {
+				mms.max[k] = v
+			}
+		}
+	}
+
+	return nil
+}
+
+func (mms *MinMaxScaler) GetParameters() map[string]interface{} {
+	return mms.params
+}
+
+func (mms *MinMaxScaler) SetParameters(params map[string]interface{}) error {
+	mms.params = params
+	return nil
+}
+
+func (mms *MinMaxScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	inverse := make(map[string]float64)
+	for k, v := range data {
+		if min, okMin := mms.min[k]; okMin {
+			if max, okMax := mms.max[k]; okMax && max != min {
+				inverse[k] = v*(max-min) + min
+			} else {
+				inverse[k] = min
+			}
+		} else {
+			inverse[k] = v
+		}
+	}
+	return inverse, nil
+}
+
+type StandardScaler struct {
+	params map[string]interface{}
+	mean   map[string]float64
+	std    map[string]float64
+}
+
+func (ss *StandardScaler) Scale(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	scaled := make(map[string]float64)
+	for k, v := range features {
+		if mean, ok := ss.mean[k]; ok {
+			if std, ok := ss.std[k]; ok && std != 0 {
+				scaled[k] = (v - mean) / std
+			} else {
+				scaled[k] = v - mean
+			}
+		} else {
+			scaled[k] = v
+		}
+	}
+	return scaled, nil
+}
+
+func (ss *StandardScaler) Fit(ctx context.Context, data []map[string]float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	ss.mean = make(map[string]float64)
+	ss.std = make(map[string]float64)
+
+	// Calculate means
+	counts := make(map[string]int)
+	for _, sample := range data {
+		for k, v := range sample {
+			ss.mean[k] += v
+			counts[k]++
+		}
+	}
+	for k := range ss.mean {
+		if counts[k] > 0 {
+			ss.mean[k] /= float64(counts[k])
+		}
+	}
+
+	// Calculate standard deviations
+	for _, sample := range data {
+		for k, v := range sample {
+			if mean, ok := ss.mean[k]; ok {
+				diff := v - mean
+				ss.std[k] += diff * diff
+			}
+		}
+	}
+	for k := range ss.std {
+		if counts[k] > 1 {
+			ss.std[k] = math.Sqrt(ss.std[k] / float64(counts[k]-1))
+		}
+	}
+
+	return nil
+}
+
+func (ss *StandardScaler) GetParameters() map[string]interface{} {
+	return ss.params
+}
+
+func (ss *StandardScaler) SetParameters(params map[string]interface{}) error {
+	ss.params = params
+	return nil
+}
+
+func (ss *StandardScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	inverse := make(map[string]float64)
+	for k, v := range data {
+		if mean, ok := ss.mean[k]; ok {
+			if std, ok := ss.std[k]; ok && std != 0 {
+				inverse[k] = v*std + mean
+			} else {
+				inverse[k] = v + mean
+			}
+		} else {
+			inverse[k] = v
+		}
+	}
+	return inverse, nil
+}
+
+type RobustScaler struct {
+	params map[string]interface{}
+	median map[string]float64
+	iqr    map[string]float64
+}
+
+func (rs *RobustScaler) Scale(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	scaled := make(map[string]float64)
+	for k, v := range features {
+		if median, okMedian := rs.median[k]; okMedian {
+			if iqr, okIqr := rs.iqr[k]; okIqr && iqr != 0 {
+				scaled[k] = (v - median) / iqr
+			} else {
+				scaled[k] = v - median
+			}
+		} else {
+			scaled[k] = v
+		}
+	}
+	return scaled, nil
+}
+
+func (rs *RobustScaler) Fit(ctx context.Context, data []map[string]float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	rs.median = make(map[string]float64)
+	rs.iqr = make(map[string]float64)
+
+	// Simple implementation - just use mean and std as approximation
+	// In a real implementation, you'd calculate actual median and IQR
+	mean := make(map[string]float64)
+	counts := make(map[string]int)
+
+	for _, sample := range data {
+		for k, v := range sample {
+			mean[k] += v
+			counts[k]++
+		}
+	}
+
+	for k := range mean {
+		if counts[k] > 0 {
+			rs.median[k] = mean[k] / float64(counts[k])
+			rs.iqr[k] = 1.0 // Default IQR approximation
+		}
+	}
+
+	return nil
+}
+
+func (rs *RobustScaler) GetParameters() map[string]interface{} {
+	return rs.params
+}
+
+func (rs *RobustScaler) SetParameters(params map[string]interface{}) error {
+	rs.params = params
+	return nil
+}
+
+func (rs *RobustScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	inverse := make(map[string]float64)
+	for k, v := range data {
+		if median, okMedian := rs.median[k]; okMedian {
+			if iqr, okIqr := rs.iqr[k]; okIqr && iqr != 0 {
+				inverse[k] = v*iqr + median
+			} else {
+				inverse[k] = v + median
+			}
+		} else {
+			inverse[k] = v
+		}
+	}
+	return inverse, nil
+}
+
+type QuantileScaler struct {
+	params map[string]interface{}
+}
+
+func (qs *QuantileScaler) Scale(ctx context.Context, features map[string]float64) (map[string]float64, error) {
+	// Simple pass-through implementation
+	return features, nil
+}
+
+func (qs *QuantileScaler) Fit(ctx context.Context, data []map[string]float64) error {
+	return nil
+}
+
+func (qs *QuantileScaler) GetParameters() map[string]interface{} {
+	return qs.params
+}
+
+func (qs *QuantileScaler) SetParameters(params map[string]interface{}) error {
+	qs.params = params
+	return nil
+}
+
+func (qs *QuantileScaler) InverseTransform(ctx context.Context, data map[string]float64) (map[string]float64, error) {
+	// Simple pass-through implementation
+	return data, nil
+}
