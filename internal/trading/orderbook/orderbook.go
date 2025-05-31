@@ -377,7 +377,7 @@ type OrderBook struct {
 	askHeap    *PriceHeap
 	ordersByID map[uuid.UUID]*model.Order
 	spread     spreadCache
-	nodeSize   int // track current node size for adaptive balancing
+	nodeSize   int
 
 	// Fine-grained locking for concurrency
 	ordersMu sync.RWMutex // protects ordersByID
@@ -395,6 +395,11 @@ type OrderBook struct {
 	topBidsCache []topLevel
 	topAsksCache []topLevel
 	topLevelsMu  sync.RWMutex // protects topBidsCache/topAsksCache
+
+	// Auto-cleanup controls
+	cleanupInterval time.Duration
+	cleanupTicker   *time.Ticker
+	stopCleanup     chan struct{}
 }
 
 // CircuitBreakerState represents the state of a market circuit breaker
@@ -1283,45 +1288,84 @@ func NewOrderBook(pair string) *OrderBook {
 		nodeSize:      0,
 		adminState:    nil,
 		snapshotCache: snapshotCache{},
+		// Initialize auto-cleanup
+		cleanupInterval: 24 * time.Hour,
+		stopCleanup:     make(chan struct{}),
 	}
-	// --- TriggerMonitor Integration ---
-	// Ensure every new order book is registered with the trigger monitor for price monitoring.
-	// If a global or injected TriggerMonitor reference is available, register here:
-	// Example (uncomment and adjust as needed):
-	// trigger.TriggerMonitorInstance.AddOrderBook(pair, ob)
+	ob.startAutoCleanup()
 	return ob
 }
 
-// AllActiveOrders returns a slice of all open/active orders in the book.
-func (ob *OrderBook) AllActiveOrders() []*model.Order {
-	ob.ordersMu.RLock()
-	defer ob.ordersMu.RUnlock()
-	orders := make([]*model.Order, 0, len(ob.ordersByID))
-	for _, o := range ob.ordersByID {
-		if o.Status == model.OrderStatusOpen || o.Status == model.OrderStatusPartiallyFilled || o.Status == model.OrderStatusAlgoPending {
-			orders = append(orders, o)
+// startAutoCleanup starts background cleanup of filled or cancelled orders at the configured interval.
+func (ob *OrderBook) startAutoCleanup() {
+	ob.cleanupTicker = time.NewTicker(ob.cleanupInterval)
+	go func() {
+		for {
+			select {
+			case <-ob.cleanupTicker.C:
+				ob.cleanupOrders()
+			case <-ob.stopCleanup:
+				ob.cleanupTicker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+// cleanupOrders removes filled or cancelled orders from the book and associated price levels.
+func (ob *OrderBook) cleanupOrders() {
+	ob.ordersMu.Lock()
+	var toCleanup []*model.Order
+	for _, order := range ob.ordersByID {
+		if order.Status == model.OrderStatusCancelled || order.Status == model.OrderStatusFilled {
+			toCleanup = append(toCleanup, order)
+			delete(ob.ordersByID, order.ID)
 		}
 	}
-	return orders
-}
+	ob.ordersMu.Unlock()
 
-// RemoveOrder removes an order by ID from the book.
-func (ob *OrderBook) RemoveOrder(orderID uuid.UUID) error {
-	ob.ordersMu.Lock()
-	defer ob.ordersMu.Unlock()
-	order, ok := ob.ordersByID[orderID]
-	if !ok {
-		return fmt.Errorf("order not found: %v", orderID)
+	for _, order := range toCleanup {
+		priceStr := order.Price.String()
+		side := order.Side
+		var level *PriceLevel
+		var exists bool
+		if side == model.OrderSideBuy {
+			ob.bidsMu.Lock()
+			level, exists = ob.bids.Get(priceStr)
+			if exists {
+				level.RemoveOrder(order.ID)
+				if level.Len() == 0 {
+					ob.bids.Delete(priceStr)
+				}
+			}
+			ob.bidsMu.Unlock()
+		} else {
+			ob.asksMu.Lock()
+			level, exists = ob.asks.Get(priceStr)
+			if exists {
+				level.RemoveOrder(order.ID)
+				if level.Len() == 0 {
+					ob.asks.Delete(priceStr)
+				}
+			}
+			ob.asksMu.Unlock()
+		}
 	}
-	order.Status = model.OrderStatusCancelled
-	delete(ob.ordersByID, orderID)
-	// TODO: Remove from price level as well
-	return nil
 }
 
-// GetMutex exposes the main ordersMu for external locking (engine periodic tasks)
-func (ob *OrderBook) GetMutex() *sync.RWMutex {
-	return &ob.ordersMu
+// SetCleanupInterval allows configuring the auto-cleanup interval at runtime.
+func (ob *OrderBook) SetCleanupInterval(interval time.Duration) {
+	ob.cleanupInterval = interval
+	ob.StopCleanup()
+	ob.startAutoCleanup()
+}
+
+// StopCleanup stops the background cleanup ticker.
+func (ob *OrderBook) StopCleanup() {
+	select {
+	case ob.stopCleanup <- struct{}{}:
+	default:
+	}
 }
 
 // --- OrderBook: Enhanced Error Handling ---
@@ -1376,3 +1420,8 @@ func (ob *OrderBook) GetMutex() *sync.RWMutex {
 // License and acknowledgments for the order book
 // - Open-source license information
 // - Third-party dependencies and attributions
+
+// GetMutex exposes the main ordersMu for external locking (engine periodic tasks)
+func (ob *OrderBook) GetMutex() *sync.RWMutex {
+	return &ob.ordersMu
+}
