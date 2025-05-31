@@ -409,7 +409,7 @@ func (wtd *WashTradingDetector) buildWashTradingEvidence(indicators WashTradingI
 		evidence = append(evidence, Evidence{
 			Type:        "pattern",
 			Description: "High self-trading ratio detected",
-			Value:       indicators.SelfTradingRatio.String(),
+			Data:        map[string]interface{}{"ratio": indicators.SelfTradingRatio.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -418,7 +418,7 @@ func (wtd *WashTradingDetector) buildWashTradingEvidence(indicators WashTradingI
 		evidence = append(evidence, Evidence{
 			Type:        "volume",
 			Description: "Artificially inflated volume patterns",
-			Value:       indicators.VolumeInflationRatio.String(),
+			Data:        map[string]interface{}{"ratio": indicators.VolumeInflationRatio.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -427,7 +427,7 @@ func (wtd *WashTradingDetector) buildWashTradingEvidence(indicators WashTradingI
 		evidence = append(evidence, Evidence{
 			Type:        "timing",
 			Description: "Suspicious time clustering in orders",
-			Value:       decimal.NewFromFloat(indicators.TimeClustering).String(),
+			Data:        map[string]interface{}{"clustering": decimal.NewFromFloat(indicators.TimeClustering).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -436,7 +436,7 @@ func (wtd *WashTradingDetector) buildWashTradingEvidence(indicators WashTradingI
 		evidence = append(evidence, Evidence{
 			Type:        "pattern",
 			Description: "Alternating buy/sell patterns detected",
-			Value:       decimal.NewFromInt(int64(indicators.SequentialPatterns)).String(),
+			Data:        map[string]interface{}{"count": decimal.NewFromInt(int64(indicators.SequentialPatterns)).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -764,7 +764,7 @@ func (sd *SpoofingDetector) buildSpoofingEvidence(indicators SpoofingIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "cancellation",
 			Description: "High order cancellation rate",
-			Value:       indicators.CancellationRate.String(),
+			Data:        map[string]interface{}{"rate": indicators.CancellationRate.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -773,7 +773,7 @@ func (sd *SpoofingDetector) buildSpoofingEvidence(indicators SpoofingIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "timing",
 			Description: "Multiple quick order cancellations",
-			Value:       decimal.NewFromInt(int64(indicators.QuickCancellations)).String(),
+			Data:        map[string]interface{}{"count": decimal.NewFromInt(int64(indicators.QuickCancellations)).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -782,7 +782,7 @@ func (sd *SpoofingDetector) buildSpoofingEvidence(indicators SpoofingIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "size",
 			Description: "High proportion of large orders",
-			Value:       indicators.LargeOrderRatio.String(),
+			Data:        map[string]interface{}{"ratio": indicators.LargeOrderRatio.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -791,7 +791,7 @@ func (sd *SpoofingDetector) buildSpoofingEvidence(indicators SpoofingIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "pattern",
 			Description: "Layering patterns detected",
-			Value:       decimal.NewFromInt(int64(indicators.LayeringPatterns)).String(),
+			Data:        map[string]interface{}{"count": decimal.NewFromInt(int64(indicators.LayeringPatterns)).String()},
 			Timestamp:   time.Now(),
 		})
 	}

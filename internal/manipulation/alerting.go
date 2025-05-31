@@ -671,3 +671,17 @@ func (as *AlertingService) GetAlertingMetrics() map[string]interface{} {
 		"rate_limiter_counts":  as.rateLimiter.userCounts,
 	}
 }
+
+// UpdateConfig updates the alerting configuration
+func (as *AlertingService) UpdateConfig(config AlertingConfig) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	as.config = config
+
+	// Update rate limiter settings
+	as.rateLimiter.maxPerUser = config.RateLimitPerUser
+	as.rateLimiter.window = config.RateLimitWindow
+
+	as.logger.Info("Alerting service configuration updated")
+}

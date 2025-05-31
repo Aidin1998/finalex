@@ -10,8 +10,8 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
-	"pincex/internal/model"
-	"pincex/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
 
 // ManipulationPattern represents a detected manipulation pattern
@@ -799,6 +799,60 @@ func (md *ManipulationDetector) GetDetectionMetrics() map[string]interface{} {
 		"monitored_activities":   len(md.userActivities),
 		"monitored_markets":      len(md.marketMetrics),
 	}
+}
+
+// GetMetrics returns performance metrics for the detection engine
+func (md *ManipulationDetector) GetMetrics() map[string]interface{} {
+	return md.GetDetectionMetrics()
+}
+
+// GetStatus returns the current status of the detection engine
+func (md *ManipulationDetector) GetStatus() map[string]interface{} {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+
+	return map[string]interface{}{
+		"enabled":                md.config.Enabled,
+		"total_detections":       md.totalDetections,
+		"active_alerts":          len(md.GetActiveAlerts()),
+		"monitored_activities":   len(md.userActivities),
+		"monitored_markets":      len(md.marketMetrics),
+		"average_detection_time": md.averageDetectionTime.String(),
+	}
+}
+
+// GetAlerts returns all alerts with optional filtering
+func (md *ManipulationDetector) GetAlerts() []ManipulationAlert {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+
+	return md.alerts
+}
+
+// GetAlert returns a specific alert by ID
+func (md *ManipulationDetector) GetAlert(alertID string) (*ManipulationAlert, error) {
+	md.mu.RLock()
+	defer md.mu.RUnlock()
+
+	for _, alert := range md.alerts {
+		if alert.ID == alertID {
+			return &alert, nil
+		}
+	}
+
+	return nil, fmt.Errorf("alert not found: %s", alertID)
+}
+
+// UpdateConfig updates the detection configuration
+func (md *ManipulationDetector) UpdateConfig(config DetectionConfig) {
+	md.mu.Lock()
+	defer md.mu.Unlock()
+
+	md.config = config
+	md.logger.Infow("Detection configuration updated",
+		"enabled", config.Enabled,
+		"detection_window", config.DetectionWindowMinutes,
+		"auto_suspend", config.AutoSuspendEnabled)
 }
 
 // UpdateAlertStatus updates the status of a manipulation alert
