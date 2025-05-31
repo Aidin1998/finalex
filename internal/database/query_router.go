@@ -36,9 +36,12 @@ type ReplicaDB struct {
 type QueryRouterConfig struct {
 	DefaultReadReplica     bool          `yaml:"default_read_replica" json:"default_read_replica"`
 	LoadBalancingStrategy  string        `yaml:"load_balancing_strategy" json:"load_balancing_strategy"` // round_robin, weighted, least_connections, latency_based
+	Strategy               string        `yaml:"strategy" json:"strategy"`                               // Alias for LoadBalancingStrategy
 	HealthCheckInterval    time.Duration `yaml:"health_check_interval" json:"health_check_interval"`
 	HealthCheckTimeout     time.Duration `yaml:"health_check_timeout" json:"health_check_timeout"`
 	MaxReplicaLatency      time.Duration `yaml:"max_replica_latency" json:"max_replica_latency"`
+	MaxReplicationLag      time.Duration `yaml:"max_replication_lag" json:"max_replication_lag"`
+	ReadPreference         string        `yaml:"read_preference" json:"read_preference"` // primary, secondary, secondaryPreferred
 	ReplicaFailoverEnabled bool          `yaml:"replica_failover_enabled" json:"replica_failover_enabled"`
 	ConsistencyLevel       string        `yaml:"consistency_level" json:"consistency_level"` // eventual, strong, bounded_staleness
 	BoundedStalenessMaxAge time.Duration `yaml:"bounded_staleness_max_age" json:"bounded_staleness_max_age"`

@@ -117,7 +117,7 @@ func (r *EnhancedRepository) GetOrderByIDCached(ctx context.Context, orderID uui
 
 	start := time.Now()
 	var order model.Order
-	err = r.db.Reader().WithContext(ctx).Raw(query, orderID).Scan(&order).Error
+	err = r.db.Read().WithContext(ctx).Raw(query, orderID).Scan(&order).Error
 
 	// Log slow queries
 	duration := time.Since(start)
@@ -169,7 +169,7 @@ func (r *EnhancedRepository) GetOpenOrdersByUserOptimized(ctx context.Context, u
 
 	start := time.Now()
 	var orders []*model.Order
-	err = r.db.Reader().WithContext(ctx).Raw(query, userID, limit).Scan(&orders).Error
+	err = r.db.Read().WithContext(ctx).Raw(query, userID, limit).Scan(&orders).Error
 
 	// Performance monitoring
 	duration := time.Since(start)
@@ -247,7 +247,7 @@ func (r *EnhancedRepository) GetOpenOrdersByPairOptimized(ctx context.Context, p
 
 	start := time.Now()
 	var orders []*model.Order
-	err = r.db.Reader().WithContext(ctx).Raw(query, args...).Scan(&orders).Error
+	err = r.db.Read().WithContext(ctx).Raw(query, args...).Scan(&orders).Error
 
 	// Performance monitoring
 	duration := time.Since(start)
@@ -283,9 +283,8 @@ func (r *EnhancedRepository) CreateOrderOptimized(ctx context.Context, order *mo
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
 		)
 	`
-
 	start := time.Now()
-	err := r.db.Writer().WithContext(ctx).Exec(query,
+	err := r.db.Write().WithContext(ctx).Exec(query,
 		order.ID, order.UserID, order.Pair, order.Side, order.Type,
 		order.Price, order.Quantity, order.FilledQuantity, order.Status,
 		order.TimeInForce, order.StopPrice, order.AvgPrice, order.DisplayQuantity,
@@ -319,9 +318,8 @@ func (r *EnhancedRepository) UpdateOrderStatusOptimized(ctx context.Context, ord
 		SET status = $2, filled_quantity = $3, average_price = $4, updated_at = $5
 		WHERE id = $1
 	`
-
 	start := time.Now()
-	result := r.db.Writer().WithContext(ctx).Exec(query, orderID, status, filledQty, avgPrice, time.Now())
+	result := r.db.Write().WithContext(ctx).Exec(query, orderID, status, filledQty, avgPrice, time.Now())
 
 	duration := time.Since(start)
 	if result.Error != nil {
@@ -370,7 +368,7 @@ func (r *EnhancedRepository) BatchCreateTradesOptimized(ctx context.Context, tra
 	`, strings.Join(values, ","))
 
 	start := time.Now()
-	err := r.db.Writer().WithContext(ctx).Exec(query, args...).Error
+	err := r.db.Write().WithContext(ctx).Exec(query, args...).Error
 
 	duration := time.Since(start)
 	if err != nil {
@@ -417,10 +415,9 @@ func (r *EnhancedRepository) GetTradeHistoryOptimized(ctx context.Context, userI
 	`, strings.Join(whereConditions, " AND "), argIndex, argIndex+1)
 
 	args = append(args, limit, offset)
-
 	start := time.Now()
 	var trades []*model.Trade
-	err := r.db.Reader().WithContext(ctx).Raw(query, args...).Scan(&trades).Error
+	err := r.db.Read().WithContext(ctx).Raw(query, args...).Scan(&trades).Error
 
 	duration := time.Since(start)
 	if duration > 100*time.Millisecond {
@@ -510,3 +507,13 @@ var (
 	ErrOrderNotFound = fmt.Errorf("order not found")
 	ErrTradeNotFound = fmt.Errorf("trade not found")
 )
+
+// GetUserOrders retrieves all orders for a user (DEMO: maps to GetOpenOrdersByUserOptimized for open orders)
+func (r *EnhancedRepository) GetUserOrders(ctx context.Context, userID int64, limit int) ([]*model.Order, error) {
+	// Convert int64 userID to uuid.UUID (assume userID is stored as uuid.UUID in the DB)
+	uid, err := uuid.FromBytes([]byte(fmt.Sprintf("%016x", userID)))
+	if err != nil {
+		return nil, fmt.Errorf("invalid userID: %v", err)
+	}
+	return r.GetOpenOrdersByUserOptimized(ctx, uid, limit)
+}

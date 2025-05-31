@@ -265,7 +265,8 @@ func (bs *BenchmarkSuite) setupTestData(ctx context.Context) error {
 		)`,
 	}
 
-	masterDB := bs.db.GetRepository().GetMasterDB()
+	// Use masterDB from OptimizedDatabase directly
+	masterDB := bs.db.masterDB
 	for _, query := range queries {
 		if err := masterDB.WithContext(ctx).Exec(query).Error; err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
@@ -277,7 +278,7 @@ func (bs *BenchmarkSuite) setupTestData(ctx context.Context) error {
 }
 
 func (bs *BenchmarkSuite) insertTestData(ctx context.Context) error {
-	masterDB := bs.db.GetRepository().GetMasterDB()
+	masterDB := bs.db.masterDB
 
 	// Insert users
 	for i := 1; i <= bs.config.TestDataSize/100; i++ {
@@ -498,10 +499,8 @@ func (bs *BenchmarkSuite) calculateResults() {
 	// Get cache hit rate from monitoring
 	if bs.db.GetMonitoring() != nil {
 		metrics := bs.db.GetMonitoring().GetCurrentMetrics()
-		if cacheMetrics, ok := metrics["cache"].(map[string]interface{}); ok {
-			if hitRate, ok := cacheMetrics["hit_rate"].(float64); ok {
-				bs.results.CacheHitRate = hitRate
-			}
+		if metrics != nil && metrics.CacheMetrics != nil {
+			bs.results.CacheHitRate = metrics.CacheMetrics.HitRate
 		}
 	}
 }

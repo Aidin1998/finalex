@@ -25,17 +25,6 @@ type MonitoringDashboard struct {
 	mu           sync.RWMutex
 }
 
-// MonitoringConfig holds configuration for monitoring dashboard
-type MonitoringConfig struct {
-	CollectionInterval   time.Duration `yaml:"collection_interval" json:"collection_interval"`
-	RetentionPeriod      time.Duration `yaml:"retention_period" json:"retention_period"`
-	SlowQueryThreshold   time.Duration `yaml:"slow_query_threshold" json:"slow_query_threshold"`
-	HighLatencyThreshold time.Duration `yaml:"high_latency_threshold" json:"high_latency_threshold"`
-	LowCacheHitThreshold float64       `yaml:"low_cache_hit_threshold" json:"low_cache_hit_threshold"`
-	AlertsEnabled        bool          `yaml:"alerts_enabled" json:"alerts_enabled"`
-	MetricsPrefix        string        `yaml:"metrics_prefix" json:"metrics_prefix"`
-}
-
 // DefaultMonitoringConfig returns default monitoring configuration
 func DefaultMonitoringConfig() *MonitoringConfig {
 	return &MonitoringConfig{
@@ -99,15 +88,6 @@ type CacheMetrics struct {
 	AverageSetLatency float64          `json:"average_set_latency_ms"`
 }
 
-// ConnectionMetrics holds connection pool metrics
-type ConnectionMetrics struct {
-	MasterConnections  ConnectionPoolStats            `json:"master_connections"`
-	ReplicaConnections map[string]ConnectionPoolStats `json:"replica_connections"`
-	FailoverEvents     int64                          `json:"failover_events"`
-	ConnectionErrors   int64                          `json:"connection_errors"`
-	PoolUtilization    float64                        `json:"pool_utilization"`
-}
-
 // IndexMetrics holds index performance metrics
 type IndexMetrics struct {
 	TotalIndexes        int64            `json:"total_indexes"`
@@ -152,17 +132,6 @@ type SlowQuery struct {
 	LastSeen  time.Time `json:"last_seen"`
 	Table     string    `json:"table"`
 	Operation string    `json:"operation"`
-}
-
-// ConnectionPoolStats holds connection pool statistics
-type ConnectionPoolStats struct {
-	Open         int32         `json:"open"`
-	InUse        int32         `json:"in_use"`
-	Idle         int32         `json:"idle"`
-	WaitCount    int64         `json:"wait_count"`
-	WaitDuration time.Duration `json:"wait_duration"`
-	MaxIdleTime  time.Duration `json:"max_idle_time"`
-	MaxLifetime  time.Duration `json:"max_lifetime"`
 }
 
 // NewMonitoringDashboard creates a new monitoring dashboard
@@ -291,29 +260,27 @@ func (md *MonitoringDashboard) collectDatabaseMetrics(ctx context.Context) (*Dat
 	}
 
 	// Get connection stats
-	sqlDB, err := md.db.Writer().DB()
+	sqlDB, err := md.db.Write().DB()
 	if err == nil {
 		stats := sqlDB.Stats()
 		metrics.TotalConnections = int64(stats.MaxOpenConnections)
 		metrics.ActiveConnections = int64(stats.InUse)
 		metrics.IdleConnections = int64(stats.Idle)
 	}
-
 	// Get database size
 	var dbSize int64
-	err = md.db.Reader().WithContext(ctx).Raw(`
+	err = md.db.Read().WithContext(ctx).Raw(`
 		SELECT pg_database_size(current_database())
 	`).Scan(&dbSize).Error
 	if err == nil {
 		metrics.DatabaseSize = dbSize
 	}
-
 	// Get table sizes
 	var tableSizes []struct {
 		TableName string `json:"table_name"`
 		Size      int64  `json:"size"`
 	}
-	err = md.db.Reader().WithContext(ctx).Raw(`
+	err = md.db.Read().WithContext(ctx).Raw(`
 		SELECT 
 			tablename as table_name,
 			pg_total_relation_size(schemaname||'.'||tablename) as size
@@ -336,7 +303,7 @@ func (md *MonitoringDashboard) collectDatabaseMetrics(ctx context.Context) (*Dat
 		Updates   int64  `json:"n_live_tup"`
 		Deletes   int64  `json:"n_dead_tup"`
 	}
-	err = md.db.Reader().WithContext(ctx).Raw(`
+	err = md.db.Read().WithContext(ctx).Raw(`
 		SELECT 
 			relname as table_name,
 			n_tup_ins as inserts,
@@ -373,14 +340,13 @@ func (md *MonitoringDashboard) collectQueryMetrics(ctx context.Context) (*QueryM
 		optimizerMetrics := md.optimizer.GetMetrics()
 		metrics.SlowQueries = optimizerMetrics.SlowQueries
 		metrics.QueryLatencyP50 = optimizerMetrics.AvgQueryTime
-
 		// Get slow queries
-		slowQueries := md.optimizer.GetSlowQueries(10)
+		slowQueries := md.optimizer.GetSlowQueries()
 		metrics.TopSlowQueries = make([]SlowQuery, len(slowQueries))
 		for i, sq := range slowQueries {
 			metrics.TopSlowQueries[i] = SlowQuery{
 				Query:     sq.Query,
-				Duration:  float64(sq.Duration.Nanoseconds()) / 1e6, // Convert to ms
+				Duration:  float64(sq.AverageTime.Nanoseconds()) / 1e6, // Convert to ms
 				Frequency: sq.Count,
 				LastSeen:  sq.LastSeen,
 			}
@@ -396,7 +362,7 @@ func (md *MonitoringDashboard) collectQueryMetrics(ctx context.Context) (*QueryM
 	}
 
 	// This requires pg_stat_statements extension
-	err := md.db.Reader().WithContext(ctx).Raw(`
+	err := md.db.Read().WithContext(ctx).Raw(`
 		SELECT 
 			query,
 			calls,
@@ -471,16 +437,17 @@ func (md *MonitoringDashboard) collectConnectionMetrics(ctx context.Context) (*C
 	}
 
 	// Get master connection stats
-	if sqlDB, err := md.db.Writer().DB(); err == nil {
+	if sqlDB, err := md.db.Write().DB(); err == nil {
 		stats := sqlDB.Stats()
+
 		metrics.MasterConnections = ConnectionPoolStats{
 			Open:         int32(stats.OpenConnections),
 			InUse:        int32(stats.InUse),
 			Idle:         int32(stats.Idle),
 			WaitCount:    stats.WaitCount,
 			WaitDuration: stats.WaitDuration,
-			MaxIdleTime:  stats.MaxIdleClosed,
-			MaxLifetime:  stats.MaxLifetimeClosed,
+			MaxIdleTime:  time.Duration(stats.MaxIdleClosed) * time.Second,
+			MaxLifetime:  time.Duration(stats.MaxLifetimeClosed) * time.Second,
 		}
 
 		if stats.OpenConnections > 0 {
@@ -674,6 +641,17 @@ type AlertManager struct {
 }
 
 // Alert represents a system alert
+// Fix: Message should be a string, not an embedded type
+//
+//	type Alert struct {
+//		ID         string     `json:"id"`
+//		Type       string     `json:"type"`
+//		Message    `json:"message"`
+//		Severity   string     `json:"severity"`
+//		Timestamp  time.Time  `json:"timestamp"`
+//		Resolved   bool       `json:"resolved"`
+//		ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+//	}
 type Alert struct {
 	ID         string     `json:"id"`
 	Type       string     `json:"type"`
@@ -738,4 +716,18 @@ func (am *AlertManager) GetMetrics() *AlertMetrics {
 
 	metrics.LastAlertTime = lastAlertTime
 	return metrics
+}
+
+// ToMap converts DashboardMetrics to map[string]interface{} for alert checking
+func (dm *DashboardMetrics) ToMap() map[string]interface{} {
+	result := make(map[string]interface{})
+	result["database"] = dm.DatabaseMetrics
+	result["query"] = dm.QueryMetrics
+	result["cache"] = dm.CacheMetrics
+	result["connections"] = dm.ConnectionMetrics
+	result["index"] = dm.IndexMetrics
+	result["replication"] = dm.ReplicationMetrics
+	result["alert"] = dm.AlertMetrics
+	result["timestamp"] = dm.Timestamp
+	return result
 }

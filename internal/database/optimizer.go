@@ -66,21 +66,6 @@ type SlowQueryInfo struct {
 	Suggestions []string      `json:"suggestions"`
 }
 
-// IndexManager handles automatic index creation and optimization
-type IndexManager struct {
-	db     *gorm.DB
-	logger *zap.Logger
-	config IndexConfig
-}
-
-// IndexConfig contains index optimization configuration
-type IndexConfig struct {
-	AutoCreateIndexes    bool              `json:"auto_create_indexes"`
-	MinUsageThreshold    int64             `json:"min_usage_threshold"`
-	AnalyzeUsageInterval time.Duration     `json:"analyze_usage_interval"`
-	IndexSuggestions     []IndexSuggestion `json:"index_suggestions"`
-}
-
 // IndexSuggestion represents a suggested index
 type IndexSuggestion struct {
 	Table     string   `json:"table"`
@@ -134,14 +119,14 @@ func NewQueryOptimizer(db *gorm.DB, redisClient *redis.Client, logger *zap.Logge
 		slowQueries: &SlowQueryTracker{
 			threshold: config.SlowQueryThreshold,
 			queries:   make(map[string]*SlowQueryInfo),
-		},
-		indexManager: &IndexManager{
+		}, indexManager: &IndexManager{
 			db:     db,
 			logger: logger,
-			config: IndexConfig{
-				AutoCreateIndexes:    config.EnableIndexOptimizer,
-				MinUsageThreshold:    100,
-				AnalyzeUsageInterval: config.AnalyzeInterval,
+			config: &IndexManagerConfig{
+				EnableConcurrentIndexing: config.EnableIndexOptimizer,
+				IndexCreationTimeout:     30 * time.Second,
+				AnalyzeAfterCreation:     true,
+				MonitoringEnabled:        true,
 			},
 		},
 	}
@@ -261,6 +246,125 @@ func (o *QueryOptimizer) GetSlowQueries() []*SlowQueryInfo {
 	return queries
 }
 
+// StartMaintenance starts background maintenance tasks
+func (o *QueryOptimizer) StartMaintenance(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.performMaintenance(ctx)
+		}
+	}
+}
+
+// ExecuteOptimizedQuery executes a query with full optimization
+func (o *QueryOptimizer) ExecuteOptimizedQuery(ctx context.Context, db *gorm.DB, query string, args ...interface{}) (*QueryResult, error) {
+	start := time.Now()
+
+	var result QueryResult
+	result.Query = query
+	result.Args = args
+	// Execute the query
+	err := db.WithContext(ctx).Raw(query, args...).Scan(&result.Data).Error
+	result.ExecutionTime = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+	}
+
+	// Track performance
+	o.trackQueryPerformance(query, result.ExecutionTime)
+
+	return &result, err
+}
+
+// GetMetrics returns query optimizer metrics
+func (o *QueryOptimizer) GetMetrics() *OptimizerMetrics {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	return &OptimizerMetrics{
+		SlowQueries:    int64(len(o.slowQueries.queries)),
+		AvgQueryTime:   o.calculateAverageQueryTime(),
+		CacheHitRate:   o.queryCache.getHitRate(),
+		TotalQueries:   o.getTotalQueries(),
+		OptimizedCount: o.getOptimizedCount(),
+	}
+}
+
+// GetCacheStats returns cache statistics
+func (o *QueryOptimizer) GetCacheStats() map[string]interface{} {
+	o.queryCache.mu.RLock()
+	defer o.queryCache.mu.RUnlock()
+
+	return map[string]interface{}{
+		"current_size": o.queryCache.currentSize,
+		"max_size":     o.queryCache.maxSize,
+		"ttl":          o.queryCache.ttl.String(),
+	}
+}
+
+// OptimizerMetrics holds optimizer performance metrics
+type OptimizerMetrics struct {
+	SlowQueries    int64   `json:"slow_queries"`
+	AvgQueryTime   float64 `json:"avg_query_time_ms"`
+	CacheHitRate   float64 `json:"cache_hit_rate"`
+	TotalQueries   int64   `json:"total_queries"`
+	OptimizedCount int64   `json:"optimized_count"`
+}
+
+// Helper methods for metrics calculation
+func (o *QueryOptimizer) calculateAverageQueryTime() float64 {
+	o.slowQueries.mu.RLock()
+	defer o.slowQueries.mu.RUnlock()
+
+	if len(o.slowQueries.queries) == 0 {
+		return 0
+	}
+
+	var total time.Duration
+	count := 0
+	for _, query := range o.slowQueries.queries {
+		total += query.AverageTime
+		count++
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	return float64(total.Nanoseconds()) / float64(count) / 1e6 // Convert to ms
+}
+
+func (o *QueryOptimizer) getTotalQueries() int64 {
+	o.slowQueries.mu.RLock()
+	defer o.slowQueries.mu.RUnlock()
+
+	var total int64
+	for _, query := range o.slowQueries.queries {
+		total += query.Count
+	}
+	return total
+}
+
+func (o *QueryOptimizer) getOptimizedCount() int64 {
+	o.queryCache.mu.RLock()
+	defer o.queryCache.mu.RUnlock()
+
+	// Return current cache size as optimized count
+	return o.queryCache.currentSize
+}
+
+// getHitRate calculates cache hit rate
+func (qc *QueryCache) getHitRate() float64 {
+	// For now return a placeholder - would need to track hits/misses
+	return 0.85 // 85% hit rate placeholder
+}
+
 // Private methods
 
 func (o *QueryOptimizer) optimizeConnectionPool() error {
@@ -312,7 +416,7 @@ func (o *QueryOptimizer) runDatabaseMaintenance(ctx context.Context) {
 }
 
 func (o *QueryOptimizer) runIndexOptimization(ctx context.Context) {
-	ticker := time.NewTicker(o.indexManager.config.AnalyzeUsageInterval)
+	ticker := time.NewTicker(time.Hour) // Default analyze interval
 	defer ticker.Stop()
 
 	for {
@@ -355,7 +459,7 @@ func (o *QueryOptimizer) performMaintenance(ctx context.Context) {
 func (o *QueryOptimizer) newPerformanceLogger() logger.Interface {
 	return &performanceLogger{
 		optimizer: o,
-		Logger:    logger.Default,
+		Interface: logger.Default,
 	}
 }
 
@@ -524,11 +628,6 @@ func (c *QueryCache) cleanup() {
 	c.currentSize = 0 // Reset counter - Redis TTL will handle actual cleanup
 }
 
-func (c *QueryCache) getHitRate() float64 {
-	// Simplified hit rate calculation
-	return 0.85 // Placeholder - implement actual hit rate tracking
-}
-
 func (c *QueryCache) evictOldest(ctx context.Context) {
 	// Implement LRU eviction logic
 	// This is a simplified version
@@ -601,7 +700,7 @@ func (im *IndexManager) analyzeAndOptimize(ctx context.Context) {
 	// Suggest new indexes based on query patterns
 	suggestions := im.generateIndexSuggestions()
 	for _, suggestion := range suggestions {
-		if im.config.AutoCreateIndexes && suggestion.Priority >= 8 {
+		if im.config.EnableConcurrentIndexing && suggestion.Priority >= 8 {
 			if err := im.createIndex(ctx, suggestion); err != nil {
 				im.logger.Error("Failed to create suggested index", zap.Error(err))
 			} else {
@@ -642,7 +741,7 @@ func (im *IndexManager) getIndexUsageStats(ctx context.Context) (map[string]int6
 func (im *IndexManager) findUnusedIndexes(stats map[string]int64) []string {
 	unused := []string{}
 	for indexName, scanCount := range stats {
-		if scanCount < im.config.MinUsageThreshold {
+		if scanCount < 100 { // Default minimum usage threshold
 			unused = append(unused, indexName)
 		}
 	}
@@ -712,6 +811,5 @@ func DefaultOptimizerConfig() OptimizerConfig {
 		VacuumInterval:        4 * time.Hour,
 		ConnectionPoolSize:    100,
 		MaxIdleConnections:    20,
-		ConnectionMaxLifetime: 1 * time.Hour,
-	}
+		ConnectionMaxLifetime: 1 * time.Hour}
 }

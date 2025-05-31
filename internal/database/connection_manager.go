@@ -11,6 +11,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConnectionPoolStats holds connection pool statistics
+type ConnectionPoolStats struct {
+	Open         int32         `json:"open"`
+	InUse        int32         `json:"in_use"`
+	Idle         int32         `json:"idle"`
+	WaitCount    int64         `json:"wait_count"`
+	WaitDuration time.Duration `json:"wait_duration"`
+	MaxIdleTime  time.Duration `json:"max_idle_time"`
+	MaxLifetime  time.Duration `json:"max_lifetime"`
+}
+
 // ConnectionManager manages database connections with advanced pooling and health checks
 type ConnectionManager struct {
 	pools         map[string]*ConnectionPool
@@ -45,17 +56,6 @@ type ConnectionPoolConfig struct {
 	Role             string        `json:"role"` // master, replica
 	Priority         int           `json:"priority"`
 	Weight           int           `json:"weight"` // for load balancing
-}
-
-// HealthCheckConfig contains health check configuration
-type HealthCheckConfig struct {
-	Enabled           bool          `json:"enabled"`
-	Interval          time.Duration `json:"interval"`
-	Timeout           time.Duration `json:"timeout"`
-	RetryAttempts     int           `json:"retry_attempts"`
-	FailureThreshold  int           `json:"failure_threshold"`
-	RecoveryThreshold int           `json:"recovery_threshold"`
-	CustomQueries     []string      `json:"custom_queries"`
 }
 
 // LoadBalancingConfig contains load balancing configuration
@@ -114,6 +114,12 @@ type ConnectionMetrics struct {
 	TotalErrors      int64                   `json:"total_errors"`
 	PoolMetrics      map[string]*PoolMetrics `json:"pool_metrics"`
 	LastUpdated      time.Time               `json:"last_updated"`
+	// Additional fields for monitoring dashboard
+	MasterConnections  ConnectionPoolStats            `json:"master_connections"`
+	ReplicaConnections map[string]ConnectionPoolStats `json:"replica_connections"`
+	FailoverEvents     int64                          `json:"failover_events"`
+	ConnectionErrors   int64                          `json:"connection_errors"`
+	PoolUtilization    float64                        `json:"pool_utilization"`
 }
 
 // HealthChecker monitors connection pool health
@@ -239,6 +245,68 @@ func (cm *ConnectionManager) GetPool(name string) (*ConnectionPool, error) {
 	}
 
 	return pool, nil
+}
+
+// GetMasterDB returns the master database connection
+func (cm *ConnectionManager) GetMasterDB() *gorm.DB {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	if pool, exists := cm.pools["master"]; exists {
+		return pool.db
+	}
+	return nil
+}
+
+// GetReplicaDBs returns all replica database connections
+func (cm *ConnectionManager) GetReplicaDBs() []*gorm.DB {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	var replicas []*gorm.DB
+	for name, pool := range cm.pools {
+		if name != "master" && pool.db != nil {
+			replicas = append(replicas, pool.db)
+		}
+	}
+	return replicas
+}
+
+// GetHealthStatus returns the health status of all connections
+func (cm *ConnectionManager) GetHealthStatus() map[string]interface{} {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	status := make(map[string]interface{})
+	for name, pool := range cm.pools {
+		isHealthy := true
+		var err error
+
+		if pool.db != nil {
+			sqlDB, dbErr := pool.db.DB()
+			if dbErr == nil {
+				err = sqlDB.Ping()
+				isHealthy = (err == nil)
+			} else {
+				err = dbErr
+				isHealthy = false
+			}
+		} else {
+			isHealthy = false
+			err = fmt.Errorf("database connection is nil")
+		}
+
+		status[name] = map[string]interface{}{
+			"healthy": isHealthy,
+			"error":   err,
+		}
+	}
+	return status
+}
+
+// Close closes all database connections
+func (cm *ConnectionManager) Close() error {
+	return cm.Stop()
 }
 
 // GetMetrics returns current connection metrics

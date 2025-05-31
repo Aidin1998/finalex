@@ -1,4 +1,4 @@
-package main
+package database
 
 import (
 	"context"
@@ -8,8 +8,6 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	"github.com/pincex_unified/internal/database"
 )
 
 func main() {
@@ -30,7 +28,7 @@ func main() {
 	fmt.Println("====================================")
 
 	// Initialize optimized database with production config
-	config := database.DefaultConfig()
+	config := DefaultConfig()
 
 	// Customize for demo environment
 	config.Cache.Redis.Addr = "localhost:6379"
@@ -39,7 +37,7 @@ func main() {
 
 	fmt.Println("📊 Initializing optimized database system...")
 
-	optimizedDB, err := database.NewOptimizedDatabase(config)
+	optimizedDB, err := NewOptimizedDatabase(config)
 	if err != nil {
 		log.Fatalf("Failed to create optimized database: %v", err)
 	}
@@ -91,9 +89,9 @@ func printHealthStatus(status map[string]interface{}) {
 	}
 }
 
-func runBenchmark(ctx context.Context, db *database.OptimizedDatabase) error {
+func runBenchmark(ctx context.Context, db *OptimizedDatabase) error {
 	// Create benchmark suite
-	benchConfig := &database.BenchmarkConfig{
+	benchConfig := &BenchmarkConfig{
 		Duration:       30 * time.Second,
 		Concurrency:    20,
 		WarmupDuration: 5 * time.Second,
@@ -101,7 +99,7 @@ func runBenchmark(ctx context.Context, db *database.OptimizedDatabase) error {
 		TestDataSize:   1000,
 	}
 
-	suite := database.NewBenchmarkSuite(db, benchConfig)
+	suite := NewBenchmarkSuite(db, benchConfig)
 	suite.SetupDefaultQueries()
 
 	// Run benchmark
@@ -120,14 +118,14 @@ func runBenchmark(ctx context.Context, db *database.OptimizedDatabase) error {
 	return nil
 }
 
-func demonstrateOptimizations(ctx context.Context, db *database.OptimizedDatabase) {
+func demonstrateOptimizations(ctx context.Context, db *OptimizedDatabase) {
 	// Test query caching
 	fmt.Println("1. Testing Query Caching")
 	testQuery := "SELECT COUNT(*) FROM orders WHERE status = 'active'"
 
 	// First execution (cache miss)
 	start := time.Now()
-	result1, err := db.ExecuteQuery(ctx, testQuery)
+	_, err := db.ExecuteQuery(ctx, testQuery)
 	duration1 := time.Since(start)
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
@@ -137,7 +135,7 @@ func demonstrateOptimizations(ctx context.Context, db *database.OptimizedDatabas
 
 	// Second execution (cache hit)
 	start = time.Now()
-	result2, err := db.ExecuteQuery(ctx, testQuery)
+	_, err = db.ExecuteQuery(ctx, testQuery)
 	duration2 := time.Since(start)
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
@@ -192,7 +190,7 @@ func containsAny(s string, substrings []string) bool {
 	return false
 }
 
-func showMonitoringDashboard(db *database.OptimizedDatabase) {
+func showMonitoringDashboard(db *OptimizedDatabase) {
 	monitoring := db.GetMonitoring()
 	if monitoring == nil {
 		fmt.Println("   Monitoring not available")
@@ -202,23 +200,23 @@ func showMonitoringDashboard(db *database.OptimizedDatabase) {
 	metrics := monitoring.GetCurrentMetrics()
 
 	// Display key metrics
-	if dbMetrics, ok := metrics["database"].(map[string]interface{}); ok {
-		fmt.Printf("   Active Connections: %v\n", dbMetrics["active_connections"])
-		fmt.Printf("   Query Count: %v\n", dbMetrics["query_count"])
-	}
-
-	if queryMetrics, ok := metrics["query"].(map[string]interface{}); ok {
-		fmt.Printf("   Average Query Time: %v\n", queryMetrics["avg_latency"])
-		fmt.Printf("   Slow Queries: %v\n", queryMetrics["slow_queries"])
-	}
-
-	if cacheMetrics, ok := metrics["cache"].(map[string]interface{}); ok {
-		fmt.Printf("   Cache Hit Rate: %.2f%%\n", cacheMetrics["hit_rate"].(float64)*100)
-		fmt.Printf("   Cache Memory Usage: %v MB\n", cacheMetrics["memory_usage"])
+	if metrics != nil {
+		if metrics.DatabaseMetrics != nil {
+			fmt.Printf("   Active Connections: %v\n", metrics.DatabaseMetrics.ActiveConnections)
+			fmt.Printf("   Query Count: %v\n", metrics.DatabaseMetrics.TotalQueries)
+			fmt.Printf("   Average Query Time: %v\n", metrics.DatabaseMetrics.AverageQueryTime)
+		}
+		if metrics.QueryMetrics != nil {
+			fmt.Printf("   Slow Queries: %v\n", metrics.QueryMetrics.SlowQueries)
+		}
+		if metrics.CacheMetrics != nil {
+			fmt.Printf("   Cache Hit Rate: %.2f%%\n", metrics.CacheMetrics.HitRate*100)
+			fmt.Printf("   Cache Memory Usage: %v MB\n", metrics.CacheMetrics.MemoryUsage/1024/1024)
+		}
 	}
 }
 
-func showCachePerformance(ctx context.Context, db *database.OptimizedDatabase) {
+func showCachePerformance(ctx context.Context, db *OptimizedDatabase) {
 	// Demonstrate cache performance with repeated queries
 	queries := []string{
 		"SELECT COUNT(*) FROM orders",
@@ -256,7 +254,7 @@ func showCachePerformance(ctx context.Context, db *database.OptimizedDatabase) {
 // Example production usage patterns
 func ExampleProductionUsage() {
 	// Production configuration example
-	config := database.DefaultConfig()
+	config := DefaultConfig()
 
 	// Production tuning
 	config.Master.MaxOpenConns = 100
@@ -266,7 +264,7 @@ func ExampleProductionUsage() {
 	config.Monitoring.AlertThresholds.MaxQueryLatency = 500 * time.Microsecond
 
 	// Initialize system
-	db, err := database.NewOptimizedDatabase(config)
+	db, err := NewOptimizedDatabase(config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -307,20 +305,20 @@ func ExampleProductionUsage() {
 
 // Example benchmark for continuous integration
 func ExampleCIBenchmark() {
-	config := database.DefaultConfig()
-	db, _ := database.NewOptimizedDatabase(config)
+	config := DefaultConfig()
+	db, _ := NewOptimizedDatabase(config)
 	db.Start()
 	defer db.Stop()
 
 	// Quick CI benchmark
-	benchConfig := &database.BenchmarkConfig{
+	benchConfig := &BenchmarkConfig{
 		Duration:      10 * time.Second,
 		Concurrency:   10,
 		TargetLatency: 1 * time.Millisecond,
 		TestDataSize:  100,
 	}
 
-	suite := database.NewBenchmarkSuite(db, benchConfig)
+	suite := NewBenchmarkSuite(db, benchConfig)
 	suite.SetupDefaultQueries()
 
 	ctx := context.Background()

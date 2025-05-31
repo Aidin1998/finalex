@@ -4,6 +4,17 @@ import (
 	"time"
 )
 
+// QueryResult represents the result of a database query
+type QueryResult struct {
+	Data          interface{}   `json:"data"`
+	Query         string        `json:"query"`
+	Args          []interface{} `json:"args"`
+	RowsAffected  int64         `json:"rows_affected"`
+	LastInsertID  int64         `json:"last_insert_id"`
+	ExecutionTime time.Duration `json:"execution_time"`
+	Error         error         `json:"error,omitempty"`
+}
+
 // DatabaseConfig holds all database optimization configurations
 type DatabaseConfig struct {
 	// Connection pool settings
@@ -60,12 +71,15 @@ type ReplicaEndpoint struct {
 }
 
 type HealthCheckConfig struct {
-	Enabled          bool          `json:"enabled" yaml:"enabled"`
-	Interval         time.Duration `json:"interval" yaml:"interval"`
-	Timeout          time.Duration `json:"timeout" yaml:"timeout"`
-	RetryCount       int           `json:"retry_count" yaml:"retry_count"`
-	CustomQuery      string        `json:"custom_query" yaml:"custom_query"`
-	FailureThreshold int           `json:"failure_threshold" yaml:"failure_threshold"`
+	Enabled           bool          `json:"enabled" yaml:"enabled"`
+	Interval          time.Duration `json:"interval" yaml:"interval"`
+	Timeout           time.Duration `json:"timeout" yaml:"timeout"`
+	RetryCount        int           `json:"retry_count" yaml:"retry_count"`
+	RetryAttempts     int           `json:"retry_attempts" yaml:"retry_attempts"`
+	CustomQuery       string        `json:"custom_query" yaml:"custom_query"`
+	CustomQueries     []string      `json:"custom_queries" yaml:"custom_queries"`
+	FailureThreshold  int           `json:"failure_threshold" yaml:"failure_threshold"`
+	RecoveryThreshold int           `json:"recovery_threshold" yaml:"recovery_threshold"`
 }
 
 type CacheConfig struct {
@@ -117,7 +131,14 @@ type QueryOptimizerConfig struct {
 type MonitoringConfig struct {
 	Enabled                  bool          `json:"enabled" yaml:"enabled"`
 	MetricsInterval          time.Duration `json:"metrics_interval" yaml:"metrics_interval"`
+	CollectionInterval       time.Duration `json:"collection_interval" yaml:"collection_interval"`
 	HistoryRetention         time.Duration `json:"history_retention" yaml:"history_retention"`
+	RetentionPeriod          time.Duration `json:"retention_period" yaml:"retention_period"`
+	SlowQueryThreshold       time.Duration `json:"slow_query_threshold" yaml:"slow_query_threshold"`
+	HighLatencyThreshold     time.Duration `json:"high_latency_threshold" yaml:"high_latency_threshold"`
+	LowCacheHitThreshold     float64       `json:"low_cache_hit_threshold" yaml:"low_cache_hit_threshold"`
+	AlertsEnabled            bool          `json:"alerts_enabled" yaml:"alerts_enabled"`
+	MetricsPrefix            string        `json:"metrics_prefix" yaml:"metrics_prefix"`
 	AlertThresholds          AlertConfig   `json:"alert_thresholds" yaml:"alert_thresholds"`
 	SlowQueryLogging         bool          `json:"slow_query_logging" yaml:"slow_query_logging"`
 	IndexUsageAnalysis       bool          `json:"index_usage_analysis" yaml:"index_usage_analysis"`
