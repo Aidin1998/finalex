@@ -74,6 +74,20 @@ const (
 	VoteTimeout ParticipantVote = "timeout"
 )
 
+// PerformanceBaseline captures baseline performance metrics
+type PerformanceBaseline struct {
+	CaptureTime      time.Time     `json:"capture_time"`
+	AvgLatency       time.Duration `json:"avg_latency"`
+	MaxLatency       time.Duration `json:"max_latency"`
+	MinLatency       time.Duration `json:"min_latency"`
+	ThroughputTPS    float64       `json:"throughput_tps"`
+	ErrorRate        float64       `json:"error_rate"`
+	MemoryFootprint  int64         `json:"memory_footprint"`
+	CPUUtilization   float64       `json:"cpu_utilization"`
+	OrdersPerSecond  float64       `json:"orders_per_second"`
+	SamplingDuration time.Duration `json:"sampling_duration"`
+}
+
 // MigrationMode represents the mode of migration
 type MigrationMode string
 

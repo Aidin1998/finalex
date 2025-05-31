@@ -425,6 +425,7 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 
 	// Pass trace ID downstream (e.g., via context, headers, or order struct)
 	ctx := context.WithValue(c.Request.Context(), "trace_id", traceID)
+	_ = ctx // TODO: Use ctx for downstream calls
 
 	// For demonstration, simulate validation and order book insertion
 	validationTime := time.Now().UTC()

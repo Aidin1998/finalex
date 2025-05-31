@@ -3,6 +3,7 @@ package transport
 
 import (
 	"net"
+	"time"
 
 	pb "github.com/Aidin1998/pincex_unified/api/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketdata/distribution"
@@ -24,7 +25,20 @@ func NewGRPCServer(dist *distribution.Distributor, sm *distribution.Subscription
 // Subscribe handles client subscription via gRPC stream
 func (s *GRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.MarketData_SubscribeServer) error {
 	clientID := req.ClientId
-	sub := &distribution.Subscription{ClientID: clientID, Symbol: req.Symbol, PriceLevels: req.Levels, Frequency: req.Frequency.AsDuration(), Compression: req.Compression}
+
+	// Convert []int32 to []int
+	levels := make([]int, len(req.Levels))
+	for i, level := range req.Levels {
+		levels[i] = int(level)
+	}
+
+	// Convert protobuf Frequency to time.Duration
+	var frequency time.Duration
+	if req.Frequency != nil {
+		frequency = time.Duration(req.Frequency.Seconds)*time.Second + time.Duration(req.Frequency.Nanos)*time.Nanosecond
+	}
+
+	sub := &distribution.Subscription{ClientID: clientID, Symbol: req.Symbol, PriceLevels: levels, Frequency: frequency, Compression: req.Compression}
 	s.sm.Subscribe(sub)
 	ch := make(chan interface{}, 100)
 	s.dist.RegisterClient(clientID, ch)

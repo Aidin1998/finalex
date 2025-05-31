@@ -147,6 +147,6 @@ func (c *GRPCClient) Close() {
 }
 
 // toProtoDuration converts time.Duration to protobuf Duration
-func toProtoDuration(d time.Duration) *pb.SubscribeRequest_Frequency {
-	return &pb.SubscribeRequest_Frequency{Seconds: int64(d.Seconds()), Nanos: int32(d.Nanoseconds() % 1e9)}
+func toProtoDuration(d time.Duration) *pb.Frequency {
+	return &pb.Frequency{Seconds: int64(d.Seconds()), Nanos: int32(d.Nanoseconds() % 1e9)}
 }
