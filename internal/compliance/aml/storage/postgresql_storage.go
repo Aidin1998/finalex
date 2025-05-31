@@ -8,8 +8,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/pincex/internal/compliance/aml/models"
-	"github.com/pincex/internal/compliance/aml/monitoring"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/models"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
 )
 
 // PostgreSQLStorage implements AML data storage using PostgreSQL

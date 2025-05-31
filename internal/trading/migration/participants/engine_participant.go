@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/migration"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -1352,21 +1353,15 @@ func (p *EngineParticipant) generateRiskReport(ctx context.Context) (*RiskReport
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dashboard metrics: %w", err)
 	}
-
-	// Get compliance alerts
-	alerts, err := p.riskManager.GetActiveComplianceAlerts(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get compliance alerts: %w", err)
-	}
+	metrics := dashboardMetrics // already *monitoring.DashboardMetrics
 	// Calculate aggregate risk metrics from dashboard
-	avgVaR := dashboardMetrics.TotalVaR.InexactFloat64()
-	avgExposure := dashboardMetrics.TotalExposure.InexactFloat64()
-	avgRiskScore := dashboardMetrics.AverageRiskScore.InexactFloat64()
-
+	avgVaR := metrics.TotalVaR.InexactFloat64()
+	avgExposure := metrics.TotalExposure.InexactFloat64()
+	avgRiskScore := metrics.AverageRiskScore.InexactFloat64()
 	// Calculate concentration risk from exposure by market
 	var maxMarketExposure float64
-	totalExposure := dashboardMetrics.TotalExposure.InexactFloat64()
-	for _, exposure := range dashboardMetrics.ExposureByMarket {
+	totalExposure := metrics.TotalExposure.InexactFloat64()
+	for _, exposure := range metrics.ExposureByMarket {
 		marketExposure := exposure.InexactFloat64()
 		if marketExposure > maxMarketExposure {
 			maxMarketExposure = marketExposure

@@ -295,18 +295,6 @@ type ComplianceRule struct {
 	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
-// DashboardMetrics holds dashboard monitoring metrics
-type DashboardMetrics struct {
-	ActiveUsers       int                    `json:"active_users"`
-	TransactionVolume decimal.Decimal        `json:"transaction_volume"`
-	HighRiskUsers     int                    `json:"high_risk_users"`
-	PendingAlerts     int                    `json:"pending_alerts"`
-	ComplianceScore   decimal.Decimal        `json:"compliance_score"`
-	SystemStatus      string                 `json:"system_status"`
-	LastUpdated       time.Time              `json:"last_updated"`
-	DetailedMetrics   map[string]interface{} `json:"detailed_metrics"`
-}
-
 // DashboardSubscriber represents a dashboard subscription
 type DashboardSubscriber struct {
 	ID        string                 `json:"id"`

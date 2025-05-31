@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/shopspring/decimal"
 )
 
@@ -83,9 +84,9 @@ type DashboardUpdate struct {
 // MonitoringDashboard provides real-time risk monitoring and alerting
 type MonitoringDashboard struct {
 	mu               sync.RWMutex
-	calculator       *RiskCalculator
-	complianceEngine *ComplianceEngine
-	positionManager  *PositionManager
+	calculator       *aml.RiskCalculator
+	complianceEngine *aml.ComplianceEngine
+	positionManager  *aml.PositionManager
 
 	// Real-time subscribers
 	subscribers map[string]*DashboardSubscriber
@@ -119,7 +120,7 @@ type AlertRule struct {
 }
 
 // NewMonitoringDashboard creates a new risk monitoring dashboard
-func NewMonitoringDashboard(calculator *RiskCalculator, complianceEngine *ComplianceEngine, positionManager *PositionManager) *MonitoringDashboard {
+func NewMonitoringDashboard(calculator *aml.RiskCalculator, complianceEngine *aml.ComplianceEngine, positionManager *aml.PositionManager) *MonitoringDashboard {
 	dashboard := &MonitoringDashboard{
 		calculator:       calculator,
 		complianceEngine: complianceEngine,
@@ -495,11 +496,7 @@ func (md *MonitoringDashboard) getAlertStatistics() (int, int) {
 }
 
 func (md *MonitoringDashboard) getComplianceEventCount() int {
-	if md.complianceEngine == nil {
-		return 0
-	}
-
-	metrics := md.complianceEngine.GetPerformanceMetrics()
+	metrics := md.getPerformanceMetrics()
 	if alerts, ok := metrics["total_alerts"].(int64); ok {
 		return int(alerts)
 	}

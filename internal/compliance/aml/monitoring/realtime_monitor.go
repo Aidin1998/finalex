@@ -169,26 +169,26 @@ func (rm *RealtimeMonitor) Stop() {
 }
 
 // RecordTransaction records a transaction for monitoring
-func (rm *RealtimeMonitor) RecordTransaction(tx *aml.Transaction) {
+func (rm *RealtimeMonitor) RecordTransaction(tx *aml.TransactionRecord) {
 	rm.metricsChan <- func(m *MonitoringMetrics) {
 		m.TransactionsPerSecond++
 
 		// Update geographic distribution
-		if tx.FromAddress != "" {
-			country := rm.getCountryFromAddress(tx.FromAddress)
+		if tx.Source != "" {
+			country := rm.getCountryFromAddress(tx.Source)
 			data := m.GeographicDistribution[country]
 			data.Count++
-			data.Volume += tx.Amount
+			data.Volume += tx.Amount.InexactFloat64()
 			data.AverageSize = data.Volume / float64(data.Count)
 			m.GeographicDistribution[country] = data
 		}
 
 		// Update currency distribution
-		data := m.CurrencyDistribution[tx.Asset]
+		data := m.CurrencyDistribution[tx.Currency]
 		data.Count++
-		data.Volume += tx.Amount
+		data.Volume += tx.Amount.InexactFloat64()
 		data.AverageSize = data.Volume / float64(data.Count)
-		m.CurrencyDistribution[tx.Asset] = data
+		m.CurrencyDistribution[tx.Currency] = data
 
 		m.LastUpdated = time.Now()
 	}
@@ -209,15 +209,15 @@ func (rm *RealtimeMonitor) RecordSuspiciousActivity(activity *aml.SuspiciousActi
 	// Generate alert for high-risk activities
 	if activity.RiskScore >= 80 {
 		alert := RealtimeAlert{
-			ID:      fmt.Sprintf("sa_%d_%d", activity.ID, time.Now().Unix()),
+			ID:      fmt.Sprintf("sa_%s_%d", activity.ID.String(), time.Now().Unix()),
 			Level:   AlertLevelCritical,
 			Type:    "suspicious_activity",
 			Message: fmt.Sprintf("High-risk suspicious activity detected: %s", activity.Description),
-			UserID:  activity.UserID,
+			UserID:  activity.UserID.String(),
 			Metadata: map[string]interface{}{
-				"activity_id": activity.ID,
-				"risk_score":  activity.RiskScore,
-				"type":        activity.Type,
+				"activity_id":   activity.ID.String(),
+				"risk_score":    activity.RiskScore,
+				"activity_type": string(activity.ActivityType),
 			},
 			Timestamp: time.Now(),
 		}
@@ -228,21 +228,21 @@ func (rm *RealtimeMonitor) RecordSuspiciousActivity(activity *aml.SuspiciousActi
 // RecordComplianceAction records a compliance action
 func (rm *RealtimeMonitor) RecordComplianceAction(action *aml.ComplianceAction) {
 	rm.metricsChan <- func(m *MonitoringMetrics) {
-		m.ComplianceActionStats[action.ActionType]++
+		m.ComplianceActionStats[string(action.ActionType)]++
 		m.LastUpdated = time.Now()
 	}
 
 	// Generate alert for critical actions
-	if action.ActionType == "FREEZE_ACCOUNT" || action.ActionType == "BLOCK_TRANSACTION" {
+	if action.ActionType == aml.ActionTypeFreeze || action.ActionType == aml.ActionTypeBlock {
 		alert := RealtimeAlert{
-			ID:      fmt.Sprintf("ca_%d_%d", action.ID, time.Now().Unix()),
+			ID:      fmt.Sprintf("ca_%s_%d", action.ID.String(), time.Now().Unix()),
 			Level:   AlertLevelWarning,
 			Type:    "compliance_action",
 			Message: fmt.Sprintf("Compliance action taken: %s", action.ActionType),
-			UserID:  action.UserID,
+			UserID:  action.UserID.String(),
 			Metadata: map[string]interface{}{
-				"action_id":   action.ID,
-				"action_type": action.ActionType,
+				"action_id":   action.ID.String(),
+				"action_type": string(action.ActionType),
 				"reason":      action.Reason,
 			},
 			Timestamp: time.Now(),

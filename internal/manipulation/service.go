@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
+	aml "github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/database"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/gin-gonic/gin"
@@ -158,7 +158,7 @@ type APIResponse struct {
 func NewManipulationService(
 	logger *zap.SugaredLogger,
 	database *database.OptimizedDatabase,
-	riskService risk.RiskService,
+	riskService aml.RiskService,
 	tradingEngine *engine.MatchingEngine,
 	config ManipulationServiceConfig,
 ) *ManipulationService {

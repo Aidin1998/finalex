@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	amlmonitoring "github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
 )
 
 // RiskService defines core risk management operations
@@ -48,7 +49,7 @@ type RiskService interface {
 	AddComplianceRule(ctx context.Context, rule *ComplianceRule) error
 
 	// Dashboard and monitoring methods
-	GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error)
+	GetDashboardMetrics(ctx context.Context) (*amlmonitoring.DashboardMetrics, error)
 	SubscribeToDashboard(ctx context.Context, subscriberID string, filters map[string]interface{}) (*DashboardSubscriber, error)
 	UnsubscribeFromDashboard(subscriberID string)
 	SendAlert(alertType, priority, title, message, userID string, data map[string]interface{})
@@ -408,8 +409,9 @@ func (r *riskService) GetAlerts(limit int, priority string) []AlertNotification 
 }
 
 // GetDashboardMetrics returns dashboard metrics (stub implementation)
-func (r *riskService) GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error) {
-	return &DashboardMetrics{}, nil
+func (r *riskService) GetDashboardMetrics(ctx context.Context) (*amlmonitoring.DashboardMetrics, error) {
+	// Forward to the monitoring dashboard implementation
+	return r.dashboard.GetRealTimeMetrics(ctx)
 }
 
 // GetRegulatoryReport returns a regulatory report (stub implementation)
