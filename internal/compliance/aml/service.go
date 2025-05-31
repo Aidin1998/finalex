@@ -269,3 +269,59 @@ func (r *riskService) DeleteExemption(ctx context.Context, userID string) error 
 	delete(r.exemptions, userID)
 	return nil
 }
+
+// AcknowledgeAlert marks an alert as acknowledged (stub implementation)
+func (r *riskService) AcknowledgeAlert(alertID, acknowledgedBy string) error {
+	// In a real implementation, this would update alert state in DB or memory
+	return nil
+}
+
+// AddComplianceRule adds a compliance rule (stub implementation)
+func (r *riskService) AddComplianceRule(ctx context.Context, rule *ComplianceRule) error {
+	// In a real implementation, this would add the rule to the compliance engine
+	return nil
+}
+
+// BatchCalculateRisk calculates risk for multiple users (stub implementation)
+func (r *riskService) BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]*RiskMetrics, error) {
+	result := make(map[string]*RiskMetrics)
+	for _, userID := range userIDs {
+		result[userID] = &RiskMetrics{}
+	}
+	return result, nil
+}
+
+// CalculateRealTimeRisk calculates real-time risk metrics for a user (stub implementation)
+func (r *riskService) CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error) {
+	return &RiskMetrics{}, nil
+}
+
+// GenerateRegulatoryReport generates a regulatory report (stub implementation)
+func (r *riskService) GenerateRegulatoryReport(ctx context.Context, criteria ReportingCriteria, generatedBy string) (*RegulatoryReport, error) {
+	return &RegulatoryReport{}, nil
+}
+
+// GetActiveComplianceAlerts returns active compliance alerts (stub implementation)
+func (r *riskService) GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error) {
+	return []ComplianceAlert{}, nil
+}
+
+// GetAlerts returns alert notifications (stub implementation)
+func (r *riskService) GetAlerts(limit int, priority string) []AlertNotification {
+	return []AlertNotification{}
+}
+
+// GetDashboardMetrics returns dashboard metrics (stub implementation)
+func (r *riskService) GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error) {
+	return &DashboardMetrics{}, nil
+}
+
+// GetRegulatoryReport returns a regulatory report (stub implementation)
+func (r *riskService) GetRegulatoryReport(reportID string) (*RegulatoryReport, error) {
+	return &RegulatoryReport{}, nil
+}
+
+// ListRegulatoryReports returns a list of regulatory reports (stub implementation)
+func (r *riskService) ListRegulatoryReports(reportType ReportType, status ReportStatus, limit int) []*RegulatoryReport {
+	return []*RegulatoryReport{}
+}

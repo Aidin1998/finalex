@@ -163,7 +163,7 @@ func NewManipulationService(
 	config ManipulationServiceConfig,
 ) *ManipulationService {
 	// Create detector
-	detector := NewManipulationDetector(logger, riskService, config.DetectionConfig)
+	detector := NewManipulationDetector(logger, riskService, config.DetectionConfig, tradingEngine)
 
 	// Create alerting service
 	alertingService := NewAlertingService(logger, config.AlertingConfig)
