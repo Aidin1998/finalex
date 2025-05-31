@@ -262,7 +262,7 @@ func (o *MigrationOrchestrator) handleAbortMigration(w http.ResponseWriter, r *h
 	}
 
 	ctx := context.Background()
-	if err := o.coordinator.AbortMigration(ctx, migrationID); err != nil {
+	if err := o.coordinator.AbortMigration(ctx, migrationID, "manual abort requested via API"); err != nil {
 		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to abort migration: "+err.Error())
 		return
 	}
@@ -382,7 +382,9 @@ func (o *MigrationOrchestrator) handleParticipantHealth(w http.ResponseWriter, r
 	vars := mux.Vars(r)
 	participantID := vars["id"]
 
-	participant, exists := o.coordinator.GetParticipant(participantID)
+	o.coordinator.participantsMu.RLock()
+	participant, exists := o.coordinator.participants[participantID]
+	o.coordinator.participantsMu.RUnlock()
 	if !exists {
 		o.writeErrorResponse(w, http.StatusNotFound, "Participant not found")
 		return

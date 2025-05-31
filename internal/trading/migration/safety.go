@@ -1338,8 +1338,6 @@ func (am *AlertManager) sendAlert(ctx context.Context, alert *Alert) {
 	am.activeAlerts[alert.ID] = alert
 	am.alertHistory = append(am.alertHistory, *alert)
 	am.mu.Unlock()
-
-	atomic.AddInt64(&am.logger.(*SafetyManager).totalAlerts, 1)
 }
 
 func determineTrend(changePercentage float64) string {
@@ -1384,4 +1382,31 @@ func generateRecommendation(latency, throughput, errorRate float64) string {
 		return "monitor_closely"
 	}
 	return "continue_migration"
+}
+
+// GetSafetyStatus returns overall safety status
+func (sm *SafetyManager) GetSafetyStatus(ctx context.Context) *SafetyStatus {
+	// Stub implementation, aggregate status from safety states
+	sm.safetyMu.RLock()
+	defer sm.safetyMu.RUnlock()
+	status := SafetyStatusHealthy
+	return &status
+}
+
+// TriggerRollback triggers a manual rollback for a migration
+func (sm *SafetyManager) TriggerRollback(ctx context.Context, migrationID uuid.UUID, reason string) error {
+	// Stub implementation
+	return nil
+}
+
+// GetCircuitBreakerStatus returns current circuit breaker state
+func (sm *SafetyManager) GetCircuitBreakerStatus() string {
+	// Stub implementation
+	return "closed"
+}
+
+// ResetCircuitBreaker resets circuit breaker state
+func (sm *SafetyManager) ResetCircuitBreaker(ctx context.Context) error {
+	// Stub implementation
+	return nil
 }

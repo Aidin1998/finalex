@@ -875,11 +875,11 @@ func TraceIDFromContext(ctx context.Context) string {
 func (p *PersistenceParticipant) recordLatencyCheckpoint(ctx context.Context, stage string, extra map[string]interface{}) {
 	traceID := TraceIDFromContext(ctx)
 	ts := time.Now().UTC()
-	fields := map[string]interface{
-		"trace_id": traceID,
-		"stage":   stage,
+	fields := map[string]interface{}{
+		"trace_id":  traceID,
+		"stage":     stage,
 		"timestamp": ts,
-		"pair":    p.pair,
+		"pair":      p.pair,
 	}
 	for k, v := range extra {
 		fields[k] = v

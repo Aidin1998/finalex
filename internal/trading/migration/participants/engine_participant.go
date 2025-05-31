@@ -47,7 +47,7 @@ type EngineParticipant struct {
 type EnginePreparationData struct {
 	EngineState         *EngineState
 	RoutingStrategy     *RoutingStrategy
-	PerformanceBaseline *PerformanceBaseline
+	PerformanceBaseline *migration.PerformanceBaseline
 	RiskAssessment      *EngineRiskAssessment
 	SynchronizationPlan *SynchronizationPlan
 	BackupConfig        *EngineBackupConfig
@@ -221,8 +221,8 @@ type EngineStateSync struct {
 
 // EnginePerformanceMonitor monitors engine performance during migration
 type EnginePerformanceMonitor struct {
-	baselineMetrics      *PerformanceBaseline
-	currentMetrics       *PerformanceBaseline
+	baselineMetrics      *migration.PerformanceBaseline
+	currentMetrics       *migration.PerformanceBaseline
 	degradationThreshold float64
 	alertThreshold       float64
 	monitoringInterval   time.Duration
@@ -639,7 +639,7 @@ func (p *EngineParticipant) analyzeCurrentLoad(ctx context.Context) (*LoadAnalys
 	}, nil
 }
 
-func (p *EngineParticipant) capturePerformanceBaseline(ctx context.Context, config *migration.MigrationConfig) (*PerformanceBaseline, error) {
+func (p *EngineParticipant) capturePerformanceBaseline(ctx context.Context, config *migration.MigrationConfig) (*migration.PerformanceBaseline, error) {
 	// Capture performance baseline over a sampling period
 	samplingDuration := 30 * time.Second
 	if config.PrepareTimeout < samplingDuration {
@@ -649,7 +649,7 @@ func (p *EngineParticipant) capturePerformanceBaseline(ctx context.Context, conf
 	// Sample performance metrics
 	time.Sleep(100 * time.Millisecond) // Simulate sampling
 
-	return &PerformanceBaseline{
+	return &migration.PerformanceBaseline{
 		CaptureTime:      time.Now(),
 		AvgLatency:       2 * time.Millisecond,
 		MaxLatency:       10 * time.Millisecond,
@@ -663,7 +663,7 @@ func (p *EngineParticipant) capturePerformanceBaseline(ctx context.Context, conf
 	}, nil
 }
 
-func (p *EngineParticipant) assessMigrationRisk(state *EngineState, load *LoadAnalysis, baseline *PerformanceBaseline) *EngineRiskAssessment {
+func (p *EngineParticipant) assessMigrationRisk(state *EngineState, load *LoadAnalysis, baseline *migration.PerformanceBaseline) *EngineRiskAssessment {
 	riskFactors := []string{}
 	riskLevel := "low"
 

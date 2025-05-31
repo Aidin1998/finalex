@@ -1,3 +1,6 @@
+//go:build !admin
+// +build !admin
+
 package main
 
 import (
@@ -19,15 +22,12 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/identities"
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
-	"github.com/Aidin1998/pincex_unified/internal/messaging"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/server"
@@ -74,74 +74,6 @@ func (s *stubMarketDataDistributor) Stop() error {
 }
 
 // ---
-
-// messageTradingWrapper wraps messaging trading service to implement TradingService interface
-type messageTradingWrapper struct {
-	msgTradingService *messaging.TradingMessageService
-	db                *gorm.DB
-	logger            *zap.Logger
-}
-
-func (w *messageTradingWrapper) Start() error {
-	w.logger.Info("Message-driven trading service started")
-	return nil
-}
-
-func (w *messageTradingWrapper) Stop() error {
-	w.logger.Info("Message-driven trading service stopped")
-	return nil
-}
-
-func (w *messageTradingWrapper) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
-	// Use async order placement via messaging
-	if err := w.msgTradingService.AsyncPlaceOrder(ctx, order); err != nil {
-		return nil, err
-	}
-	// For now, return the order as accepted - in production you'd wait for confirmation
-	return order, nil
-}
-
-func (w *messageTradingWrapper) CancelOrder(ctx context.Context, orderID string) error {
-	// Use async order cancellation via messaging
-	return w.msgTradingService.AsyncCancelOrder(ctx, orderID, "", "user_request")
-}
-
-// Implement other TradingService methods as stubs or direct DB queries
-func (w *messageTradingWrapper) GetOrder(orderID string) (*models.Order, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) GetOrders(userID, symbol, status string, limit, offset string) ([]*models.Order, int64, error) {
-	return nil, 0, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) GetOrderBook(symbol string, depth int) (*models.OrderBookSnapshot, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) GetTradingPairs() ([]*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) GetTradingPair(symbol string) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) CreateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) UpdateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
-
-func (w *messageTradingWrapper) ListOrders(userID string, filter *models.OrderFilter) ([]*models.Order, error) {
-	return nil, fmt.Errorf("not implemented in messaging mode")
-}
 
 func main() {
 	// Load environment variables
@@ -225,9 +157,6 @@ func main() {
 	if err != nil {
 		zapLogger.Fatal("Failed to create auth service", zap.Error(err))
 	}
-
-	// Create user service adapter for tiered rate limiter
-	userService = auth.NewAuthUserService(db)
 
 	// Create services using failover DB and auth service
 	identitiesSvc, err := identities.NewService(zapLogger, db, authSvc)

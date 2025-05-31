@@ -88,7 +88,7 @@ func (o *MigrationOrchestrator) handleEventStream(w http.ResponseWriter, r *http
 
 	// Create event channel
 	eventChan := make(chan MigrationEvent, 10)
-	clientID := uuid.New().String()
+	// clientID not used, skip assignment
 
 	// Subscribe to events (simplified implementation)
 	// TODO: Implement proper event subscription mechanism
@@ -404,7 +404,7 @@ func (o *MigrationOrchestrator) buildDashboardData() *DashboardData {
 		status := ParticipantStatus{
 			ID:            id,
 			Type:          fmt.Sprintf("%T", participant),
-			IsHealthy:     err == nil && (healthCheck != nil && healthCheck.IsHealthy),
+			IsHealthy:     err == nil && healthCheck != nil && healthCheck.Status == "healthy",
 			LastHeartbeat: time.Now(),
 			Status:        "active",
 		}
@@ -413,9 +413,7 @@ func (o *MigrationOrchestrator) buildDashboardData() *DashboardData {
 			status.ErrorMessage = err.Error()
 		}
 
-		if healthCheck != nil {
-			status.Metrics = healthCheck.Metrics
-		}
+		// HealthCheck has no Metrics field; leaving Metrics nil
 
 		participants = append(participants, status)
 	}
@@ -455,9 +453,9 @@ func (o *MigrationOrchestrator) buildMigrationStateInfo(state *MigrationState) M
 	// Calculate progress
 	progress := float64(0)
 	switch state.Phase {
-	case PhasePreparing:
+	case PhasePrepare:
 		progress = 0.1
-	case PhaseCommitting:
+	case PhaseCommit:
 		progress = 0.5
 	case PhaseCompleted:
 		progress = 1.0
@@ -468,19 +466,24 @@ func (o *MigrationOrchestrator) buildMigrationStateInfo(state *MigrationState) M
 	// Build participant states
 	participantStates := make([]ParticipantStateInfo, 0, len(state.Participants))
 	for id, pState := range state.Participants {
+		// prepare map from interface
+		var prepData map[string]interface{}
+		if m, ok := pState.PreparationData.(map[string]interface{}); ok {
+			prepData = m
+		}
 		participantStates = append(participantStates, ParticipantStateInfo{
 			ID:              id,
 			Vote:            pState.Vote,
 			IsHealthy:       pState.IsHealthy,
 			LastHeartbeat:   pState.LastHeartbeat,
 			ErrorMessage:    pState.ErrorMessage,
-			PreparationData: pState.PreparationData,
+			PreparationData: prepData,
 		})
 	}
 
 	return MigrationStateInfo{
 		ID:               state.ID,
-		OrderBookID:      state.Config.OrderBookID,
+		OrderBookID:      state.Pair,
 		Phase:            state.Phase,
 		Status:           state.Status,
 		Progress:         progress,
@@ -488,7 +491,7 @@ func (o *MigrationOrchestrator) buildMigrationStateInfo(state *MigrationState) M
 		ElapsedTime:      time.Since(state.StartTime),
 		CurrentOperation: string(state.Phase),
 		Participants:     participantStates,
-		ErrorMessage:     state.ErrorMessage,
+		ErrorMessage:     state.RollbackReason,
 		Metrics:          state.Metrics,
 		HealthStatus:     state.HealthStatus,
 	}

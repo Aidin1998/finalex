@@ -54,14 +54,14 @@ type OrderBookPreparationData struct {
 
 // ValidationData contains validation information
 type ValidationData struct {
-	OrderCount          int64                  `json:"order_count"`
-	TotalVolume         decimal.Decimal        `json:"total_volume"`
-	BidAskSpread        decimal.Decimal        `json:"bid_ask_spread"`
-	TopBids             []orderbook.PriceLevel `json:"top_bids"`
-	TopAsks             []orderbook.PriceLevel `json:"top_asks"`
-	IntegrityChecksum   string                 `json:"integrity_checksum"`
-	ConsistencyChecks   map[string]bool        `json:"consistency_checks"`
-	PerformanceBaseline *PerformanceBaseline   `json:"performance_baseline"`
+	OrderCount          int64                          `json:"order_count"`
+	TotalVolume         decimal.Decimal                `json:"total_volume"`
+	BidAskSpread        decimal.Decimal                `json:"bid_ask_spread"`
+	TopBids             []orderbook.PriceLevel         `json:"top_bids"`
+	TopAsks             []orderbook.PriceLevel         `json:"top_asks"`
+	IntegrityChecksum   string                         `json:"integrity_checksum"`
+	ConsistencyChecks   map[string]bool                `json:"consistency_checks"`
+	PerformanceBaseline *migration.PerformanceBaseline `json:"performance_baseline"`
 }
 
 // MigrationPlan defines how the migration will be executed
@@ -414,10 +414,10 @@ func (p *OrderBookParticipant) performDetailedHealthCheck(ctx context.Context) (
 	}, nil
 }
 
-func (p *OrderBookParticipant) capturePerformanceBaseline(ctx context.Context) (*PerformanceBaseline, error) {
+func (p *OrderBookParticipant) capturePerformanceBaseline(ctx context.Context) (*migration.PerformanceBaseline, error) {
 	// This would implement actual performance measurement
 	// For now, return mock data
-	return &PerformanceBaseline{
+	return &migration.PerformanceBaseline{
 		CaptureTime:      time.Now(),
 		AvgLatency:       1500 * time.Microsecond, // 1.5ms
 		MaxLatency:       5 * time.Millisecond,

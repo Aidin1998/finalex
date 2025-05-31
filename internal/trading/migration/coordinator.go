@@ -494,6 +494,53 @@ func (c *Coordinator) ResumeMigration(ctx context.Context, migrationID uuid.UUID
 	return nil
 }
 
+// GetTotalMigrations returns the total number of migrations started
+func (c *Coordinator) GetTotalMigrations() int64 {
+	return atomic.LoadInt64(&c.totalMigrations)
+}
+
+// GetSuccessfulMigrations returns the number of successfully completed migrations
+func (c *Coordinator) GetSuccessfulMigrations() int64 {
+	return atomic.LoadInt64(&c.successfulMigrations)
+}
+
+// GetFailedMigrations returns the number of failed migrations
+func (c *Coordinator) GetFailedMigrations() int64 {
+	return atomic.LoadInt64(&c.failedMigrations)
+}
+
+// GetActiveMigrations returns migrations not yet completed or failed
+func (c *Coordinator) GetActiveMigrations() []*MigrationState {
+	c.migrationsMu.RLock()
+	defer c.migrationsMu.RUnlock()
+	var active []*MigrationState
+	for _, state := range c.migrations {
+		if state.Phase != PhaseCompleted && state.Phase != PhaseAborted && state.Phase != PhaseFailed {
+			active = append(active, state)
+		}
+	}
+	return active
+}
+
+// GetAllParticipants returns a copy of all registered participants
+func (c *Coordinator) GetAllParticipants() map[string]MigrationParticipant {
+	c.participantsMu.RLock()
+	defer c.participantsMu.RUnlock()
+	copyMap := make(map[string]MigrationParticipant, len(c.participants))
+	for id, p := range c.participants {
+		copyMap[id] = p
+	}
+	return copyMap
+}
+
+// GetParticipant returns a participant by ID
+func (c *Coordinator) GetParticipant(id string) (MigrationParticipant, bool) {
+	c.participantsMu.RLock()
+	defer c.participantsMu.RUnlock()
+	p, ok := c.participants[id]
+	return p, ok
+}
+
 // Helper methods
 
 func (c *Coordinator) updateMigrationPhase(state *MigrationState, phase MigrationPhase, status MigrationStatus) {
