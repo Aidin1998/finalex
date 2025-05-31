@@ -716,9 +716,311 @@ func (tp *TrainingPipeline) Start(ctx context.Context) error {
 	if tp.config.ABTestingConfig != nil && tp.config.ABTestingConfig.Enabled {
 		go tp.abTestingLoop(ctx)
 	}
-
 	tp.logger.Info("Training pipeline started successfully")
 	return nil
+}
+
+// dataCollectionLoop handles continuous data collection
+func (tp *TrainingPipeline) dataCollectionLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute * 5) // Collect data every 5 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.collectAndBufferData(ctx)
+		}
+	}
+}
+
+// trainingSchedulerLoop manages scheduled training jobs
+func (tp *TrainingPipeline) trainingSchedulerLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute) // Check for jobs every minute
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.processScheduledJobs(ctx)
+		}
+	}
+}
+
+// evaluationLoop handles model evaluation
+func (tp *TrainingPipeline) evaluationLoop(ctx context.Context) {
+	ticker := time.NewTicker(tp.config.EvaluationInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.evaluateModels(ctx)
+		}
+	}
+}
+
+// driftMonitoringLoop monitors for data/concept drift
+func (tp *TrainingPipeline) driftMonitoringLoop(ctx context.Context) {
+	interval := tp.config.DriftDetectionConfig.MonitoringFrequency
+	if interval == 0 {
+		interval = time.Hour // Default to hourly monitoring
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.checkForDrift(ctx)
+		}
+	}
+}
+
+// performanceMonitoringLoop monitors model performance
+func (tp *TrainingPipeline) performanceMonitoringLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute * 10) // Monitor every 10 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.monitorPerformance(ctx)
+		}
+	}
+}
+
+// abTestingLoop manages A/B testing
+func (tp *TrainingPipeline) abTestingLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Hour) // Check A/B tests every hour
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tp.manageABTests(ctx)
+		}
+	}
+}
+
+// Helper methods for the loops
+func (tp *TrainingPipeline) collectAndBufferData(ctx context.Context) {
+	// Collect real-time data and add to buffer
+	data, err := tp.dataCollector.GetRealTimeData(ctx)
+	if err != nil {
+		tp.logger.Errorw("Failed to collect real-time data", "error", err)
+		return
+	}
+
+	for _, point := range data {
+		tp.trainingDataBuffer.Add(point)
+	}
+
+	// Flush buffer if needed
+	if tp.trainingDataBuffer.ShouldFlush() {
+		flushed := tp.trainingDataBuffer.Flush()
+		tp.logger.Infow("Flushed training data buffer", "points", len(flushed))
+	}
+}
+
+func (tp *TrainingPipeline) processScheduledJobs(ctx context.Context) {
+	tp.trainingScheduler.mu.Lock()
+	defer tp.trainingScheduler.mu.Unlock()
+
+	// Process queued jobs
+	now := time.Now()
+	for i, job := range tp.trainingScheduler.queue {
+		if job.ScheduleTime.Before(now) && len(tp.trainingScheduler.running) < tp.trainingScheduler.maxConcurrent {
+			// Start the job
+			trainingJob := &TrainingJob{
+				ID:              job.ID,
+				ModelType:       job.ModelType,
+				Status:          "running",
+				StartTime:       now,
+				Progress:        0.0,
+				Hyperparameters: job.Config.Hyperparameters,
+				Metrics:         make(map[string]float64),
+				ResourceUsage:   &ResourceUsage{},
+			}
+
+			tp.trainingScheduler.running[job.ID] = trainingJob
+			tp.activeTrainingJobs[job.ID] = trainingJob
+
+			// Remove from queue
+			tp.trainingScheduler.queue = append(tp.trainingScheduler.queue[:i], tp.trainingScheduler.queue[i+1:]...)
+
+			// Start execution in goroutine
+			go tp.executeTrainingJob(ctx, trainingJob, job.Config)
+			break
+		}
+	}
+}
+
+func (tp *TrainingPipeline) evaluateModels(ctx context.Context) {
+	tp.mu.RLock()
+	models := make([]*ModelVersion, 0, len(tp.modelVersions))
+	for _, model := range tp.modelVersions {
+		if model.Status == "trained" || model.Status == "deployed" {
+			models = append(models, model)
+		}
+	}
+	tp.mu.RUnlock()
+
+	for _, model := range models {
+		// Get test data
+		testData := tp.testDataBuffer.GetAll()
+		if len(testData) == 0 {
+			continue
+		}
+
+		// Evaluate model
+		evaluation, err := tp.evaluationEngine.EvaluateModel(ctx, model, testData)
+		if err != nil {
+			tp.logger.Errorw("Model evaluation failed", "model_id", model.ID, "error", err)
+			continue
+		}
+
+		// Create evaluation result
+		result := &EvaluationResult{
+			ID:           fmt.Sprintf("eval-%s-%d", model.ID, time.Now().Unix()),
+			ModelVersion: model.ID,
+			EvaluatedAt:  time.Now(),
+			Metrics:      evaluation.Metrics,
+			Status:       evaluation.Status,
+		}
+
+		tp.mu.Lock()
+		tp.evaluationResults = append(tp.evaluationResults, result)
+		tp.mu.Unlock()
+
+		// Check for performance degradation
+		tp.checkPerformanceDegradation(model, result)
+	}
+}
+
+func (tp *TrainingPipeline) checkForDrift(ctx context.Context) {
+	// Get recent training data as baseline
+	baselineData := tp.trainingDataBuffer.GetAll()
+	if len(baselineData) < 100 {
+		return // Need sufficient data
+	}
+
+	// Get current data
+	currentData, err := tp.dataCollector.GetRealTimeData(ctx)
+	if err != nil {
+		tp.logger.Errorw("Failed to get current data for drift detection", "error", err)
+		return
+	}
+
+	// Detect drift
+	driftResult, err := tp.driftDetector.DetectDrift(ctx, baselineData, currentData)
+	if err != nil {
+		tp.logger.Errorw("Drift detection failed", "error", err)
+		return
+	}
+
+	if driftResult.HasDrift {
+		alert := &DriftAlert{
+			ID:               fmt.Sprintf("drift-%d", time.Now().Unix()),
+			Timestamp:        time.Now(),
+			AlertType:        driftResult.DriftType,
+			Severity:         tp.calculateDriftSeverity(driftResult.DriftScore),
+			DriftScore:       driftResult.DriftScore,
+			AffectedFeatures: driftResult.AffectedFeatures,
+			Recommendations:  tp.generateDriftRecommendations(driftResult),
+		}
+
+		tp.logger.Warnw("Drift detected",
+			"drift_score", driftResult.DriftScore,
+			"drift_type", driftResult.DriftType,
+			"affected_features", driftResult.AffectedFeatures)
+
+		// Call callback if configured
+		if tp.onDriftDetected != nil {
+			go func() {
+				if err := tp.onDriftDetected(alert); err != nil {
+					tp.logger.Errorw("Drift detected callback failed", "error", err)
+				}
+			}()
+		}
+	}
+}
+
+func (tp *TrainingPipeline) monitorPerformance(ctx context.Context) {
+	tp.mu.RLock()
+	models := make([]*ModelVersion, 0, len(tp.modelVersions))
+	for _, model := range tp.modelVersions {
+		if model.Status == "deployed" {
+			models = append(models, model)
+		}
+	}
+	tp.mu.RUnlock()
+
+	for _, model := range models {
+		testData := tp.testDataBuffer.GetAll()
+		if len(testData) == 0 {
+			continue
+		}
+
+		// Calculate performance metrics
+		metrics := tp.calculatePerformanceMetrics(testData, model)
+
+		// Create performance point
+		point := &PerformancePoint{
+			Timestamp:     time.Now(),
+			ModelID:       model.ID,
+			CustomMetrics: metrics,
+		}
+
+		// Add to performance history
+		tp.performanceTracker.mu.Lock()
+		tp.performanceTracker.performanceHistory[model.ID] = append(
+			tp.performanceTracker.performanceHistory[model.ID], point)
+
+		// Keep only recent history (last 1000 points)
+		if len(tp.performanceTracker.performanceHistory[model.ID]) > 1000 {
+			tp.performanceTracker.performanceHistory[model.ID] =
+				tp.performanceTracker.performanceHistory[model.ID][100:]
+		}
+		tp.performanceTracker.mu.Unlock()
+
+		// Check for degradation
+		tp.detectPerformanceDegradation(model, point)
+	}
+}
+
+func (tp *TrainingPipeline) manageABTests(ctx context.Context) {
+	// Check for running A/B tests and evaluate results
+	for testID, result := range tp.abTestResults {
+		if result.Status == "running" {
+			// Check if test should be concluded
+			if time.Since(result.StartTime) > tp.config.ABTestingConfig.TestDuration {
+				// Conclude test
+				testResults, err := tp.abTestManager.GetTestResults(ctx, testID)
+				if err != nil {
+					tp.logger.Errorw("Failed to get A/B test results", "test_id", testID, "error", err)
+					continue
+				}
+
+				tp.logger.Infow("A/B test concluded",
+					"test_id", testID,
+					"winner", testResults.Winner,
+					"confidence", testResults.Confidence)
+			}
+		}
+	}
 }
 
 // Stop gracefully stops the training pipeline
@@ -867,9 +1169,8 @@ func (tp *TrainingPipeline) executeTrainingJob(ctx context.Context, job *Trainin
 
 	job.Progress = 0.3
 	job.Status = "feature_engineering"
-
 	// Apply feature engineering
-	engineeredData, err := tp.featureEngineering.EngineerFeatures(ctx, trainingData)
+	engineeredData, err := tp.featureEngineering.ProcessFeatures(ctx, trainingData)
 	if err != nil {
 		tp.failTrainingJob(job, fmt.Sprintf("Feature engineering failed: %v", err))
 		return
@@ -1024,7 +1325,6 @@ func (tp *TrainingPipeline) checkPerformanceDegradation(model *ModelVersion, res
 	tp.performanceTracker.mu.RLock()
 	history := tp.performanceTracker.performanceHistory[model.ID]
 	tp.performanceTracker.mu.RUnlock()
-
 	if len(history) < 3 {
 		return // Need at least 3 points for trend analysis
 	}
@@ -1032,7 +1332,7 @@ func (tp *TrainingPipeline) checkPerformanceDegradation(model *ModelVersion, res
 	// Check for degradation trend
 	recentPoints := history[len(history)-3:]
 	for metricName, currentValue := range result.Metrics {
-		baseline := recentPoints[0].Metrics[metricName]
+		baseline := recentPoints[0].CustomMetrics[metricName]
 		degradationPct := math.Abs((currentValue - baseline) / baseline * 100)
 
 		threshold := 10.0 // 10% degradation threshold
@@ -1040,7 +1340,7 @@ func (tp *TrainingPipeline) checkPerformanceDegradation(model *ModelVersion, res
 			alert := &PerformanceDegradationAlert{
 				ID:              fmt.Sprintf("degradation-%s-%s-%d", model.ID, metricName, time.Now().Unix()),
 				Timestamp:       time.Now(),
-				ModelVersion:    model.ID,
+				ModelID:         model.ID,
 				MetricName:      metricName,
 				CurrentValue:    currentValue,
 				BaselineValue:   baseline,
@@ -1103,17 +1403,15 @@ func (tp *TrainingPipeline) detectPerformanceDegradation(model *ModelVersion, po
 	if len(history) < 5 {
 		return // Need sufficient history
 	}
-
 	// Calculate moving average for baseline
 	baseline := tp.calculateMovingAverage(history[len(history)-5:], "mae")
-	current := point.Metrics["mae"]
+	current := point.CustomMetrics["mae"]
 
 	degradationPct := (current - baseline) / baseline * 100
 	if degradationPct > 15.0 { // 15% degradation threshold
 		alert := &PerformanceDegradationAlert{
-			ID:              fmt.Sprintf("perf-degradation-%s-%d", model.ID, time.Now().Unix()),
-			Timestamp:       time.Now(),
-			ModelVersion:    model.ID,
+			ID:        fmt.Sprintf("perf-degradation-%s-%d", model.ID, time.Now().Unix()),
+			Timestamp: time.Now(), ModelID: model.ID,
 			MetricName:      "mae",
 			CurrentValue:    current,
 			BaselineValue:   baseline,
@@ -1133,11 +1431,10 @@ func (tp *TrainingPipeline) calculateMovingAverage(points []*PerformancePoint, m
 	if len(points) == 0 {
 		return 0.0
 	}
-
 	sum := 0.0
 	count := 0
 	for _, point := range points {
-		if value, exists := point.Metrics[metric]; exists {
+		if value, exists := point.CustomMetrics[metric]; exists {
 			sum += value
 			count++
 		}
@@ -1205,8 +1502,8 @@ func (tp *TrainingPipeline) calculateTrendDirection(points []*PerformancePoint, 
 		return "unknown"
 	}
 
-	first := points[0].Metrics[metric]
-	last := points[len(points)-1].Metrics[metric]
+	first := points[0].CustomMetrics[metric]
+	last := points[len(points)-1].CustomMetrics[metric]
 
 	if last > first {
 		return "increasing"
@@ -1270,6 +1567,36 @@ type ABTestManager interface {
 	GetTestResults(ctx context.Context, testID string) (*ABTestResult, error)
 }
 
+// ModelEvaluation represents a model evaluation result
+type ModelEvaluation struct {
+	ID               string                 `json:"id"`
+	ModelID          string                 `json:"model_id"`
+	EvaluatedAt      time.Time              `json:"evaluated_at"`
+	Metrics          map[string]float64     `json:"metrics"`
+	QualityScore     float64                `json:"quality_score"`
+	PerformanceScore float64                `json:"performance_score"`
+	Status           string                 `json:"status"`
+	Recommendations  []string               `json:"recommendations"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+// ABTest represents an A/B test
+type ABTest struct {
+	ID                string                 `json:"id"`
+	Name              string                 `json:"name"`
+	ChampionModelID   string                 `json:"champion_model_id"`
+	ChallengerModelID string                 `json:"challenger_model_id"`
+	Status            string                 `json:"status"`
+	StartTime         time.Time              `json:"start_time"`
+	EndTime           *time.Time             `json:"end_time,omitempty"`
+	TrafficSplit      float64                `json:"traffic_split"`
+	SampleSize        int                    `json:"sample_size"`
+	SignificanceLevel float64                `json:"significance_level"`
+	SuccessCriteria   map[string]float64     `json:"success_criteria"`
+	Results           *ABTestResult          `json:"results,omitempty"`
+	Metadata          map[string]interface{} `json:"metadata"`
+}
+
 // DriftDetector interface for drift detection
 type DriftDetector interface {
 	DetectDrift(ctx context.Context, baseline, current []*TrainingDataPoint) (*DriftDetectionResult, error)
@@ -1281,6 +1608,7 @@ type TrainingDataPoint struct {
 	Timestamp time.Time              `json:"timestamp"`
 	Features  map[string]float64     `json:"features"`
 	Target    float64                `json:"target"`
+	Quality   float64                `json:"quality"`
 	Metadata  map[string]interface{} `json:"metadata"`
 }
 
@@ -1309,6 +1637,7 @@ type PerformancePoint struct {
 
 // PerformanceDegradationAlert represents a performance degradation alert
 type PerformanceDegradationAlert struct {
+	ID               string    `json:"id"`
 	Timestamp        time.Time `json:"timestamp"`
 	ModelID          string    `json:"model_id"`
 	MetricName       string    `json:"metric_name"`
@@ -1316,6 +1645,7 @@ type PerformanceDegradationAlert struct {
 	BaselineValue    float64   `json:"baseline_value"`
 	DegradationPct   float64   `json:"degradation_pct"`
 	Severity         string    `json:"severity"`
+	TrendDirection   string    `json:"trend_direction"`
 	Recommendations  []string  `json:"recommendations"`
 	TriggeredBy      string    `json:"triggered_by"`
 	AffectedServices []string  `json:"affected_services"`

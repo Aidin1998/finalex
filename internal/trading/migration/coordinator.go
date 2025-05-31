@@ -470,6 +470,30 @@ func (c *Coordinator) abortMigrationInternal(ctx context.Context, state *Migrati
 	})
 }
 
+// GetAllMigrations returns all migrations managed by the coordinator
+func (c *Coordinator) GetAllMigrations() []*MigrationState {
+	states, _ := c.ListMigrations(nil)
+	return states
+}
+
+// GetMigration returns the migration state and a boolean indicating existence
+func (c *Coordinator) GetMigration(id uuid.UUID) (*MigrationState, bool) {
+	c.migrationsMu.RLock()
+	defer c.migrationsMu.RUnlock()
+	state, exists := c.migrations[id]
+	return state, exists
+}
+
+// ResumeMigration resumes a paused or aborted migration by restarting execution
+func (c *Coordinator) ResumeMigration(ctx context.Context, migrationID uuid.UUID) error {
+	state, err := c.GetMigrationState(migrationID)
+	if err != nil {
+		return fmt.Errorf("migration not found: %w", err)
+	}
+	go c.executeMigration(ctx, state, uuid.Nil)
+	return nil
+}
+
 // Helper methods
 
 func (c *Coordinator) updateMigrationPhase(state *MigrationState, phase MigrationPhase, status MigrationStatus) {
