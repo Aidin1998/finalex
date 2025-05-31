@@ -238,24 +238,23 @@ type RoutingRule struct {
 
 // DefaultConfig returns a production-ready default configuration
 func DefaultConfig() *DatabaseConfig {
-	return &DatabaseConfig{
-		Master: MasterPoolConfig{
-			MaxOpenConns:    50,
-			MaxIdleConns:    10,
-			ConnMaxLifetime: 30 * time.Minute,
-			ConnMaxIdleTime: 5 * time.Minute,
-			ConnTimeout:     10 * time.Second,
-			ReadTimeout:     30 * time.Second,
-			WriteTimeout:    30 * time.Second,
-			HealthCheck: HealthCheckConfig{
-				Enabled:          true,
-				Interval:         30 * time.Second,
-				Timeout:          5 * time.Second,
-				RetryCount:       3,
-				CustomQuery:      "SELECT 1",
-				FailureThreshold: 3,
-			},
+	return &DatabaseConfig{Master: MasterPoolConfig{
+		MaxOpenConns:    100,
+		MaxIdleConns:    10,
+		ConnMaxLifetime: 1 * time.Hour,
+		ConnMaxIdleTime: 5 * time.Minute,
+		ConnTimeout:     10 * time.Second,
+		ReadTimeout:     30 * time.Second,
+		WriteTimeout:    30 * time.Second,
+		HealthCheck: HealthCheckConfig{
+			Enabled:          true,
+			Interval:         30 * time.Second,
+			Timeout:          5 * time.Second,
+			RetryCount:       3,
+			CustomQuery:      "SELECT 1",
+			FailureThreshold: 3,
 		},
+	},
 		Replica: ReplicaPoolConfig{
 			MaxOpenConns:    100,
 			MaxIdleConns:    20,

@@ -645,21 +645,20 @@ func NewOptimizedPostgresDB(dsn string, config ConnectionPoolConfig) (*gorm.DB, 
 
 // DefaultConnectionConfig returns default connection configuration
 func DefaultConnectionConfig() ConnectionConfig {
-	return ConnectionConfig{
-		Master: ConnectionPoolConfig{
-			MaxOpenConns:     100,
-			MaxIdleConns:     20,
-			ConnMaxLifetime:  1 * time.Hour,
-			ConnMaxIdleTime:  30 * time.Minute,
-			ConnTimeout:      10 * time.Second,
-			ReadTimeout:      30 * time.Second,
-			WriteTimeout:     30 * time.Second,
-			StatementTimeout: 60 * time.Second,
-			Name:             "master",
-			Role:             "master",
-			Priority:         1,
-			Weight:           100,
-		},
+	return ConnectionConfig{Master: ConnectionPoolConfig{
+		MaxOpenConns:     100,
+		MaxIdleConns:     10,
+		ConnMaxLifetime:  1 * time.Hour,
+		ConnMaxIdleTime:  30 * time.Minute,
+		ConnTimeout:      10 * time.Second,
+		ReadTimeout:      30 * time.Second,
+		WriteTimeout:     30 * time.Second,
+		StatementTimeout: 60 * time.Second,
+		Name:             "master",
+		Role:             "master",
+		Priority:         1,
+		Weight:           100,
+	},
 		HealthCheck: HealthCheckConfig{
 			Enabled:           true,
 			Interval:          30 * time.Second,

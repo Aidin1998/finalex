@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
+	"github.com/Aidin1998/pincex_unified/internal/redis"
 	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -165,6 +167,8 @@ type AdaptiveMatchingEngine struct {
 	// Migration state tracking
 	migrationState map[string]*MigrationState
 	migrationMu    sync.RWMutex
+	// Per-pair locks for migration and order book operations
+	pairLocks map[string]*sync.RWMutex
 
 	// Monitoring and metrics
 	metricsCollector   *EngineMetricsCollector
@@ -180,6 +184,7 @@ type AdaptiveMatchingEngine struct {
 
 	// Async risk checking
 	riskService        aml.RiskService
+	asyncRiskService   *aml.AsyncRiskService  // Enhanced async service with Redis
 	riskCheckConfig    *RiskCheckConfig
 	pendingOrders      map[string]*PendingOrder
 	riskResults        map[string]*RiskCheckResult
@@ -187,6 +192,10 @@ type AdaptiveMatchingEngine struct {
 	riskRequestChan    chan RiskCheckRequest
 	riskResultChan     chan RiskCheckResult
 	riskWorkerShutdown chan struct{}
+	
+	// Performance monitoring
+	perfMonitor        *aml.PerformanceMonitor
+	riskMgmtConfig     *aml.RiskManagementConfig
 }
 
 // MigrationState tracks the migration status for a trading pair
@@ -232,7 +241,6 @@ type PerformanceComparison struct {
 type ImplMetrics struct {
 	AvgLatencyMs         float64       `json:"avg_latency_ms"`
 	P95LatencyMs         float64       `json:"p95_latency_ms"`
-	P99LatencyMs         float64       `json:"p99_latency_ms"`
 	ThroughputOps        float64       `json:"throughput_ops"`
 	ErrorRate            float64       `json:"error_rate"`
 	ContentionEvents     int64         `json:"contention_events"`
@@ -289,6 +297,7 @@ func NewAdaptiveMatchingEngine(
 	eventJournal *eventjournal.EventJournal,
 	wsHub *ws.Hub,
 	riskService aml.RiskService,
+	redisClient *redis.Client, // Add Redis client parameter
 ) *AdaptiveMatchingEngine {
 	// Before calling NewMatchingEngine, instantiate a settlement engine
 	settlementEngine := settlement.NewSettlementEngine()
@@ -299,16 +308,60 @@ func NewAdaptiveMatchingEngine(
 	// Create base engine with existing config
 	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub, dummyRiskManagerType{}, settlementEngine, triggerMonitor)
 
+	// Load risk management configuration
+	riskMgmtConfig, err := aml.LoadRiskManagementConfig("")
+	if err != nil {
+		logger.Warnw("Failed to load risk management config, using defaults", "error", err)
+		riskMgmtConfig = aml.GetDefaultConfig()
+	}
+
 	ame := &AdaptiveMatchingEngine{
 		MatchingEngine:       baseEngine,
 		adaptiveConfig:       config,
 		adaptiveOrderBooks:   make(map[string]*orderbook.AdaptiveOrderBook),
 		migrationState:       make(map[string]*MigrationState),
+		pairLocks:            make(map[string]*sync.RWMutex),
 		migrationControlChan: make(chan MigrationControlMessage, 100),
 		metricsReportChan:    make(chan MetricsReport, 10),
 		shutdownChan:         make(chan struct{}),
 		riskService:          riskService,
 		riskCheckConfig:      config.RiskCheckConfig,
+		riskMgmtConfig:       riskMgmtConfig,
+	}
+
+	// Initialize async risk service if Redis is available and risk checking is enabled
+	if redisClient != nil && config.RiskCheckConfig.Enabled {
+		// Use configuration from risk-management.yaml
+		asyncConfig := riskMgmtConfig.ToAsyncRiskConfig()
+		
+		// Override with any engine-specific config values
+		if config.RiskCheckConfig.Timeout > 0 {
+			asyncConfig.RiskCalculationTimeout = config.RiskCheckConfig.Timeout
+		}
+		if config.RiskCheckConfig.WorkerCount > 0 {
+			asyncConfig.RiskWorkerCount = config.RiskCheckConfig.WorkerCount
+		}
+		
+		var err error
+		ame.asyncRiskService, err = aml.NewAsyncRiskService(
+			riskService,
+			redisClient,
+			logger,
+			asyncConfig,
+		)
+		if err != nil {
+			logger.Errorw("Failed to initialize async risk service, falling back to synchronous", "error", err)
+			ame.asyncRiskService = nil
+		} else {
+			logger.Infow("Async risk service initialized successfully",
+				"workers", asyncConfig.RiskWorkerCount,
+				"cache_enabled", asyncConfig.EnableCaching,
+				"target_latency_ms", asyncConfig.TargetLatencyMs,
+				"target_throughput", asyncConfig.TargetThroughputOPS)
+			
+			// Initialize performance monitoring
+			ame.perfMonitor = aml.NewPerformanceMonitor(ame.asyncRiskService, logger)
+		}
 	}
 
 	// Initialize monitoring if metrics collection is enabled
@@ -330,6 +383,17 @@ func NewAdaptiveMatchingEngine(
 	ame.startBackgroundWorkers()
 
 	return ame
+}
+
+// getPairLock returns the per-pair RWMutex, falling back to global migrationMu if not found
+func (ame *AdaptiveMatchingEngine) getPairLock(pair string) *sync.RWMutex {
+	ame.adaptiveMu.RLock()
+	lock, exists := ame.pairLocks[pair]
+	ame.adaptiveMu.RUnlock()
+	if !exists {
+		return &ame.migrationMu
+	}
+	return lock
 }
 
 // GetOrderBook overrides the base method to return adaptive order book
@@ -380,8 +444,15 @@ func (ame *AdaptiveMatchingEngine) GetOrderBook(pair string) orderbook.OrderBook
 
 // initializeMigrationState sets up initial migration state for a pair
 func (ame *AdaptiveMatchingEngine) initializeMigrationState(pair string, config *orderbook.MigrationConfig) {
-	ame.migrationMu.Lock()
-	defer ame.migrationMu.Unlock()
+	// protect maps; initialize per-pair lock
+	ame.adaptiveMu.Lock()
+	ame.pairLocks[pair] = &sync.RWMutex{}
+	ame.adaptiveMu.Unlock()
+
+	// initialize state under per-pair lock
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
 
 	ame.migrationState[pair] = &MigrationState{
 		Pair:                 pair,
@@ -652,8 +723,9 @@ func (ame *AdaptiveMatchingEngine) ResetMigration(pair string) error {
 
 // GetMigrationState returns the current migration state for a pair
 func (ame *AdaptiveMatchingEngine) GetMigrationState(pair string) (*MigrationState, error) {
-	ame.migrationMu.RLock()
-	defer ame.migrationMu.RUnlock()
+	lock := ame.getPairLock(pair)
+	lock.RLock()
+	defer lock.RUnlock()
 
 	state, exists := ame.migrationState[pair]
 	if !exists {
@@ -780,14 +852,17 @@ func (ame *AdaptiveMatchingEngine) handleStartMigration(pair string, targetPerce
 	}
 
 	// Update migration state
-	ame.migrationMu.Lock()
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
+
 	state, exists := ame.migrationState[pair]
 	if !exists {
-		ame.migrationMu.Unlock()
+		lock.Unlock()
 		return fmt.Errorf("no migration state found for pair %s", pair)
 	}
 	if state.MigrationLocked && time.Since(state.LastUpdateTime).Nanoseconds() < ame.adaptiveConfig.MigrationCooldownPeriod.Nanoseconds() {
-		ame.migrationMu.Unlock()
+		lock.Unlock()
 		return fmt.Errorf("migration for pair %s is locked (cooldown period)", pair)
 	}
 
@@ -795,7 +870,7 @@ func (ame *AdaptiveMatchingEngine) handleStartMigration(pair string, targetPerce
 	state.Status = MigrationStatusStarting
 	state.LastUpdateTime = time.Now()
 	state.MigrationLocked = false
-	ame.migrationMu.Unlock()
+	lock.Unlock()
 
 	// Enable new implementation and start gradual migration
 	adaptiveOB.EnableNewImplementation(true)
@@ -862,6 +937,10 @@ func (ame *AdaptiveMatchingEngine) executeGradualMigration(pair string, targetPe
 
 // handleSetMigrationPercentage sets migration percentage directly
 func (ame *AdaptiveMatchingEngine) handleSetMigrationPercentage(pair string, percentage int32) error {
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
+
 	adaptiveOB := ame.adaptiveOrderBooks[pair]
 	if adaptiveOB == nil {
 		return fmt.Errorf("no adaptive order book found for pair %s", pair)
@@ -876,21 +955,20 @@ func (ame *AdaptiveMatchingEngine) handleSetMigrationPercentage(pair string, per
 	adaptiveOB.SetMigrationPercentage(percentage)
 
 	// Update migration state
-	ame.migrationMu.Lock()
 	if state, exists := ame.migrationState[pair]; exists {
 		state.CurrentPercentage = percentage
 		state.TargetPercentage = percentage
 		state.LastUpdateTime = time.Now()
 
-		if percentage == 0 {
+		switch {
+		case percentage == 0:
 			state.Status = MigrationStatusInactive
-		} else if percentage == 100 {
+		case percentage == 100:
 			state.Status = MigrationStatusCompleted
-		} else {
+		default:
 			state.Status = MigrationStatusInProgress
 		}
 	}
-	ame.migrationMu.Unlock()
 
 	ame.logger.Infow("Migration percentage set",
 		"pair", pair,
@@ -902,6 +980,10 @@ func (ame *AdaptiveMatchingEngine) handleSetMigrationPercentage(pair string, per
 
 // handleRollbackMigration rolls back migration for a pair
 func (ame *AdaptiveMatchingEngine) handleRollbackMigration(pair string) error {
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
+
 	adaptiveOB := ame.adaptiveOrderBooks[pair]
 	if adaptiveOB == nil {
 		return fmt.Errorf("no adaptive order book found for pair %s", pair)
@@ -913,7 +995,6 @@ func (ame *AdaptiveMatchingEngine) handleRollbackMigration(pair string) error {
 	adaptiveOB.ResetCircuitBreaker()
 
 	// Update migration state
-	ame.migrationMu.Lock()
 	if state, exists := ame.migrationState[pair]; exists {
 		state.CurrentPercentage = 0
 		state.TargetPercentage = 0
@@ -921,8 +1002,6 @@ func (ame *AdaptiveMatchingEngine) handleRollbackMigration(pair string) error {
 		state.LastUpdateTime = time.Now()
 		state.MigrationLocked = true // Lock to prevent immediate retry
 	}
-	ame.migrationMu.Unlock()
-
 	ame.logger.Infow("Migration rolled back",
 		"pair", pair,
 	)
@@ -932,8 +1011,9 @@ func (ame *AdaptiveMatchingEngine) handleRollbackMigration(pair string) error {
 
 // handlePauseMigration pauses migration for a pair
 func (ame *AdaptiveMatchingEngine) handlePauseMigration(pair string) error {
-	ame.migrationMu.Lock()
-	defer ame.migrationMu.Unlock()
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
 
 	if state, exists := ame.migrationState[pair]; exists {
 		state.Status = MigrationStatusPaused
@@ -945,8 +1025,9 @@ func (ame *AdaptiveMatchingEngine) handlePauseMigration(pair string) error {
 
 // handleResumeMigration resumes migration for a pair
 func (ame *AdaptiveMatchingEngine) handleResumeMigration(pair string) error {
-	ame.migrationMu.Lock()
-	defer ame.migrationMu.Unlock()
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
 
 	if state, exists := ame.migrationState[pair]; exists {
 		if state.Status == MigrationStatusPaused {
@@ -960,19 +1041,19 @@ func (ame *AdaptiveMatchingEngine) handleResumeMigration(pair string) error {
 
 // handleResetMigration resets migration state for a pair
 func (ame *AdaptiveMatchingEngine) handleResetMigration(pair string) error {
-	adaptiveOB := ame.adaptiveOrderBooks[pair]
-	if adaptiveOB != nil {
-		adaptiveOB.ResetCircuitBreaker()
-	}
+	lock := ame.getPairLock(pair)
+	lock.Lock()
+	defer lock.Unlock()
 
-	ame.migrationMu.Lock()
 	if state, exists := ame.migrationState[pair]; exists {
 		state.ConsecutiveErrors = 0
 		state.LastErrorTime = time.Time{}
 		state.MigrationLocked = false
 		state.LastUpdateTime = time.Now()
 	}
-	ame.migrationMu.Unlock()
+	ame.logger.Infow("Migration state reset",
+		"pair", pair,
+	)
 
 	return nil
 }
@@ -1405,7 +1486,7 @@ func (ame *AdaptiveMatchingEngine) riskCheckWorker() {
 	}
 }
 
-// processRiskCheckRequest performs the actual risk check
+// processRiskCheckRequest performs the actual risk check using async service when available
 func (ame *AdaptiveMatchingEngine) processRiskCheckRequest(request RiskCheckRequest) RiskCheckResult {
 	startTime := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), ame.riskCheckConfig.Timeout)
@@ -1417,26 +1498,135 @@ func (ame *AdaptiveMatchingEngine) processRiskCheckRequest(request RiskCheckRequ
 		Approved:  false,
 	}
 
-	// Perform position limit check
-	positionAllowed, err := ame.riskService.CheckPositionLimit(
-		ctx,
-		request.UserID,
-		request.Order.Pair,
-		request.Order.Quantity,
-		request.Order.Price,
-	)
+	// Use async risk service if available for better performance
+	if ame.asyncRiskService != nil {
+		result = ame.processRiskCheckWithAsyncService(ctx, request, result, startTime)
+	} else {
+		// Fallback to synchronous processing
+		result = ame.processRiskCheckSynchronous(ctx, request, result, startTime)
+	}
+	
+	// Record performance metrics
+	processingTime := time.Since(startTime)
+	success := result.Approved && result.Error == nil
+	timeout := processingTime > ame.riskCheckConfig.Timeout
+	
+	ame.RecordRiskCheckPerformance(processingTime, success, timeout)
+	
+	return result
+}
 
-	if err != nil {
-		result.Error = err
-		result.Reason = fmt.Sprintf("Position limit check failed: %v", err)
-		result.ProcessingTime = time.Since(startTime)
-		return result
+// processRiskCheckWithAsyncService uses the enhanced async risk service
+func (ame *AdaptiveMatchingEngine) processRiskCheckWithAsyncService(ctx context.Context, request RiskCheckRequest, result RiskCheckResult, startTime time.Time) RiskCheckResult {
+	// Validate order using async service
+	if request.Order != nil {
+		approved, riskMetrics, err := ame.asyncRiskService.ValidateOrderAsync(ctx, request.Order)
+		if err != nil {
+			result.Error = err
+			result.Reason = fmt.Sprintf("Async order validation failed: %v", err)
+			result.ProcessingTime = time.Since(startTime)
+			return result
+		}
+
+		result.RiskMetrics = riskMetrics
+		if !approved {
+			result.Reason = "Order validation failed - position limit or risk threshold exceeded"
+			result.ProcessingTime = time.Since(startTime)
+			return result
+		}
 	}
 
-	if !positionAllowed {
-		result.Reason = "Position limit exceeded"
-		result.ProcessingTime = time.Since(startTime)
-		return result
+	// Process trades if any
+	if len(request.Trades) > 0 {
+		err := ame.asyncRiskService.ProcessTradeAsync(ctx, request.Trades)
+		if err != nil {
+			result.Error = err
+			result.Reason = fmt.Sprintf("Async trade processing failed: %v", err)
+			result.ProcessingTime = time.Since(startTime)
+			return result
+		}
+
+		// Perform compliance checks on trades
+		for _, trade := range request.Trades {
+			tradeValue := trade.Quantity.Mul(trade.Price)
+			
+			// Create async compliance check request
+			complianceCtx, cancel := context.WithTimeout(ctx, time.Millisecond*200) // Fast compliance check
+			complianceResult, err := ame.riskService.ComplianceCheck(
+				complianceCtx,
+				trade.ID.String(),
+				request.UserID,
+				tradeValue,
+				map[string]interface{}{
+					"pair":     trade.Pair,
+					"order_id": trade.OrderID.String(),
+					"trade_id": trade.ID.String(),
+					"quantity": trade.Quantity.String(),
+					"price":    trade.Price.String(),
+					"timestamp": trade.CreatedAt,
+				},
+			)
+			cancel()
+
+			if err != nil {
+				result.Error = err
+				result.Reason = fmt.Sprintf("Compliance check failed: %v", err)
+				result.ProcessingTime = time.Since(startTime)
+				return result
+			}
+
+			result.ComplianceResult = complianceResult
+
+			// If compliance check fails, reject the risk check
+			if complianceResult != nil && complianceResult.IsSuspicious {
+				result.Reason = fmt.Sprintf("Compliance violation detected: %v", complianceResult.Flags)
+				result.ProcessingTime = time.Since(startTime)
+				return result
+			}
+		}
+	}
+
+	// Get updated risk metrics after processing
+	if result.RiskMetrics == nil {
+		riskMetrics, err := ame.asyncRiskService.CalculateRiskAsync(ctx, request.UserID)
+		if err != nil {
+			// Log warning but don't fail the request
+			ame.logger.Warnw("Failed to get updated risk metrics", "user_id", request.UserID, "error", err)
+		} else {
+			result.RiskMetrics = riskMetrics
+		}
+	}
+
+	// All checks passed
+	result.Approved = true
+	result.ProcessingTime = time.Since(startTime)
+	return result
+}
+
+// processRiskCheckSynchronous performs synchronous risk checking (fallback)
+func (ame *AdaptiveMatchingEngine) processRiskCheckSynchronous(ctx context.Context, request RiskCheckRequest, result RiskCheckResult, startTime time.Time) RiskCheckResult {
+	// Perform position limit check
+	if request.Order != nil {
+		positionAllowed, err := ame.riskService.CheckPositionLimit(
+			ctx,
+			request.UserID,
+			request.Order.Pair,
+			request.Order.Quantity,
+			request.Order.Price,
+		)
+
+		if err != nil {
+			result.Error = err
+			result.Reason = fmt.Sprintf("Position limit check failed: %v", err)
+			result.ProcessingTime = time.Since(startTime)
+			return result
+		}
+
+		if !positionAllowed {
+			result.Reason = "Position limit exceeded"
+			result.ProcessingTime = time.Since(startTime)
+			return result
+		}
 	}
 
 	// Calculate risk metrics
@@ -1825,3 +2015,184 @@ func (ame *AdaptiveMatchingEngine) GetPendingOrdersCount() int {
 
 	return len(ame.pendingOrders)
 }
+
+// GetAsyncRiskMetrics returns performance metrics from the async risk service
+func (ame *AdaptiveMatchingEngine) GetAsyncRiskMetrics() *aml.AsyncMetrics {
+	if ame.asyncRiskService != nil {
+		return ame.asyncRiskService.GetMetrics()
+	}
+	return nil
+}
+
+// IsAsyncRiskEnabled returns true if async risk service is enabled and operational
+func (ame *AdaptiveMatchingEngine) IsAsyncRiskEnabled() bool {
+	return ame.asyncRiskService != nil
+}
+
+// GetAsyncRiskServiceHealthStatus returns health status of async risk service
+func (ame *AdaptiveMatchingEngine) GetAsyncRiskServiceHealthStatus() map[string]interface{} {
+	if ame.asyncRiskService == nil {
+		return map[string]interface{}{
+			"status": "unavailable",
+			"reason": "async risk service not initialized",
+		}
+	}
+	
+	if ame.perfMonitor == nil {
+		return map[string]interface{}{
+			"status": "degraded",
+			"reason": "performance monitor not available",
+		}
+	}
+	
+	// Get detailed health status
+	healthStatus := ame.perfMonitor.getHealthStatus()
+	
+	return map[string]interface{}{
+		"status":              healthStatus.Status,
+		"async_service":       healthStatus.AsyncService,
+		"workers":             healthStatus.Workers,
+		"queue_depth":         healthStatus.QueueDepth,
+		"response_time_ms":    float64(healthStatus.ResponseTime.Nanoseconds()) / 1e6,
+		"last_error":          healthStatus.LastError,
+		"last_error_time":     healthStatus.LastErrorTime,
+		"dependencies":        healthStatus.Dependencies,
+		"timestamp":           healthStatus.Timestamp,
+	}
+}
+
+// GetPerformanceMetrics returns comprehensive performance metrics
+func (ame *AdaptiveMatchingEngine) GetPerformanceMetrics() map[string]interface{} {
+	if ame.perfMonitor == nil {
+		return map[string]interface{}{
+			"error": "performance monitoring not available",
+		}
+	}
+	
+	return ame.perfMonitor.generatePerformanceReport()
+}
+
+// RegisterPerformanceEndpoints registers performance monitoring endpoints with a router
+func (ame *AdaptiveMatchingEngine) RegisterPerformanceEndpoints(router interface{}) error {
+	if ame.perfMonitor == nil {
+		return fmt.Errorf("performance monitor not initialized")
+	}
+	
+	// Type assertion to gin.Engine
+	if ginRouter, ok := router.(*gin.Engine); ok {
+		aml.RegisterMonitoringEndpoints(ginRouter, ame.perfMonitor)
+		return nil
+	}
+	
+	return fmt.Errorf("unsupported router type")
+}
+
+// RecordRiskCheckPerformance records performance metrics for risk checks
+func (ame *AdaptiveMatchingEngine) RecordRiskCheckPerformance(latency time.Duration, success bool, timeout bool) {
+	if ame.perfMonitor != nil {
+		ame.perfMonitor.RecordRequest(latency, success, timeout)
+	}
+}
+
+// Async Risk Checking Integration
+
+// submitAsyncRiskCheckIntegration submits an order for async risk checking with integration
+func (ame *AdaptiveMatchingEngine) submitAsyncRiskCheckIntegration(order *model.Order, trades []*model.Trade) (string, error) {
+	if !ame.riskCheckConfig.Enabled {
+		return "", nil // Risk checking disabled
+	}
+
+	// Check if we're at max pending orders limit
+	ame.riskMu.RLock()
+	pendingCount := len(ame.pendingOrders)
+	ame.riskMu.RUnlock()
+
+	if pendingCount >= ame.riskCheckConfig.MaxPendingOrders {
+		return "", fmt.Errorf("maximum pending orders limit reached (%d)", ame.riskCheckConfig.MaxPendingOrders)
+	}
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("risk_%s_%d", order.ID, time.Now().UnixNano())
+
+	// Create risk check request
+	request := RiskCheckRequest{
+		RequestID: requestID,
+		Order:     order,
+		Trades:    trades,
+		Timestamp: time.Now(),
+		UserID:    order.UserID.String(),
+	}
+
+	// Create pending order tracking
+	pendingOrder := &PendingOrder{
+		Order:       order,
+		Trades:      trades,
+		RequestID:   requestID,
+		SubmittedAt: time.Now(),
+		ExpiresAt:   time.Now().Add(ame.riskCheckConfig.Timeout * 2), // Double timeout for expiry
+	}
+
+	// Store pending order
+	ame.riskMu.Lock()
+	ame.pendingOrders[requestID] = pendingOrder
+	ame.riskMu.Unlock()
+
+	// Submit risk check request to async service
+	if ame.asyncRiskService != nil {
+		ame.logger.Debugw("Submitting async risk check to Redis",
+			"request_id", requestID,
+			"order_id", order.ID,
+			"user_id", order.UserID,
+			"trade_count", len(trades),
+		)
+
+		// Submit to Redis stream
+		err := ame.asyncRiskService.SubmitRiskCheck(request)
+		if err != nil {
+			ame.logger.Errorw("Failed to submit risk check to Redis",
+				"request_id", requestID,
+				"error", err,
+			)
+
+			// Cleanup pending order on failure
+			ame.riskMu.Lock()
+			delete(ame.pendingOrders, requestID)
+			ame.riskMu.Unlock()
+
+			return "", fmt.Errorf("failed to submit risk check: %w", err)
+		}
+
+		return requestID, nil
+	}
+
+	return "", fmt.Errorf("async risk service not available")
+}
+
+// processAsyncRiskCheckResult processes the result of an async risk check from Redis
+func (ame *AdaptiveMatchingEngine) processAsyncRiskCheckResult(result RiskCheckResult) {
+	ame.riskMu.Lock()
+	defer ame.riskMu.Unlock()
+
+	// Store the result
+	ame.riskResults[result.RequestID] = &result
+
+	// Get the pending order
+	pendingOrder, exists := ame.pendingOrders[result.RequestID]
+	if !exists {
+		ame.logger.Warnw("No pending order found for async risk check result",
+			"request_id", result.RequestID,
+		)
+		return
+	}
+
+	// Remove from pending orders
+	delete(ame.pendingOrders, result.RequestID)
+
+	if !result.Approved {
+		// Risk check failed - cancel the order and reverse trades if necessary
+		ame.handleRiskCheckFailure(pendingOrder, result)
+	} else {
+		// Risk check passed - log success
+		ame.logger.Debugw("Async risk check passed for order",
+			"request_id", result.RequestID,
+			"order_id", pendingOrder.Order
