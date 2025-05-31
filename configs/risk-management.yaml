@@ -1,0 +1,218 @@
+# Risk Management System Configuration
+# This file contains configuration parameters for the comprehensive risk management system
+
+# Position Limits Configuration
+position_limits:
+  # Default position limits per user (in USD)
+  default_user_limit: 100000
+  
+  # Default position limits per market (in USD)
+  default_market_limit: 1000000
+  
+  # Global position limit across all markets (in USD)
+  global_limit: 10000000
+  
+  # VIP user limits (multiplier of default limits)
+  vip_multiplier: 10
+  
+  # Institutional user limits (multiplier of default limits)
+  institutional_multiplier: 100
+
+# Risk Calculation Configuration
+risk_calculation:
+  # Value at Risk (VaR) configuration
+  var_confidence: 0.95        # 95% confidence interval
+  var_time_horizon: 1         # 1 day horizon
+  
+  # Performance requirements
+  calculation_timeout: 500ms  # Sub-second requirement
+  batch_size: 100            # Maximum users per batch calculation
+  update_interval: 1s        # Real-time update frequency
+  
+  # Market data configuration
+  price_staleness_threshold: 30s    # Consider prices stale after 30 seconds
+  volatility_lookback_period: 30d   # 30-day volatility calculation
+  correlation_update_frequency: 1h  # Update correlations hourly
+
+# Compliance Configuration
+compliance:
+  # Anti-Money Laundering (AML) settings
+  aml:
+    enabled: true
+    daily_volume_threshold: 50000     # USD threshold for enhanced monitoring
+    structuring_threshold: 10000      # USD threshold for structuring detection
+    velocity_threshold: 10            # Max transactions per time window
+    velocity_time_window: 300s        # 5-minute window for velocity checks
+    
+  # Know Your Transaction (KYT) settings
+  kyt:
+    enabled: true
+    high_risk_jurisdictions: ["OFAC", "FATF_GREY", "HIGH_RISK"]
+    blocked_addresses: []             # List of blocked crypto addresses
+    
+  # Pattern detection
+  patterns:
+    round_amount_threshold: 0.9       # Threshold for round amount detection
+    time_clustering_threshold: 60s    # Time clustering detection window
+    amount_clustering_threshold: 0.1  # Amount clustering sensitivity
+
+# Dashboard Configuration
+dashboard:
+  # Real-time metrics
+  refresh_interval: 5s              # Dashboard refresh rate
+  metrics_retention: 168h           # 7 days of metrics retention
+  alert_retention: 24h              # 24 hours of alert retention
+  
+  # Subscription limits
+  max_subscribers: 1000             # Maximum WebSocket subscribers
+  subscription_timeout: 30s         # Subscription timeout
+  
+  # Alert thresholds
+  alert_thresholds:
+    high_risk_score: 0.8
+    critical_risk_score: 0.95
+    system_health_threshold: 0.9
+
+# Reporting Configuration
+reporting:
+  # Regulatory reporting
+  sar:
+    enabled: true                   # Suspicious Activity Reports
+    threshold: 5000                 # USD threshold for SAR consideration
+    auto_submission: false          # Manual review before submission
+    
+  ctr:
+    enabled: true                   # Currency Transaction Reports
+    threshold: 10000                # USD threshold for CTR
+    auto_submission: true           # Automatic submission
+    
+  ltr:
+    enabled: true                   # Large Transaction Reports
+    threshold: 100000               # USD threshold for LTR
+    auto_submission: true           # Automatic submission
+  
+  # Report storage and retention
+  retention_period: 8760h           # 1 year retention
+  storage_path: "/var/lib/pincex/reports"
+  backup_enabled: true
+  backup_interval: 24h
+  
+  # Submission settings
+  submission_timeout: 30m           # 30 minutes timeout for submissions
+  retry_attempts: 3                 # Number of retry attempts
+  batch_size: 100                   # Reports per batch submission
+
+# Database Configuration
+database:
+  # Connection settings
+  max_connections: 100
+  connection_timeout: 30s
+  query_timeout: 10s
+  
+  # Performance settings
+  read_timeout: 5s
+  write_timeout: 10s
+  idle_timeout: 300s
+  
+  # Backup and maintenance
+  backup_interval: 6h
+  maintenance_window: "02:00-04:00"
+  vacuum_interval: 24h
+
+# Monitoring and Alerting
+monitoring:
+  # Health checks
+  health_check_interval: 30s
+  service_timeout: 10s
+  
+  # Performance monitoring
+  latency_threshold: 100ms          # Alert if latency exceeds threshold
+  throughput_threshold: 1000        # Alert if throughput drops below threshold
+  error_rate_threshold: 0.01        # Alert if error rate exceeds 1%
+  
+  # System resources
+  cpu_threshold: 80                 # CPU usage percentage threshold
+  memory_threshold: 85              # Memory usage percentage threshold
+  disk_threshold: 90                # Disk usage percentage threshold
+
+# Security Configuration
+security:
+  # API security
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 1000       # Rate limit for risk API endpoints
+    burst_size: 100                 # Burst allowance
+    
+  # Access control
+  admin_endpoints_require_2fa: true
+  api_key_rotation_interval: 90d    # 90 days
+  session_timeout: 8h               # 8 hours
+  
+  # Encryption
+  encrypt_sensitive_data: true
+  encryption_algorithm: "AES-256-GCM"
+  key_rotation_interval: 30d        # 30 days
+
+# Integration Configuration
+integration:
+  # External services
+  market_data:
+    provider: "internal"
+    fallback_provider: "external"
+    timeout: 5s
+    retry_attempts: 3
+    
+  # WebSocket configuration
+  websocket:
+    max_connections: 10000
+    ping_interval: 30s
+    pong_timeout: 60s
+    write_timeout: 10s
+    read_timeout: 60s
+    
+  # Message queue configuration
+  message_queue:
+    enabled: true
+    max_retries: 5
+    retry_delay: 1s
+    dead_letter_queue: true
+
+# Development and Testing
+development:
+  # Testing configuration
+  enable_test_mode: false
+  mock_external_services: false
+  log_level: "info"                 # debug, info, warn, error
+  
+  # Performance testing
+  benchmark_mode: false
+  profiling_enabled: false
+  metrics_export_enabled: true
+  
+  # Development tools
+  swagger_enabled: true
+  debug_endpoints_enabled: false
+  cors_enabled: true
+
+# Feature Flags
+features:
+  # Risk management features
+  real_time_risk_calculation: true
+  batch_risk_processing: true
+  advanced_compliance_rules: true
+  regulatory_reporting: true
+  
+  # Dashboard features
+  live_dashboard: true
+  alert_management: true
+  performance_monitoring: true
+  
+  # API features
+  rest_api: true
+  websocket_api: true
+  admin_api: true
+  
+  # Experimental features
+  machine_learning_risk_scoring: false
+  blockchain_analysis: false
+  advanced_pattern_detection: false

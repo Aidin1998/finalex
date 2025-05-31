@@ -14,18 +14,66 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/migration"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
+
+// Risk Adjustment contains adjustment details based on risk assessment
+type RiskAdjustment struct {
+	AdjustmentFactor  float64 `json:"adjustment_factor"`
+	RecommendedAction string  `json:"recommended_action"`
+	RiskLevel         string  `json:"risk_level"`
+	Reason            string  `json:"reason,omitempty"`
+}
+
+// RiskMetrics contains metrics for risk assessment
+type RiskMetrics struct {
+	VaR                 float64 `json:"var"`
+	ExposureUtilization float64 `json:"exposure_utilization"`
+	ConcentrationRisk   float64 `json:"concentration_risk"`
+	MaxDrawdown         float64 `json:"max_drawdown"`
+}
+
+// ComplianceStatus contains the status of compliance checks
+type ComplianceStatus struct {
+	ActiveAlerts   int       `json:"active_alerts"`
+	ViolationCount int       `json:"violation_count"`
+	LastCheck      time.Time `json:"last_check"`
+	Status         string    `json:"status"`
+}
+
+// RiskReport contains the risk report details
+type RiskReport struct {
+	Timestamp        time.Time        `json:"timestamp"`
+	Status           string           `json:"status"`
+	RiskMetrics      RiskMetrics      `json:"risk_metrics"`
+	ComplianceStatus ComplianceStatus `json:"compliance_status"`
+	Recommendations  []string         `json:"recommendations,omitempty"`
+}
+
+// Transaction represents a transaction for risk compliance
+type Transaction struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Symbol    string    `json:"symbol"`
+	Amount    float64   `json:"amount"`
+	Quantity  float64   `json:"quantity"`
+	Price     float64   `json:"price"`
+	Side      string    `json:"side"`
+	Timestamp time.Time `json:"timestamp"`
+}
 
 // EngineParticipant handles matching engine coordination during migration
 type EngineParticipant struct {
 	id                 string
 	pair               string
 	engine             *engine.AdaptiveMatchingEngine
+	riskManager        risk.RiskService // Risk management integration
 	logger             *zap.SugaredLogger
 	migrationMu        sync.RWMutex
 	currentMigrationID uuid.UUID
@@ -248,13 +296,15 @@ type EngineCircuitBreaker struct {
 func NewEngineParticipant(
 	pair string,
 	engine *engine.AdaptiveMatchingEngine,
+	riskManager risk.RiskService,
 	logger *zap.SugaredLogger,
 ) *EngineParticipant {
 	p := &EngineParticipant{
-		id:     fmt.Sprintf("engine_%s", pair),
-		pair:   pair,
-		engine: engine,
-		logger: logger,
+		id:          fmt.Sprintf("engine_%s", pair),
+		pair:        pair,
+		engine:      engine,
+		riskManager: riskManager,
+		logger:      logger,
 		orderRouting: &OrderRoutingManager{
 			healthMonitor:   &RoutingHealthMonitor{},
 			fallbackHandler: &FallbackHandler{},
@@ -408,11 +458,21 @@ func (p *EngineParticipant) Prepare(ctx context.Context, migrationID uuid.UUID, 
 
 	// Step 7: Create backup configuration
 	backupConfig := p.createBackupConfig(config)
-
 	// Step 8: Create migration plan
 	migrationPlan := p.createMigrationPlan(config, riskAssessment, routingStrategy)
 
-	// Step 9: Prepare engine for migration
+	// Step 9: Validate current risk state before migration
+	if p.riskManager != nil {
+		riskReport, err := p.generateRiskReport(ctx)
+		if err != nil {
+			p.logger.Warnw("Failed to generate risk report during preparation", "error", err)
+		} else if riskReport.Status == "critical" {
+			return p.createFailedState("pre-migration risk too high",
+				fmt.Errorf("current risk status: %s", riskReport.Status)), nil
+		}
+	}
+
+	// Step 10: Prepare engine for migration
 	err = p.prepareEngineForMigration(ctx, migrationPlan)
 	if err != nil {
 		return p.createFailedState("engine preparation failed", err), nil
@@ -486,28 +546,66 @@ func (p *EngineParticipant) Commit(ctx context.Context, migrationID uuid.UUID) e
 		"migration_id", migrationID,
 		"pair", p.pair,
 	)
-
 	startTime := time.Now()
 
-	// Step 1: Execute migration plan
-	err := p.executeMigrationPlan(ctx, p.preparationData.MigrationPlan)
+	// Step 1: Generate pre-migration risk report
+	if p.riskManager != nil {
+		preReport, err := p.generateRiskReport(ctx)
+		if err != nil {
+			p.logger.Warnw("Failed to generate pre-migration risk report", "error", err)
+		} else {
+			p.logger.Infow("Pre-migration risk assessment",
+				"status", preReport.Status,
+				"risk_level", preReport.RiskMetrics.VaR,
+				"active_alerts", preReport.ComplianceStatus.ActiveAlerts,
+			)
+
+			// Check if risk is too high to proceed
+			if preReport.Status == "critical" {
+				return fmt.Errorf("migration aborted due to critical risk level")
+			}
+		}
+	}
+	// Step 2: Execute migration plan with risk monitoring
+	err := p.executeRiskAwareMigration(ctx, p.preparationData.MigrationPlan)
 	if err != nil {
-		return fmt.Errorf("migration plan execution failed: %w", err)
+		return fmt.Errorf("risk-aware migration execution failed: %w", err)
 	}
 
-	// Step 2: Synchronize engine state
+	// Step 3: Synchronize engine state
 	err = p.synchronizeEngineState(ctx, p.preparationData.SynchronizationPlan)
 	if err != nil {
 		return fmt.Errorf("engine state synchronization failed: %w", err)
 	}
-
 	// Step 3: Validate migration success
 	err = p.validateMigrationSuccess(ctx)
 	if err != nil {
 		return fmt.Errorf("migration validation failed: %w", err)
 	}
 
-	// Step 4: Update routing configuration
+	// Step 4: Post-migration risk assessment
+	if p.riskManager != nil {
+		postReport, err := p.generateRiskReport(ctx)
+		if err != nil {
+			p.logger.Warnw("Failed to generate post-migration risk report", "error", err)
+		} else {
+			p.logger.Infow("Post-migration risk assessment",
+				"status", postReport.Status,
+				"risk_level", postReport.RiskMetrics.VaR,
+				"active_alerts", postReport.ComplianceStatus.ActiveAlerts,
+			)
+
+			// Alert if risk has increased significantly
+			if postReport.Status == "critical" || postReport.Status == "at_risk" {
+				p.logger.Warnw("Elevated risk detected post-migration",
+					"status", postReport.Status,
+					"recommendations", postReport.Recommendations,
+				)
+			}
+		}
+	}
+
+	// Step 5: Update routing configuration
 	err = p.updateRoutingConfiguration(ctx, p.preparationData.RoutingStrategy)
 	if err != nil {
 		return fmt.Errorf("routing configuration update failed: %w", err)
@@ -992,4 +1090,449 @@ func (p *EngineParticipant) resetEngineState(ctx context.Context) error {
 
 	p.logger.Infow("Engine state reset completed")
 	return nil
+}
+
+// Risk Management Integration Implementation
+func (p *EngineParticipant) validateRiskLimits(ctx context.Context, trades []*model.Trade) error {
+	if p.riskManager == nil {
+		return nil // Risk management disabled
+	}
+
+	for _, t := range trades {
+		// Check position limits before applying trade
+		canTrade, err := p.riskManager.CheckPositionLimit(ctx, t.OrderID.String(), t.Pair, t.Quantity, t.Price)
+		if err != nil {
+			p.logger.Errorw("Position limit check failed",
+				"trade_id", t.ID.String(),
+				"symbol", t.Pair,
+				"quantity", t.Quantity,
+				"error", err,
+			)
+			return fmt.Errorf("position limit check failed for trade %s: %w", t.ID.String(), err)
+		}
+		if !canTrade {
+			p.logger.Errorw("Position limit exceeded",
+				"trade_id", t.ID.String(),
+				"symbol", t.Pair,
+				"quantity", t.Quantity,
+			)
+			return fmt.Errorf("position limit exceeded for trade %s", t.ID.String())
+		}
+
+		// Validate against market risk parameters
+		if err := p.validateMarketRisk(ctx, t); err != nil {
+			return fmt.Errorf("market risk validation failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *EngineParticipant) validateMarketRisk(ctx context.Context, t *model.Trade) error {
+	if p.riskManager == nil {
+		return nil
+	}
+
+	// Calculate risk metrics for the trade user
+	riskProfile, err := p.riskManager.CalculateRisk(ctx, t.OrderID.String())
+	if err != nil {
+		return fmt.Errorf("failed to calculate risk for trade: %w", err)
+	}
+
+	// Check if the trade would exceed risk thresholds
+	tradeValue := t.Quantity.Mul(t.Price)
+	currentExposure := riskProfile.CurrentExposure.Add(tradeValue)
+
+	// Simple risk check - in a real implementation this would be more sophisticated
+	maxExposure := decimal.NewFromFloat(1000000) // $1M limit for example
+	if currentExposure.GreaterThan(maxExposure) {
+		return fmt.Errorf("trade would exceed maximum exposure limit")
+	}
+
+	return nil
+}
+
+func (p *EngineParticipant) updateRiskMetrics(ctx context.Context, trades []*model.Trade) error {
+	if p.riskManager == nil {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(trades))
+
+	// Update risk metrics for each trade in parallel
+	for _, t := range trades {
+		wg.Add(1)
+		go func(trade *model.Trade) {
+			defer wg.Done()
+
+			// Process the trade through the risk system
+			if err := p.riskManager.ProcessTrade(ctx, trade.ID.String(), trade.OrderID.String(), trade.Pair, trade.Quantity, trade.Price); err != nil {
+				errCh <- fmt.Errorf("failed to process trade %s: %w", trade.ID.String(), err)
+				return
+			}
+
+			// Update market data
+			volatility := decimal.NewFromFloat(0.02) // Default 2% volatility
+			if err := p.riskManager.UpdateMarketData(ctx, trade.Pair, trade.Price, volatility); err != nil {
+				errCh <- fmt.Errorf("failed to update market data for trade %s: %w", trade.ID.String(), err)
+				return
+			}
+		}(t)
+	}
+
+	// Wait for all updates to complete
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	// Collect any errors
+	var errors []error
+	for err := range errCh {
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		p.logger.Errorw("Risk metrics update had errors",
+			"error_count", len(errors),
+			"trade_count", len(trades),
+		)
+		return fmt.Errorf("risk metrics update failed with %d errors", len(errors))
+	}
+
+	p.logger.Debugw("Risk metrics updated successfully",
+		"trade_count", len(trades),
+	)
+
+	return nil
+}
+
+func (p *EngineParticipant) monitorCompliance(ctx context.Context, trades []*model.Trade) error {
+	if p.riskManager == nil {
+		return nil
+	}
+
+	for _, t := range trades {
+		// Monitor for compliance violations using the existing ComplianceCheck method
+		tradeAmount := t.Quantity.Mul(t.Price)
+		complianceResult, err := p.riskManager.ComplianceCheck(ctx, t.ID.String(), t.OrderID.String(), tradeAmount, map[string]interface{}{
+			"symbol":    t.Pair,
+			"side":      t.Side,
+			"quantity":  t.Quantity.String(),
+			"price":     t.Price.String(),
+			"timestamp": t.CreatedAt,
+		})
+
+		if err != nil {
+			p.logger.Errorw("Compliance check failed",
+				"trade_id", t.ID,
+				"order_id", t.OrderID,
+				"error", err,
+			)
+			return fmt.Errorf("compliance check failed for trade %s: %w", t.ID, err)
+		}
+
+		// Handle compliance violations
+		if complianceResult.IsSuspicious || complianceResult.AlertRaised {
+			p.logger.Warnw("Compliance violations detected",
+				"trade_id", t.ID,
+				"order_id", t.OrderID,
+				"suspicious", complianceResult.IsSuspicious,
+				"alert_raised", complianceResult.AlertRaised,
+				"flags", complianceResult.Flags,
+			)
+		}
+	}
+
+	return nil
+}
+
+func (p *EngineParticipant) calculateRiskAdjustment(ctx context.Context, trades []*model.Trade) (*RiskAdjustment, error) {
+	if p.riskManager == nil {
+		return &RiskAdjustment{
+			AdjustmentFactor:  1.0,
+			RecommendedAction: "none",
+		}, nil
+	}
+
+	// Calculate aggregate risk impact
+	var totalExposure decimal.Decimal
+	userExposures := make(map[string]decimal.Decimal)
+	symbolExposures := make(map[string]decimal.Decimal)
+
+	for _, t := range trades {
+		exposure := t.Quantity.Mul(t.Price)
+		totalExposure = totalExposure.Add(exposure)
+		userExposures[t.OrderID.String()] = userExposures[t.OrderID.String()].Add(exposure)
+		symbolExposures[t.Pair] = symbolExposures[t.Pair].Add(exposure)
+	}
+
+	// Get current risk metrics for representative users
+	userIDs := make([]string, 0, len(userExposures))
+	for userID := range userExposures {
+		userIDs = append(userIDs, userID)
+		if len(userIDs) >= 10 { // Limit to 10 users for performance
+			break
+		}
+	}
+
+	riskMetricsMap, err := p.riskManager.BatchCalculateRisk(ctx, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate batch risk: %w", err)
+	}
+
+	// Determine risk adjustment based on current risk levels
+	adjustment := &RiskAdjustment{
+		AdjustmentFactor:  1.0,
+		RecommendedAction: "proceed",
+		RiskLevel:         "normal",
+	}
+	// Analyze risk metrics to determine adjustment
+	var highRiskUsers int
+	for _, metrics := range riskMetricsMap {
+		// Convert RiskMetrics to our internal format for calculation
+		varFloat := metrics.ValueAtRisk.InexactFloat64()
+		exposureFloat := metrics.TotalExposure.InexactFloat64()
+
+		// High risk conditions (example thresholds)
+		if varFloat > 10000 || exposureFloat > 500000 { // $10K VaR or $500K exposure
+			highRiskUsers++
+		}
+	}
+
+	// Adjust based on percentage of high-risk users
+	riskRatio := float64(highRiskUsers) / float64(len(riskMetricsMap))
+	if riskRatio > 0.3 { // More than 30% high-risk users
+		adjustment.AdjustmentFactor = 0.5
+		adjustment.RecommendedAction = "reduce_exposure"
+		adjustment.RiskLevel = "high"
+		adjustment.Reason = fmt.Sprintf("High risk detected in %.1f%% of users", riskRatio*100)
+	}
+
+	if riskRatio > 0.5 { // More than 50% high-risk users
+		adjustment.AdjustmentFactor = 0.1
+		adjustment.RecommendedAction = "halt_migration"
+		adjustment.RiskLevel = "critical"
+		adjustment.Reason = fmt.Sprintf("Critical risk detected in %.1f%% of users", riskRatio*100)
+	}
+
+	// Check concentration risk
+	totalExposureFloat := totalExposure.InexactFloat64()
+	for symbol, exposure := range symbolExposures {
+		exposureFloat := exposure.InexactFloat64()
+		if exposureFloat > totalExposureFloat*0.30 { // More than 30% in single symbol
+			adjustment.AdjustmentFactor *= 0.8
+			adjustment.RiskLevel = "elevated"
+			adjustment.Reason = fmt.Sprintf("High concentration in %s (%.1f%%)", symbol, (exposureFloat/totalExposureFloat)*100)
+		}
+	}
+
+	p.logger.Infow("Risk adjustment calculated",
+		"adjustment_factor", adjustment.AdjustmentFactor,
+		"recommended_action", adjustment.RecommendedAction,
+		"risk_level", adjustment.RiskLevel,
+		"total_exposure", totalExposureFloat,
+		"high_risk_user_ratio", riskRatio,
+	)
+
+	return adjustment, nil
+}
+
+func (p *EngineParticipant) generateRiskReport(ctx context.Context) (*RiskReport, error) {
+	if p.riskManager == nil {
+		return &RiskReport{
+			Timestamp: time.Now(),
+			Status:    "risk_management_disabled",
+		}, nil
+	}
+
+	// Get dashboard metrics which contain current risk information
+	dashboardMetrics, err := p.riskManager.GetDashboardMetrics(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dashboard metrics: %w", err)
+	}
+
+	// Get compliance alerts
+	alerts, err := p.riskManager.GetActiveComplianceAlerts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get compliance alerts: %w", err)
+	}
+	// Calculate aggregate risk metrics from dashboard
+	avgVaR := dashboardMetrics.TotalVaR.InexactFloat64()
+	avgExposure := dashboardMetrics.TotalExposure.InexactFloat64()
+	avgRiskScore := dashboardMetrics.AverageRiskScore.InexactFloat64()
+
+	// Calculate concentration risk from exposure by market
+	var maxMarketExposure float64
+	totalExposure := dashboardMetrics.TotalExposure.InexactFloat64()
+	for _, exposure := range dashboardMetrics.ExposureByMarket {
+		marketExposure := exposure.InexactFloat64()
+		if marketExposure > maxMarketExposure {
+			maxMarketExposure = marketExposure
+		}
+	}
+	maxConcentration := maxMarketExposure / totalExposure
+	// Compile risk report
+	report := &RiskReport{
+		Timestamp: time.Now(),
+		Status:    "healthy",
+		RiskMetrics: RiskMetrics{
+			VaR:                 avgVaR,
+			ExposureUtilization: avgExposure / 1000000, // Normalize to percentage
+			ConcentrationRisk:   maxConcentration,
+			MaxDrawdown:         avgRiskScore, // Use risk score as proxy for max drawdown
+		},
+		ComplianceStatus: ComplianceStatus{
+			ActiveAlerts:   len(alerts),
+			ViolationCount: len(alerts), // Simplified
+			LastCheck:      time.Now(),
+			Status:         "compliant",
+		},
+	}
+
+	// Determine overall status
+	if avgVaR > 15000 || len(alerts) > 5 { // $15K VaR or more than 5 alerts
+		report.Status = "at_risk"
+		report.ComplianceStatus.Status = "warning"
+	}
+	if avgVaR > 25000 || len(alerts) > 10 { // $25K VaR or more than 10 alerts
+		report.Status = "critical"
+		report.ComplianceStatus.Status = "violation"
+	}
+
+	// Add recommendations
+	if avgVaR > 10000 {
+		report.Recommendations = append(report.Recommendations, "Consider reducing position sizes")
+	}
+	if maxConcentration > 0.30 {
+		report.Recommendations = append(report.Recommendations, "Diversify positions across symbols")
+	}
+	if len(alerts) > 3 {
+		report.Recommendations = append(report.Recommendations, "Review compliance alerts")
+	}
+
+	p.logger.Infow("Risk report generated",
+		"status", report.Status,
+		"avg_var", avgVaR,
+		"active_alerts", len(alerts),
+		"max_concentration", maxConcentration,
+	)
+
+	return report, nil
+}
+
+// executeRiskAwareMigration executes migration with continuous risk monitoring
+func (p *EngineParticipant) executeRiskAwareMigration(ctx context.Context, plan *EngineMigrationPlan) error {
+	if p.riskManager == nil {
+		// Fallback to standard migration if no risk manager
+		return p.executeMigrationPlan(ctx, plan)
+	}
+
+	p.logger.Infow("Starting risk-aware migration execution",
+		"strategy", plan.Strategy,
+		"estimated_duration", plan.EstimatedDuration,
+	)
+
+	// Create a context with timeout for the migration
+	migrationCtx, cancel := context.WithTimeout(ctx, plan.EstimatedDuration*2)
+	defer cancel()
+
+	// Start risk monitoring in background
+	riskMonitorDone := make(chan error, 1)
+	go func() {
+		riskMonitorDone <- p.monitorRiskDuringMigration(migrationCtx, plan)
+	}()
+
+	// Execute the migration plan
+	migrationDone := make(chan error, 1)
+	go func() {
+		migrationDone <- p.executeMigrationPlan(migrationCtx, plan)
+	}()
+
+	// Wait for either migration completion or risk monitoring failure
+	select {
+	case err := <-migrationDone:
+		// Migration completed, stop risk monitoring
+		cancel()
+		<-riskMonitorDone // Wait for risk monitor to stop
+
+		if err != nil {
+			return fmt.Errorf("migration execution failed: %w", err)
+		}
+
+		p.logger.Infow("Risk-aware migration completed successfully")
+		return nil
+
+	case err := <-riskMonitorDone:
+		// Risk monitoring detected a problem
+		cancel()
+		<-migrationDone // Wait for migration to stop
+
+		if err != nil {
+			return fmt.Errorf("migration aborted due to risk monitoring: %w", err)
+		}
+
+		return fmt.Errorf("migration aborted due to risk monitoring")
+
+	case <-migrationCtx.Done():
+		// Timeout
+		return fmt.Errorf("migration timed out after %v", plan.EstimatedDuration*2)
+	}
+}
+
+// monitorRiskDuringMigration continuously monitors risk during migration
+func (p *EngineParticipant) monitorRiskDuringMigration(ctx context.Context, plan *EngineMigrationPlan) error {
+	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	defer ticker.Stop()
+
+	consecutiveHighRiskChecks := 0
+	maxConsecutiveHighRisk := 3 // Abort if high risk for 3 consecutive checks
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+
+		case <-ticker.C:
+			// Generate current risk report
+			report, err := p.generateRiskReport(ctx)
+			if err != nil {
+				p.logger.Warnw("Failed to generate risk report during migration monitoring", "error", err)
+				continue
+			}
+
+			// Check risk levels
+			switch report.Status {
+			case "critical":
+				p.logger.Errorw("Critical risk detected during migration",
+					"var", report.RiskMetrics.VaR,
+					"active_alerts", report.ComplianceStatus.ActiveAlerts,
+					"recommendations", report.Recommendations,
+				)
+				return fmt.Errorf("critical risk level detected: VaR=%.2f, alerts=%d",
+					report.RiskMetrics.VaR, report.ComplianceStatus.ActiveAlerts)
+
+			case "at_risk":
+				consecutiveHighRiskChecks++
+				p.logger.Warnw("Elevated risk detected during migration",
+					"var", report.RiskMetrics.VaR,
+					"consecutive_checks", consecutiveHighRiskChecks,
+					"max_allowed", maxConsecutiveHighRisk,
+				)
+
+				if consecutiveHighRiskChecks >= maxConsecutiveHighRisk {
+					return fmt.Errorf("persistent elevated risk detected over %d checks", consecutiveHighRiskChecks)
+				}
+
+			default:
+				// Reset counter on healthy status
+				consecutiveHighRiskChecks = 0
+				p.logger.Debugw("Risk monitoring check passed",
+					"status", report.Status,
+					"var", report.RiskMetrics.VaR,
+				)
+			}
+		}
+	}
 }

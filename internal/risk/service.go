@@ -26,7 +26,6 @@ type RiskService interface {
 
 	// Generate regulatory report for a given time period
 	GenerateReport(ctx context.Context, reportType string, startTime, endTime int64) (string, error)
-
 	// Extended RiskService methods for limit and exemption management
 	GetLimits(ctx context.Context) (LimitConfig, error)
 	CreateRiskLimit(ctx context.Context, limitType LimitType, identifier string, limit decimal.Decimal) error
@@ -35,6 +34,31 @@ type RiskService interface {
 	GetExemptions(ctx context.Context) ([]string, error)
 	CreateExemption(ctx context.Context, userID string) error
 	DeleteExemption(ctx context.Context, userID string) error
+
+	// Real-time risk calculation methods
+	UpdateMarketData(ctx context.Context, symbol string, price, volatility decimal.Decimal) error
+	CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error)
+	BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]*RiskMetrics, error)
+	ValidateCalculationPerformance(ctx context.Context, userID string) error
+
+	// Compliance and monitoring methods
+	RecordTransaction(ctx context.Context, transaction TransactionRecord) error
+	GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error)
+	UpdateComplianceAlertStatus(ctx context.Context, alertID, status, assignedTo, notes string) error
+	AddComplianceRule(ctx context.Context, rule *ComplianceRule) error
+
+	// Dashboard and monitoring methods
+	GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error)
+	SubscribeToDashboard(ctx context.Context, subscriberID string, filters map[string]interface{}) (*DashboardSubscriber, error)
+	UnsubscribeFromDashboard(subscriberID string)
+	SendAlert(alertType, priority, title, message, userID string, data map[string]interface{})
+	AcknowledgeAlert(alertID, acknowledgedBy string) error
+	GetAlerts(limit int, priority string) []AlertNotification
+	// Regulatory reporting methods
+	GenerateRegulatoryReport(ctx context.Context, criteria ReportingCriteria, generatedBy string) (*RegulatoryReport, error)
+	SubmitRegulatoryReport(ctx context.Context, reportID, submittedBy string) error
+	GetRegulatoryReport(reportID string) (*RegulatoryReport, error)
+	ListRegulatoryReports(reportType ReportType, status ReportStatus, limit int) []*RegulatoryReport
 }
 
 // UserRiskProfile holds risk metrics for a user
@@ -56,8 +80,12 @@ type ComplianceResult struct {
 
 // riskService is the default implementation of RiskService
 type riskService struct {
-	pm         *PositionManager    // position manager for tracking and limits
-	exemptions map[string]struct{} // userID -> exemption flag
+	pm               *PositionManager     // position manager for tracking and limits
+	exemptions       map[string]struct{}  // userID -> exemption flag
+	calculator       *RiskCalculator      // real-time risk calculation engine
+	complianceEngine *ComplianceEngine    // compliance monitoring and pattern detection
+	dashboard        *MonitoringDashboard // real-time monitoring dashboard
+	reporter         *RegulatoryReporter  // regulatory reporting module
 }
 
 // NewRiskService creates an instance of RiskService with default limits and exemptions
@@ -67,15 +95,59 @@ func NewRiskService() RiskService {
 		MarketLimits: make(map[string]decimal.Decimal),
 		GlobalLimit:  decimal.Zero,
 	})
+
+	// Initialize risk calculator
+	calculator := NewRiskCalculator(pm)
+
+	// Initialize compliance engine
+	complianceEngine := NewComplianceEngine()
+
+	// Initialize monitoring dashboard
+	dashboard := NewMonitoringDashboard(calculator, complianceEngine, pm)
+
+	// Initialize regulatory reporter
+	reporter := NewRegulatoryReporter(complianceEngine, calculator, pm)
+
 	return &riskService{
-		pm:         pm,
-		exemptions: make(map[string]struct{}),
+		pm:               pm,
+		exemptions:       make(map[string]struct{}),
+		calculator:       calculator,
+		complianceEngine: complianceEngine,
+		dashboard:        dashboard,
+		reporter:         reporter,
 	}
 }
 
 // ProcessTrade updates positions based on a trade event
 func (r *riskService) ProcessTrade(ctx context.Context, tradeID, userID, market string, quantity decimal.Decimal, price decimal.Decimal) error {
-	return r.pm.ProcessTrade(ctx, userID, market, quantity, price)
+	// Update positions
+	err := r.pm.ProcessTrade(ctx, userID, market, quantity, price)
+	if err != nil {
+		return err
+	}
+
+	// Update market data for risk calculations
+	volatility := decimal.NewFromFloat(0.02) // Default 2% volatility
+	r.calculator.UpdateMarketData(ctx, market, price, volatility)
+
+	// Record transaction for compliance monitoring
+	transaction := TransactionRecord{
+		ID:          tradeID,
+		UserID:      userID,
+		Type:        "trade",
+		Amount:      quantity.Mul(price).Abs(),
+		Currency:    "USD", // Simplified
+		Timestamp:   time.Now(),
+		Source:      "trading_engine",
+		Destination: "position",
+		Metadata: map[string]interface{}{
+			"market":   market,
+			"quantity": quantity.String(),
+			"price":    price.String(),
+		},
+	}
+
+	return r.complianceEngine.RecordTransaction(ctx, transaction)
 }
 
 // CheckPositionLimit verifies a new order against configured limits

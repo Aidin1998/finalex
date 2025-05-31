@@ -21,6 +21,7 @@ import (
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
@@ -179,13 +180,33 @@ func (s *Server) Router() *gin.Engine {
 				// --- RISK MANAGEMENT ENDPOINTS ---
 				riskGroup := admin.Group("/risk")
 				{
+					// Limit management
 					riskGroup.GET("/limits", s.handleGetRiskLimits)
 					riskGroup.POST("/limits", s.handleCreateRiskLimit)
 					riskGroup.PUT("/limits/:type/:id", s.handleUpdateRiskLimit)
 					riskGroup.DELETE("/limits/:type/:id", s.handleDeleteRiskLimit)
+
+					// Exemption management
 					riskGroup.GET("/exemptions", s.handleGetRiskExemptions)
 					riskGroup.POST("/exemptions", s.handleCreateRiskExemption)
 					riskGroup.DELETE("/exemptions/:userID", s.handleDeleteRiskExemption)
+
+					// Risk calculation and monitoring
+					riskGroup.GET("/metrics/user/:userID", s.handleGetUserRiskMetrics)
+					riskGroup.POST("/calculate/batch", s.handleBatchCalculateRisk)
+					riskGroup.GET("/dashboard", s.handleGetRiskDashboard)
+					riskGroup.POST("/market-data", s.handleUpdateMarketData)
+
+					// Compliance monitoring
+					riskGroup.GET("/compliance/alerts", s.handleGetComplianceAlerts)
+					riskGroup.PUT("/compliance/alerts/:alertID", s.handleUpdateComplianceAlert)
+					riskGroup.POST("/compliance/rules", s.handleAddComplianceRule)
+					riskGroup.GET("/compliance/transactions", s.handleGetComplianceTransactions)
+
+					// Reporting
+					riskGroup.POST("/reports/generate", s.handleGenerateRiskReport)
+					riskGroup.GET("/reports/:reportID", s.handleGetRiskReport)
+					riskGroup.GET("/reports", s.handleListRiskReports)
 				}
 
 				// Rate limiting management endpoints
@@ -859,4 +880,196 @@ func (s *Server) handleDeleteRiskExemption(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+// Risk Management API Handlers
+
+// handleGetUserRiskMetrics returns real-time risk metrics for a specific user
+func (s *Server) handleGetUserRiskMetrics(c *gin.Context) {
+	userID := c.Param("userID")
+
+	metrics, err := s.riskSvc.CalculateRealTimeRisk(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, metrics)
+}
+
+// handleBatchCalculateRisk calculates risk metrics for multiple users
+func (s *Server) handleBatchCalculateRisk(c *gin.Context) {
+	var req struct {
+		UserIDs []string `json:"userIds" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	metrics, err := s.riskSvc.BatchCalculateRisk(c.Request.Context(), req.UserIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, metrics)
+}
+
+// handleGetRiskDashboard returns comprehensive dashboard metrics
+func (s *Server) handleGetRiskDashboard(c *gin.Context) {
+	metrics, err := s.riskSvc.GetDashboardMetrics(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, metrics)
+}
+
+// handleUpdateMarketData updates market data for risk calculations
+func (s *Server) handleUpdateMarketData(c *gin.Context) {
+	var req struct {
+		Symbol     string  `json:"symbol" binding:"required"`
+		Price      float64 `json:"price" binding:"required"`
+		Volatility float64 `json:"volatility" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	price := decimal.NewFromFloat(req.Price)
+	volatility := decimal.NewFromFloat(req.Volatility)
+
+	err := s.riskSvc.UpdateMarketData(c.Request.Context(), req.Symbol, price, volatility)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "market data updated"})
+}
+
+// handleGetComplianceAlerts returns active compliance alerts
+func (s *Server) handleGetComplianceAlerts(c *gin.Context) {
+	alerts, err := s.riskSvc.GetActiveComplianceAlerts(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, alerts)
+}
+
+// handleUpdateComplianceAlert updates the status of a compliance alert
+func (s *Server) handleUpdateComplianceAlert(c *gin.Context) {
+	alertID := c.Param("alertID")
+
+	var req struct {
+		Status     string `json:"status" binding:"required"`
+		AssignedTo string `json:"assignedTo"`
+		Notes      string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := s.riskSvc.UpdateComplianceAlertStatus(c.Request.Context(), alertID, req.Status, req.AssignedTo, req.Notes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "alert updated"})
+}
+
+// handleAddComplianceRule adds a new compliance rule
+func (s *Server) handleAddComplianceRule(c *gin.Context) {
+	var rule risk.ComplianceRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := s.riskSvc.AddComplianceRule(c.Request.Context(), &rule)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "compliance rule added"})
+}
+
+// handleGetComplianceTransactions returns compliance transaction records
+func (s *Server) handleGetComplianceTransactions(c *gin.Context) {
+	// Parse query parameters for filtering
+	userID := c.Query("userID")
+	limit := c.DefaultQuery("limit", "100")
+	offset := c.DefaultQuery("offset", "0")
+
+	// This would be implemented with actual transaction filtering logic
+	// For now, return a placeholder response
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": []interface{}{},
+		"userID":       userID,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+// handleGenerateRiskReport generates a new risk report
+func (s *Server) handleGenerateRiskReport(c *gin.Context) {
+	var req struct {
+		ReportType string `json:"reportType" binding:"required"`
+		StartTime  int64  `json:"startTime" binding:"required"`
+		EndTime    int64  `json:"endTime" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	reportData, err := s.riskSvc.GenerateReport(c.Request.Context(), req.ReportType, req.StartTime, req.EndTime)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"reportId":    fmt.Sprintf("report_%d", time.Now().Unix()),
+		"data":        reportData,
+		"generatedAt": time.Now().Unix(),
+	})
+}
+
+// handleGetRiskReport retrieves a specific risk report
+func (s *Server) handleGetRiskReport(c *gin.Context) {
+	reportID := c.Param("reportID")
+
+	// This would retrieve the report from storage
+	// For now, return a placeholder response
+	c.JSON(http.StatusOK, gin.H{
+		"reportId": reportID,
+		"status":   "completed",
+		"data":     "Report data would be here",
+	})
+}
+
+// handleListRiskReports lists all available risk reports
+func (s *Server) handleListRiskReports(c *gin.Context) {
+	// This would list reports from storage with pagination
+	// For now, return a placeholder response
+	c.JSON(http.StatusOK, gin.H{
+		"reports": []gin.H{
+			{
+				"id":        "report_001",
+				"type":      "daily_risk",
+				"status":    "completed",
+				"createdAt": time.Now().AddDate(0, 0, -1).Unix(),
+			},
+		},
+		"total": 1,
+	})
 }
