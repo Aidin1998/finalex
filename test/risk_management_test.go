@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"

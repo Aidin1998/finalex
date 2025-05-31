@@ -1,4 +1,4 @@
-package testing
+package aml_test
 
 import (
 	"fmt"
