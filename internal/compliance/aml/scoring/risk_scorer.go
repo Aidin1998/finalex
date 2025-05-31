@@ -2,22 +2,22 @@ package scoring
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
 // RiskScorer integrates with existing risk calculation to provide AML-specific scoring
 type RiskScorer struct {
-	mu           sync.RWMutex
-	logger       *zap.SugaredLogger
-	riskService  risk.RiskService
-	calculator   *risk.RiskCalculator
+	mu          sync.RWMutex
+	logger      *zap.SugaredLogger
+	riskService risk.RiskService
+	calculator  *risk.RiskCalculator
 
 	// Scoring models
 	models map[string]*ScoringModel
@@ -28,49 +28,49 @@ type RiskScorer struct {
 
 // ScoringModel defines a risk scoring model
 type ScoringModel struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	Version          string                 `json:"version"`
-	ModelType        string                 `json:"model_type"` // "rule_based", "ml", "hybrid"
-	Weights          map[string]float64     `json:"weights"`
-	Thresholds       map[string]float64     `json:"thresholds"`
-	Parameters       map[string]interface{} `json:"parameters"`
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
-	IsActive         bool                   `json:"is_active"`
-	AccuracyMetrics  *AccuracyMetrics       `json:"accuracy_metrics"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Version         string                 `json:"version"`
+	ModelType       string                 `json:"model_type"` // "rule_based", "ml", "hybrid"
+	Weights         map[string]float64     `json:"weights"`
+	Thresholds      map[string]float64     `json:"thresholds"`
+	Parameters      map[string]interface{} `json:"parameters"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+	IsActive        bool                   `json:"is_active"`
+	AccuracyMetrics *AccuracyMetrics       `json:"accuracy_metrics"`
 }
 
 // AccuracyMetrics tracks model performance
 type AccuracyMetrics struct {
-	TotalPredictions   int     `json:"total_predictions"`
-	CorrectPredictions int     `json:"correct_predictions"`
-	Accuracy           float64 `json:"accuracy"`
-	Precision          float64 `json:"precision"`
-	Recall             float64 `json:"recall"`
-	F1Score            float64 `json:"f1_score"`
+	TotalPredictions   int       `json:"total_predictions"`
+	CorrectPredictions int       `json:"correct_predictions"`
+	Accuracy           float64   `json:"accuracy"`
+	Precision          float64   `json:"precision"`
+	Recall             float64   `json:"recall"`
+	F1Score            float64   `json:"f1_score"`
 	LastUpdated        time.Time `json:"last_updated"`
 }
 
 // ScoringHistory tracks historical scoring data
 type ScoringHistory struct {
-	UserID          uuid.UUID                `json:"user_id"`
-	Scores          []HistoricalScore        `json:"scores"`
-	RiskTrend       string                   `json:"risk_trend"` // "increasing", "decreasing", "stable"
-	AverageScore    float64                  `json:"average_score"`
-	MaxScore        float64                  `json:"max_score"`
-	LastScored      time.Time                `json:"last_scored"`
-	ValidationData  map[string]interface{}   `json:"validation_data"`
+	UserID         uuid.UUID              `json:"user_id"`
+	Scores         []HistoricalScore      `json:"scores"`
+	RiskTrend      string                 `json:"risk_trend"` // "increasing", "decreasing", "stable"
+	AverageScore   float64                `json:"average_score"`
+	MaxScore       float64                `json:"max_score"`
+	LastScored     time.Time              `json:"last_scored"`
+	ValidationData map[string]interface{} `json:"validation_data"`
 }
 
 // HistoricalScore represents a historical risk score
 type HistoricalScore struct {
-	Score       float64                `json:"score"`
-	RiskLevel   aml.RiskLevel          `json:"risk_level"`
-	Factors     map[string]float64     `json:"factors"`
-	ModelUsed   string                 `json:"model_used"`
-	ScoredAt    time.Time              `json:"scored_at"`
-	Context     map[string]interface{} `json:"context"`
+	Score     float64                `json:"score"`
+	RiskLevel aml.RiskLevel          `json:"risk_level"`
+	Factors   map[string]float64     `json:"factors"`
+	ModelUsed string                 `json:"model_used"`
+	ScoredAt  time.Time              `json:"scored_at"`
+	Context   map[string]interface{} `json:"context"`
 }
 
 // NewRiskScorer creates a new AML risk scorer
@@ -97,11 +97,11 @@ func (rs *RiskScorer) initializeDefaultModels() {
 		Version:   "1.0",
 		ModelType: "rule_based",
 		Weights: map[string]float64{
-			"transaction_volume":     0.25,
-			"transaction_frequency":  0.20,
-			"geographic_risk":        0.15,
-			"customer_profile":       0.20,
-			"behavior_anomaly":       0.20,
+			"transaction_volume":    0.25,
+			"transaction_frequency": 0.20,
+			"geographic_risk":       0.15,
+			"customer_profile":      0.20,
+			"behavior_anomaly":      0.20,
 		},
 		Thresholds: map[string]float64{
 			"low_risk":      25.0,
@@ -110,10 +110,10 @@ func (rs *RiskScorer) initializeDefaultModels() {
 			"critical_risk": 90.0,
 		},
 		Parameters: map[string]interface{}{
-			"lookback_days":           30,
-			"velocity_weight":         1.5,
-			"pattern_multiplier":      2.0,
-			"jurisdiction_factor":     1.2,
+			"lookback_days":       30,
+			"velocity_weight":     1.5,
+			"pattern_multiplier":  2.0,
+			"jurisdiction_factor": 1.2,
 		},
 		IsActive:  true,
 		CreatedAt: time.Now(),
@@ -139,17 +139,17 @@ func (rs *RiskScorer) CalculateRiskScore(ctx context.Context, userID uuid.UUID, 
 
 	// Calculate base risk using existing risk service
 	riskFactors := map[string]interface{}{
-		"user_id":       userID.String(),
-		"kyc_status":    amlUser.KYCStatus,
-		"country_code":  amlUser.CountryCode,
-		"risk_level":    string(amlUser.RiskLevel),
-		"pep_status":    amlUser.PEPStatus,
+		"user_id":         userID.String(),
+		"kyc_status":      amlUser.KYCStatus,
+		"country_code":    amlUser.CountryCode,
+		"risk_level":      string(amlUser.RiskLevel),
+		"pep_status":      amlUser.PEPStatus,
 		"sanction_status": amlUser.SanctionStatus,
 	}
 
 	// Use existing risk calculation if available
 	var baseRiskScore float64 = amlUser.RiskScore
-	
+
 	// Apply AML-specific scoring factors
 	score := rs.applyAMLFactors(model, amlUser, baseRiskScore)
 
@@ -158,16 +158,16 @@ func (rs *RiskScorer) CalculateRiskScore(ctx context.Context, userID uuid.UUID, 
 
 	// Create risk score result
 	riskScore := &AMLRiskScore{
-		UserID:     userID,
-		Score:      score,
-		RiskLevel:  riskLevel,
-		ModelID:    model.ID,
-		Factors:    rs.calculateFactorBreakdown(model, amlUser, baseRiskScore),
+		UserID:       userID,
+		Score:        score,
+		RiskLevel:    riskLevel,
+		ModelID:      model.ID,
+		Factors:      rs.calculateFactorBreakdown(model, amlUser, baseRiskScore),
 		CalculatedAt: time.Now(),
 		ExpiresAt:    time.Now().Add(24 * time.Hour), // Scores valid for 24 hours
 		Metadata: map[string]interface{}{
-			"base_risk_score": baseRiskScore,
-			"model_version":   model.Version,
+			"base_risk_score":     baseRiskScore,
+			"model_version":       model.Version,
 			"calculation_context": riskFactors,
 		},
 	}
@@ -228,11 +228,11 @@ func (rs *RiskScorer) applyAMLFactors(model *ScoringModel, amlUser *aml.AMLUser,
 // getCustomerTypeMultiplier returns risk multiplier based on customer type
 func (rs *RiskScorer) getCustomerTypeMultiplier(customerType string) float64 {
 	multipliers := map[string]float64{
-		"individual":     1.0,
-		"corporate":      1.1,
-		"trust":          1.2,
-		"foundation":     1.3,
-		"government":     0.8,
+		"individual":            1.0,
+		"corporate":             1.1,
+		"trust":                 1.2,
+		"foundation":            1.3,
+		"government":            0.8,
 		"financial_institution": 0.9,
 	}
 
@@ -258,7 +258,7 @@ func (rs *RiskScorer) calculateFactorBreakdown(model *ScoringModel, amlUser *aml
 // calculateGeographicRiskFactor calculates geographic risk component
 func (rs *RiskScorer) calculateGeographicRiskFactor(amlUser *aml.AMLUser) float64 {
 	score := 0.0
-	
+
 	if amlUser.IsHighRiskCountry {
 		score += 25.0
 	}
@@ -279,11 +279,11 @@ func (rs *RiskScorer) calculateCustomerProfileFactor(amlUser *aml.AMLUser) float
 
 	// Business type risk factors
 	businessTypeRisk := map[string]float64{
-		"money_services":    15.0,
-		"casino":           12.0,
-		"crypto_exchange":  10.0,
-		"jewelry":          8.0,
-		"real_estate":      6.0,
+		"money_services":  15.0,
+		"casino":          12.0,
+		"crypto_exchange": 10.0,
+		"jewelry":         8.0,
+		"real_estate":     6.0,
 	}
 
 	if risk, exists := businessTypeRisk[amlUser.BusinessType]; exists {
@@ -348,7 +348,7 @@ func (rs *RiskScorer) getActiveModel() *ScoringModel {
 // updateScoringHistory updates historical scoring data
 func (rs *RiskScorer) updateScoringHistory(userID uuid.UUID, score *AMLRiskScore, model *ScoringModel) {
 	key := userID.String()
-	
+
 	history, exists := rs.scoringHistory[key]
 	if !exists {
 		history = &ScoringHistory{
@@ -448,13 +448,13 @@ func (rs *RiskScorer) UpdateModelAccuracy(modelID string, actualOutcome bool, pr
 	}
 
 	model.AccuracyMetrics.TotalPredictions++
-	
+
 	// Simple accuracy tracking - in practice this would be more sophisticated
 	if actualOutcome {
 		model.AccuracyMetrics.CorrectPredictions++
 	}
 
-	model.AccuracyMetrics.Accuracy = float64(model.AccuracyMetrics.CorrectPredictions) / 
+	model.AccuracyMetrics.Accuracy = float64(model.AccuracyMetrics.CorrectPredictions) /
 		float64(model.AccuracyMetrics.TotalPredictions)
 	model.AccuracyMetrics.LastUpdated = time.Now()
 

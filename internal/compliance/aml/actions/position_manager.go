@@ -1,4 +1,4 @@
-package risk
+package actions
 
 import (
 	"context"

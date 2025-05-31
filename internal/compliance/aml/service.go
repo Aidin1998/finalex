@@ -1,4 +1,4 @@
-package risk
+package aml
 
 import (
 	"context"
@@ -88,6 +88,80 @@ type riskService struct {
 	reporter         *RegulatoryReporter  // regulatory reporting module
 }
 
+// Simple implementations for missing types
+type RiskCalculator struct {
+	pm         *PositionManager
+	marketData map[string]*MarketData // symbol -> market data
+}
+
+type MarketData struct {
+	Price      decimal.Decimal
+	Volatility decimal.Decimal
+	UpdatedAt  time.Time
+}
+
+type ComplianceEngine struct {
+	rules map[string]interface{}
+}
+
+type MonitoringDashboard struct {
+	calculator *RiskCalculator
+	engine     *ComplianceEngine
+	pm         *PositionManager
+}
+
+type RegulatoryReporter struct {
+	engine     *ComplianceEngine
+	calculator *RiskCalculator
+	pm         *PositionManager
+}
+
+// Constructor functions
+func NewRiskCalculator(pm *PositionManager) *RiskCalculator {
+	return &RiskCalculator{
+		pm:         pm,
+		marketData: make(map[string]*MarketData),
+	}
+}
+
+// UpdateMarketData updates market data for risk calculations
+func (rc *RiskCalculator) UpdateMarketData(ctx context.Context, symbol string, price, volatility decimal.Decimal) error {
+	rc.marketData[symbol] = &MarketData{
+		Price:      price,
+		Volatility: volatility,
+		UpdatedAt:  time.Now(),
+	}
+	return nil
+}
+
+func NewComplianceEngine() *ComplianceEngine {
+	return &ComplianceEngine{
+		rules: make(map[string]interface{}),
+	}
+}
+
+func NewMonitoringDashboard(calculator *RiskCalculator, engine *ComplianceEngine, pm *PositionManager) *MonitoringDashboard {
+	return &MonitoringDashboard{
+		calculator: calculator,
+		engine:     engine,
+		pm:         pm,
+	}
+}
+
+func NewRegulatoryReporter(engine *ComplianceEngine, calculator *RiskCalculator, pm *PositionManager) *RegulatoryReporter {
+	return &RegulatoryReporter{
+		engine:     engine,
+		calculator: calculator,
+		pm:         pm,
+	}
+}
+
+// RecordTransaction method for ComplianceEngine
+func (ce *ComplianceEngine) RecordTransaction(ctx context.Context, transaction TransactionRecord) error {
+	// Implementation for transaction recording
+	return nil
+}
+
 // NewRiskService creates an instance of RiskService with default limits and exemptions
 func NewRiskService() RiskService {
 	pm := NewPositionManager(LimitConfig{
@@ -162,14 +236,36 @@ func (r *riskService) CheckPositionLimit(ctx context.Context, userID, market str
 func (r *riskService) CalculateRisk(ctx context.Context, userID string) (*UserRiskProfile, error) {
 	positions := r.pm.ListPositions(ctx, userID)
 	totalExposure := decimal.Zero
-	for market, pos := range positions {
-		expo := pos.Quantity.Abs().Mul(pos.AvgPrice)
-		totalExposure = totalExposure.Add(expo)
-		_ = market
+
+	for market, position := range positions {
+		// Get market data for pricing
+		var price decimal.Decimal = decimal.NewFromInt(1) // Default price
+		if marketData, exists := r.calculator.marketData[market]; exists {
+			price = marketData.Price
+		}
+
+		// Calculate exposure for this position
+		exposure := position.Abs().Mul(price)
+		totalExposure = totalExposure.Add(exposure)
 	}
+
+	// Calculate VaR (simplified as 5% of exposure)
 	varValue := totalExposure.Mul(decimal.NewFromFloat(0.05))
+
+	// Calculate margin requirement (20% of exposure)
 	margin := totalExposure.Mul(decimal.NewFromFloat(0.2))
+
+	// Calculate utilized limits
+	limits := r.pm.GetLimits()
 	util := make(map[string]decimal.Decimal)
+	if userLimit, exists := limits.UserLimits[userID]; exists && !userLimit.IsZero() {
+		util["user"] = totalExposure.Div(userLimit).Mul(decimal.NewFromInt(100))
+	}
+	if !limits.GlobalLimit.IsZero() {
+		globalExposure := r.calculateGlobalExposure()
+		util["global"] = globalExposure.Div(limits.GlobalLimit).Mul(decimal.NewFromInt(100))
+	}
+
 	return &UserRiskProfile{
 		UserID:          userID,
 		CurrentExposure: totalExposure,
@@ -324,4 +420,11 @@ func (r *riskService) GetRegulatoryReport(reportID string) (*RegulatoryReport, e
 // ListRegulatoryReports returns a list of regulatory reports (stub implementation)
 func (r *riskService) ListRegulatoryReports(reportType ReportType, status ReportStatus, limit int) []*RegulatoryReport {
 	return []*RegulatoryReport{}
+}
+
+// calculateGlobalExposure calculates total system exposure
+func (r *riskService) calculateGlobalExposure() decimal.Decimal {
+	// This is a simplified implementation
+	// In practice, you'd iterate through all users and sum their exposures
+	return decimal.Zero
 }

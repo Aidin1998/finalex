@@ -1,4 +1,4 @@
-package risk
+package audit
 
 import (
 	"context"
@@ -9,6 +9,28 @@ import (
 
 	"github.com/shopspring/decimal"
 )
+
+// Position represents a trading position
+type Position struct {
+	Symbol    string          `json:"symbol"`
+	Quantity  decimal.Decimal `json:"quantity"`
+	AvgPrice  decimal.Decimal `json:"avg_price"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
+// PositionManager interface for position management
+type PositionManager interface {
+	GetUserPositions(userID string) map[string]*Position
+	ListPositions(ctx context.Context, userID string) map[string]*Position
+	GetLimits() LimitConfig
+}
+
+// LimitConfig represents risk limits configuration
+type LimitConfig struct {
+	UserLimits   map[string]decimal.Decimal `json:"user_limits"`
+	MarketLimits map[string]decimal.Decimal `json:"market_limits"`
+	GlobalLimit  decimal.Decimal            `json:"global_limit"`
+}
 
 // MarketData represents real-time market data for risk calculations
 type MarketData struct {
@@ -40,7 +62,7 @@ type RiskCalculator struct {
 	mu           sync.RWMutex
 	marketData   map[string]*MarketData                // symbol -> market data
 	correlations map[string]map[string]decimal.Decimal // symbol -> symbol -> correlation
-	pm           *PositionManager
+	pm           PositionManager
 
 	// Configuration
 	VaRConfidenceLevel decimal.Decimal // e.g., 0.95 for 95% VaR
@@ -49,7 +71,7 @@ type RiskCalculator struct {
 }
 
 // NewRiskCalculator creates a new real-time risk calculator
-func NewRiskCalculator(pm *PositionManager) *RiskCalculator {
+func NewRiskCalculator(pm PositionManager) *RiskCalculator {
 	return &RiskCalculator{
 		marketData:         make(map[string]*MarketData),
 		correlations:       make(map[string]map[string]decimal.Decimal),

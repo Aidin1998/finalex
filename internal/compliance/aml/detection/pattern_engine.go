@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -31,20 +32,20 @@ type PatternEngine struct {
 // PatternConfig defines configuration for pattern detection
 type PatternConfig struct {
 	StructuringThreshold    decimal.Decimal `json:"structuring_threshold"`
-	VelocityThreshold       int            `json:"velocity_threshold"`
+	VelocityThreshold       int             `json:"velocity_threshold"`
 	RoundAmountThreshold    decimal.Decimal `json:"round_amount_threshold"`
 	RapidMovementTimeWindow time.Duration   `json:"rapid_movement_time_window"`
-	MinPatternConfidence    float64        `json:"min_pattern_confidence"`
+	MinPatternConfidence    float64         `json:"min_pattern_confidence"`
 }
 
 // PatternStats tracks pattern detection statistics
 type PatternStats struct {
-	TotalDetections    int       `json:"total_detections"`
-	TruePositives      int       `json:"true_positives"`
-	FalsePositives     int       `json:"false_positives"`
-	LastDetectionAt    time.Time `json:"last_detection_at"`
-	AccuracyRate       float64   `json:"accuracy_rate"`
-	PatternType        string    `json:"pattern_type"`
+	TotalDetections int       `json:"total_detections"`
+	TruePositives   int       `json:"true_positives"`
+	FalsePositives  int       `json:"false_positives"`
+	LastDetectionAt time.Time `json:"last_detection_at"`
+	AccuracyRate    float64   `json:"accuracy_rate"`
+	PatternType     string    `json:"pattern_type"`
 }
 
 // NewPatternEngine creates a new AML pattern detection engine
@@ -91,7 +92,7 @@ func (pe *PatternEngine) DetectPatterns(ctx context.Context, userID uuid.UUID, t
 		if alert.UserID == userID.String() {
 			activity := pe.convertAlertToSuspiciousActivity(alert)
 			suspiciousActivities = append(suspiciousActivities, activity)
-			
+
 			// Store for tracking
 			pe.detectedPatterns[activity.ID.String()] = activity
 			pe.updatePatternStats(activity.Pattern)
@@ -134,7 +135,7 @@ func (pe *PatternEngine) convertAlertToSuspiciousActivity(alert risk.ComplianceA
 	}
 
 	userID, _ := uuid.Parse(alert.UserID)
-	
+
 	return &aml.SuspiciousActivity{
 		ID:           uuid.New(),
 		UserID:       userID,
@@ -144,9 +145,9 @@ func (pe *PatternEngine) convertAlertToSuspiciousActivity(alert risk.ComplianceA
 		Description:  alert.Description,
 		Pattern:      alert.RuleName,
 		Indicators: map[string]interface{}{
-			"alert_id":       alert.ID,
-			"rule_id":        alert.RuleID,
-			"risk_score":     alert.RiskScore.String(),
+			"alert_id":          alert.ID,
+			"rule_id":           alert.RuleID,
+			"risk_score":        alert.RiskScore.String(),
 			"detected_patterns": alert.DetectedPatterns,
 		},
 		DetectedAt: alert.CreatedAt,
@@ -167,7 +168,7 @@ func (pe *PatternEngine) updatePatternStats(patternType string) {
 
 	stats.TotalDetections++
 	stats.LastDetectionAt = time.Now()
-	
+
 	// Calculate accuracy rate (would be updated based on manual review)
 	if stats.TotalDetections > 0 {
 		stats.AccuracyRate = float64(stats.TruePositives) / float64(stats.TotalDetections)
@@ -203,7 +204,7 @@ func (pe *PatternEngine) UpdatePatternFeedback(ctx context.Context, activityID u
 		} else {
 			stats.FalsePositives++
 		}
-		
+
 		// Recalculate accuracy rate
 		stats.AccuracyRate = float64(stats.TruePositives) / float64(stats.TotalDetections)
 	}

@@ -1,4 +1,4 @@
-package risk
+package reporting
 
 import (
 	"context"
@@ -9,6 +9,63 @@ import (
 
 	"github.com/shopspring/decimal"
 )
+
+// TransactionPattern represents a detected transaction pattern
+type TransactionPattern struct {
+	Type         string              `json:"type"`
+	PatternType  string              `json:"pattern_type"`
+	Description  string              `json:"description"`
+	Frequency    int                 `json:"frequency"`
+	Amount       decimal.Decimal     `json:"amount"`
+	Timespan     time.Duration       `json:"timespan"`
+	Transactions []TransactionRecord `json:"transactions"`
+}
+
+// TransactionRecord represents a transaction record for reporting
+type TransactionRecord struct {
+	ID          string                 `json:"id"`
+	UserID      string                 `json:"user_id"`
+	Amount      decimal.Decimal        `json:"amount"`
+	Currency    string                 `json:"currency"`
+	Type        string                 `json:"type"`
+	Timestamp   time.Time              `json:"timestamp"`
+	Source      string                 `json:"source"`
+	Destination string                 `json:"destination"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+// ComplianceAlert represents a compliance alert for reporting
+type ComplianceAlert struct {
+	ID               string                 `json:"id"`
+	UserID           string                 `json:"user_id"`
+	Type             string                 `json:"type"`
+	Severity         string                 `json:"severity"`
+	Description      string                 `json:"description"`
+	Amount           decimal.Decimal        `json:"amount"`
+	RiskScore        decimal.Decimal        `json:"risk_score"`
+	DetectedPatterns []TransactionPattern   `json:"detected_patterns"`
+	Timestamp        time.Time              `json:"timestamp"`
+	CreatedAt        time.Time              `json:"created_at"`
+	Status           string                 `json:"status"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+// ComplianceEngine interface for integration
+type ComplianceEngine interface {
+	GetAlertsForPeriod(ctx context.Context, start, end time.Time) ([]ComplianceAlert, error)
+	GetActiveAlerts(ctx context.Context) ([]ComplianceAlert, error)
+	GetPerformanceMetrics(ctx context.Context) (map[string]interface{}, error)
+}
+
+// RiskCalculator interface for integration
+type RiskCalculator interface {
+	CalculateRisk(ctx context.Context, userID string) (interface{}, error)
+}
+
+// PositionManager interface for integration
+type PositionManager interface {
+	GetUserPositions(userID string) map[string]interface{}
+}
 
 // ReportType defines different types of regulatory reports
 type ReportType string
@@ -99,9 +156,9 @@ type CTRData struct {
 
 // RegulatoryReporter handles automated regulatory report generation
 type RegulatoryReporter struct {
-	complianceEngine *ComplianceEngine
-	calculator       *RiskCalculator
-	positionManager  *PositionManager
+	complianceEngine ComplianceEngine
+	calculator       RiskCalculator
+	positionManager  PositionManager
 
 	reports          map[string]*RegulatoryReport
 	scheduledReports map[string]*ScheduledReport
@@ -126,7 +183,7 @@ type ScheduledReport struct {
 }
 
 // NewRegulatoryReporter creates a new regulatory reporter
-func NewRegulatoryReporter(complianceEngine *ComplianceEngine, calculator *RiskCalculator, positionManager *PositionManager) *RegulatoryReporter {
+func NewRegulatoryReporter(complianceEngine ComplianceEngine, calculator RiskCalculator, positionManager PositionManager) *RegulatoryReporter {
 	return &RegulatoryReporter{
 		complianceEngine: complianceEngine,
 		calculator:       calculator,
@@ -330,7 +387,10 @@ func (rr *RegulatoryReporter) generateCTRContent(ctx context.Context, criteria R
 
 // generateAMLComplianceContent generates AML compliance report
 func (rr *RegulatoryReporter) generateAMLComplianceContent(ctx context.Context, criteria ReportingCriteria) (string, error) {
-	perfMetrics := rr.complianceEngine.GetPerformanceMetrics()
+	perfMetrics, err := rr.complianceEngine.GetPerformanceMetrics(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get performance metrics: %w", err)
+	}
 
 	complianceData := map[string]interface{}{
 		"reporting_period": map[string]interface{}{

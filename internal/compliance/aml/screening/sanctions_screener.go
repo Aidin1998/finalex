@@ -19,52 +19,52 @@ type SanctionsScreener struct {
 
 	// Sanctions lists
 	sanctionsLists map[string]*SanctionsList
-	
+
 	// Screening configuration
 	config ScreeningConfig
 
 	// Screening history and results
 	screeningHistory map[string]*ScreeningHistory
-	
+
 	// Watch list management
 	watchLists map[string]*WatchList
 }
 
 // SanctionsList represents a sanctions list (OFAC, UN, EU, etc.)
 type SanctionsList struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Source       string                 `json:"source"`
-	Jurisdiction string                 `json:"jurisdiction"`
-	ListType     string                 `json:"list_type"` // "sanctions", "pep", "adverse_media"
+	ID           string                     `json:"id"`
+	Name         string                     `json:"name"`
+	Source       string                     `json:"source"`
+	Jurisdiction string                     `json:"jurisdiction"`
+	ListType     string                     `json:"list_type"` // "sanctions", "pep", "adverse_media"
 	Entries      map[string]*SanctionsEntry `json:"entries"`
-	LastUpdated  time.Time              `json:"last_updated"`
-	IsActive     bool                   `json:"is_active"`
-	UpdateURL    string                 `json:"update_url"`
-	Metadata     map[string]interface{} `json:"metadata"`
+	LastUpdated  time.Time                  `json:"last_updated"`
+	IsActive     bool                       `json:"is_active"`
+	UpdateURL    string                     `json:"update_url"`
+	Metadata     map[string]interface{}     `json:"metadata"`
 }
 
 // SanctionsEntry represents an entry in a sanctions list
 type SanctionsEntry struct {
-	ID              string                 `json:"id"`
-	ListID          string                 `json:"list_id"`
-	EntryType       string                 `json:"entry_type"` // "individual", "entity", "vessel", "address"
-	PrimaryName     string                 `json:"primary_name"`
-	AlternateNames  []string               `json:"alternate_names"`
-	DateOfBirth     *time.Time             `json:"date_of_birth"`
-	PlaceOfBirth    string                 `json:"place_of_birth"`
-	Nationality     []string               `json:"nationality"`
-	Addresses       []Address              `json:"addresses"`
-	Identifiers     []Identifier           `json:"identifiers"`
-	SanctionsType   string                 `json:"sanctions_type"`
-	Program         string                 `json:"program"`
-	EffectiveDate   time.Time              `json:"effective_date"`
-	ExpiryDate      *time.Time             `json:"expiry_date"`
-	ReasonListed    string                 `json:"reason_listed"`
-	Remarks         string                 `json:"remarks"`
-	LastUpdated     time.Time              `json:"last_updated"`
-	RiskScore       float64                `json:"risk_score"`
-	IsActive        bool                   `json:"is_active"`
+	ID             string       `json:"id"`
+	ListID         string       `json:"list_id"`
+	EntryType      string       `json:"entry_type"` // "individual", "entity", "vessel", "address"
+	PrimaryName    string       `json:"primary_name"`
+	AlternateNames []string     `json:"alternate_names"`
+	DateOfBirth    *time.Time   `json:"date_of_birth"`
+	PlaceOfBirth   string       `json:"place_of_birth"`
+	Nationality    []string     `json:"nationality"`
+	Addresses      []Address    `json:"addresses"`
+	Identifiers    []Identifier `json:"identifiers"`
+	SanctionsType  string       `json:"sanctions_type"`
+	Program        string       `json:"program"`
+	EffectiveDate  time.Time    `json:"effective_date"`
+	ExpiryDate     *time.Time   `json:"expiry_date"`
+	ReasonListed   string       `json:"reason_listed"`
+	Remarks        string       `json:"remarks"`
+	LastUpdated    time.Time    `json:"last_updated"`
+	RiskScore      float64      `json:"risk_score"`
+	IsActive       bool         `json:"is_active"`
 }
 
 // Address represents an address associated with a sanctions entry
@@ -80,80 +80,80 @@ type Address struct {
 
 // Identifier represents identification documents or numbers
 type Identifier struct {
-	Type        string `json:"type"`        // "passport", "national_id", "tax_id", "business_reg"
-	Number      string `json:"number"`
-	Country     string `json:"country"`
+	Type        string     `json:"type"` // "passport", "national_id", "tax_id", "business_reg"
+	Number      string     `json:"number"`
+	Country     string     `json:"country"`
 	ExpiryDate  *time.Time `json:"expiry_date"`
-	IssuingAuth string `json:"issuing_authority"`
+	IssuingAuth string     `json:"issuing_authority"`
 }
 
 // ScreeningConfig defines screening configuration
 type ScreeningConfig struct {
-	MatchThreshold       float64           `json:"match_threshold"`
-	FuzzyMatchThreshold  float64           `json:"fuzzy_match_threshold"`
-	EnableFuzzyMatching  bool              `json:"enable_fuzzy_matching"`
-	EnablePhoneticMatch  bool              `json:"enable_phonetic_match"`
-	AutoUpdateLists      bool              `json:"auto_update_lists"`
-	UpdateInterval       time.Duration     `json:"update_interval"`
-	EnabledJurisdictions []string          `json:"enabled_jurisdictions"`
-	ScreeningDepth       string            `json:"screening_depth"` // "basic", "enhanced", "comprehensive"
-	RetentionPeriod      time.Duration     `json:"retention_period"`
+	MatchThreshold       float64       `json:"match_threshold"`
+	FuzzyMatchThreshold  float64       `json:"fuzzy_match_threshold"`
+	EnableFuzzyMatching  bool          `json:"enable_fuzzy_matching"`
+	EnablePhoneticMatch  bool          `json:"enable_phonetic_match"`
+	AutoUpdateLists      bool          `json:"auto_update_lists"`
+	UpdateInterval       time.Duration `json:"update_interval"`
+	EnabledJurisdictions []string      `json:"enabled_jurisdictions"`
+	ScreeningDepth       string        `json:"screening_depth"` // "basic", "enhanced", "comprehensive"
+	RetentionPeriod      time.Duration `json:"retention_period"`
 }
 
 // ScreeningHistory tracks screening history for users
 type ScreeningHistory struct {
-	UserID          uuid.UUID        `json:"user_id"`
-	ScreeningEvents []ScreeningEvent `json:"screening_events"`
-	LastScreened    time.Time        `json:"last_screened"`
-	TotalScreenings int              `json:"total_screenings"`
-	HighestRiskMatch float64         `json:"highest_risk_match"`
-	CurrentStatus   string           `json:"current_status"` // "clear", "match", "potential_match", "under_review"
+	UserID           uuid.UUID        `json:"user_id"`
+	ScreeningEvents  []ScreeningEvent `json:"screening_events"`
+	LastScreened     time.Time        `json:"last_screened"`
+	TotalScreenings  int              `json:"total_screenings"`
+	HighestRiskMatch float64          `json:"highest_risk_match"`
+	CurrentStatus    string           `json:"current_status"` // "clear", "match", "potential_match", "under_review"
 }
 
 // ScreeningEvent represents a single screening event
 type ScreeningEvent struct {
-	ID          uuid.UUID       `json:"id"`
-	UserID      uuid.UUID       `json:"user_id"`
-	ScreenedAt  time.Time       `json:"screened_at"`
-	ScreenType  string          `json:"screen_type"` // "onboarding", "periodic", "transaction_triggered", "manual"
-	Results     []ScreeningResult `json:"results"`
-	TotalMatches int            `json:"total_matches"`
-	HighestScore float64        `json:"highest_score"`
-	Status      string          `json:"status"`
-	ReviewedBy  *uuid.UUID      `json:"reviewed_by"`
-	ReviewNotes string          `json:"review_notes"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	ID           uuid.UUID              `json:"id"`
+	UserID       uuid.UUID              `json:"user_id"`
+	ScreenedAt   time.Time              `json:"screened_at"`
+	ScreenType   string                 `json:"screen_type"` // "onboarding", "periodic", "transaction_triggered", "manual"
+	Results      []ScreeningResult      `json:"results"`
+	TotalMatches int                    `json:"total_matches"`
+	HighestScore float64                `json:"highest_score"`
+	Status       string                 `json:"status"`
+	ReviewedBy   *uuid.UUID             `json:"reviewed_by"`
+	ReviewNotes  string                 `json:"review_notes"`
+	Metadata     map[string]interface{} `json:"metadata"`
 }
 
 // ScreeningResult represents a screening match result
 type ScreeningResult struct {
-	ID            uuid.UUID              `json:"id"`
-	MatchType     string                 `json:"match_type"` // "exact", "fuzzy", "phonetic", "partial"
-	MatchScore    float64                `json:"match_score"`
-	ListID        string                 `json:"list_id"`
-	ListName      string                 `json:"list_name"`
-	EntryID       string                 `json:"entry_id"`
-	MatchedName   string                 `json:"matched_name"`
-	MatchedField  string                 `json:"matched_field"` // "name", "dob", "address", "identifier"
-	SanctionsType string                 `json:"sanctions_type"`
-	RiskLevel     aml.RiskLevel          `json:"risk_level"`
-	IsFalsePositive bool                 `json:"is_false_positive"`
-	ReviewStatus  string                 `json:"review_status"` // "pending", "cleared", "confirmed", "escalated"
-	Metadata      map[string]interface{} `json:"metadata"`
+	ID              uuid.UUID              `json:"id"`
+	MatchType       string                 `json:"match_type"` // "exact", "fuzzy", "phonetic", "partial"
+	MatchScore      float64                `json:"match_score"`
+	ListID          string                 `json:"list_id"`
+	ListName        string                 `json:"list_name"`
+	EntryID         string                 `json:"entry_id"`
+	MatchedName     string                 `json:"matched_name"`
+	MatchedField    string                 `json:"matched_field"` // "name", "dob", "address", "identifier"
+	SanctionsType   string                 `json:"sanctions_type"`
+	RiskLevel       aml.RiskLevel          `json:"risk_level"`
+	IsFalsePositive bool                   `json:"is_false_positive"`
+	ReviewStatus    string                 `json:"review_status"` // "pending", "cleared", "confirmed", "escalated"
+	Metadata        map[string]interface{} `json:"metadata"`
 }
 
 // WatchList represents custom watch lists
 type WatchList struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Type        string                 `json:"type"` // "internal", "regulatory", "third_party"
+	ID          string                     `json:"id"`
+	Name        string                     `json:"name"`
+	Type        string                     `json:"type"` // "internal", "regulatory", "third_party"
 	Entries     map[string]*WatchListEntry `json:"entries"`
-	CreatedBy   uuid.UUID              `json:"created_by"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	IsActive    bool                   `json:"is_active"`
-	Description string                 `json:"description"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	CreatedBy   uuid.UUID                  `json:"created_by"`
+	CreatedAt   time.Time                  `json:"created_at"`
+	UpdatedAt   time.Time                  `json:"updated_at"`
+	IsActive    bool                       `json:"is_active"`
+	Description string                     `json:"description"`
+	Metadata    map[string]interface{}     `json:"metadata"`
 }
 
 // WatchListEntry represents an entry in a custom watch list
@@ -557,7 +557,7 @@ func (ss *SanctionsScreener) isNameMatch(userData *aml.AMLUser, primaryName stri
 
 func (ss *SanctionsScreener) updateScreeningHistory(userID uuid.UUID, event *ScreeningEvent) {
 	key := userID.String()
-	
+
 	history, exists := ss.screeningHistory[key]
 	if !exists {
 		history = &ScreeningHistory{

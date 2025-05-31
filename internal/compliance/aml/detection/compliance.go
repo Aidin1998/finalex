@@ -1,4 +1,4 @@
-package risk
+package detection
 
 import (
 	"context"
