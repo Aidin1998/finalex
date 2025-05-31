@@ -3,20 +3,17 @@ package database
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"sync"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // BenchmarkSuite provides comprehensive database performance benchmarking
 type BenchmarkSuite struct {
-	db          *OptimizedDatabase
-	config      *BenchmarkConfig
-	results     *BenchmarkResults
-	queries     map[string]BenchmarkQuery
+	db      *OptimizedDatabase
+	config  *BenchmarkConfig
+	results *BenchmarkResults
+	queries map[string]BenchmarkQuery
 }
 
 // BenchmarkConfig defines benchmark parameters
@@ -32,49 +29,49 @@ type BenchmarkConfig struct {
 
 // BenchmarkQuery defines a query pattern for benchmarking
 type BenchmarkQuery struct {
-	Name        string        `json:"name"`
-	SQL         string        `json:"sql"`
-	Args        []interface{} `json:"args"`
-	Weight      float64       `json:"weight"`
-	Critical    bool          `json:"critical"`
+	Name            string        `json:"name"`
+	SQL             string        `json:"sql"`
+	Args            []interface{} `json:"args"`
+	Weight          float64       `json:"weight"`
+	Critical        bool          `json:"critical"`
 	ExpectedLatency time.Duration `json:"expected_latency"`
 }
 
 // BenchmarkResults stores comprehensive benchmark results
 type BenchmarkResults struct {
-	StartTime       time.Time                    `json:"start_time"`
-	EndTime         time.Time                    `json:"end_time"`
-	Duration        time.Duration                `json:"duration"`
-	TotalQueries    int64                        `json:"total_queries"`
-	QueriesPerSec   float64                      `json:"queries_per_sec"`
-	AvgLatency      time.Duration                `json:"avg_latency"`
-	P50Latency      time.Duration                `json:"p50_latency"`
-	P95Latency      time.Duration                `json:"p95_latency"`
-	P99Latency      time.Duration                `json:"p99_latency"`
-	MaxLatency      time.Duration                `json:"max_latency"`
-	MinLatency      time.Duration                `json:"min_latency"`
-	ErrorRate       float64                      `json:"error_rate"`
-	CacheHitRate    float64                      `json:"cache_hit_rate"`
-	TargetMet       bool                         `json:"target_met"`
-	QueryResults    map[string]*QueryBenchmark   `json:"query_results"`
-	ResourceUsage   *ResourceUsage               `json:"resource_usage"`
-	Recommendations []string                     `json:"recommendations"`
+	StartTime       time.Time                  `json:"start_time"`
+	EndTime         time.Time                  `json:"end_time"`
+	Duration        time.Duration              `json:"duration"`
+	TotalQueries    int64                      `json:"total_queries"`
+	QueriesPerSec   float64                    `json:"queries_per_sec"`
+	AvgLatency      time.Duration              `json:"avg_latency"`
+	P50Latency      time.Duration              `json:"p50_latency"`
+	P95Latency      time.Duration              `json:"p95_latency"`
+	P99Latency      time.Duration              `json:"p99_latency"`
+	MaxLatency      time.Duration              `json:"max_latency"`
+	MinLatency      time.Duration              `json:"min_latency"`
+	ErrorRate       float64                    `json:"error_rate"`
+	CacheHitRate    float64                    `json:"cache_hit_rate"`
+	TargetMet       bool                       `json:"target_met"`
+	QueryResults    map[string]*QueryBenchmark `json:"query_results"`
+	ResourceUsage   *ResourceUsage             `json:"resource_usage"`
+	Recommendations []string                   `json:"recommendations"`
 }
 
 // QueryBenchmark stores results for individual query types
 type QueryBenchmark struct {
-	Name            string        `json:"name"`
-	TotalExecutions int64         `json:"total_executions"`
-	SuccessCount    int64         `json:"success_count"`
-	ErrorCount      int64         `json:"error_count"`
-	AvgLatency      time.Duration `json:"avg_latency"`
-	P95Latency      time.Duration `json:"p95_latency"`
-	P99Latency      time.Duration `json:"p99_latency"`
-	MaxLatency      time.Duration `json:"max_latency"`
-	MinLatency      time.Duration `json:"min_latency"`
-	Throughput      float64       `json:"throughput"`
-	ErrorRate       float64       `json:"error_rate"`
-	TargetMet       bool          `json:"target_met"`
+	Name            string          `json:"name"`
+	TotalExecutions int64           `json:"total_executions"`
+	SuccessCount    int64           `json:"success_count"`
+	ErrorCount      int64           `json:"error_count"`
+	AvgLatency      time.Duration   `json:"avg_latency"`
+	P95Latency      time.Duration   `json:"p95_latency"`
+	P99Latency      time.Duration   `json:"p99_latency"`
+	MaxLatency      time.Duration   `json:"max_latency"`
+	MinLatency      time.Duration   `json:"min_latency"`
+	Throughput      float64         `json:"throughput"`
+	ErrorRate       float64         `json:"error_rate"`
+	TargetMet       bool            `json:"target_met"`
 	Latencies       []time.Duration `json:"-"` // Not serialized due to size
 }
 
@@ -102,8 +99,8 @@ func NewBenchmarkSuite(db *OptimizedDatabase, config *BenchmarkConfig) *Benchmar
 	}
 
 	return &BenchmarkSuite{
-		db:      db,
-		config:  config,
+		db:     db,
+		config: config,
 		results: &BenchmarkResults{
 			QueryResults: make(map[string]*QueryBenchmark),
 		},
@@ -138,7 +135,7 @@ func (bs *BenchmarkSuite) SetupDefaultQueries() {
 		{
 			Name:            "get_recent_trades",
 			SQL:             "SELECT * FROM trades WHERE symbol = ? AND created_at > ? ORDER BY created_at DESC LIMIT 100",
-			Args:            []interface{}{"BTCUSD", time.Now().Add(-1*time.Hour)},
+			Args:            []interface{}{"BTCUSD", time.Now().Add(-1 * time.Hour)},
 			Weight:          0.15,
 			Critical:        true,
 			ExpectedLatency: 800 * time.Microsecond,
@@ -154,7 +151,7 @@ func (bs *BenchmarkSuite) SetupDefaultQueries() {
 		{
 			Name:            "get_market_data",
 			SQL:             "SELECT symbol, price, volume FROM market_data WHERE symbol IN (?, ?, ?) AND updated_at > ?",
-			Args:            []interface{}{"BTCUSD", "ETHUSD", "ADAUSD", time.Now().Add(-5*time.Minute)},
+			Args:            []interface{}{"BTCUSD", "ETHUSD", "ADAUSD", time.Now().Add(-5 * time.Minute)},
 			Weight:          0.1,
 			Critical:        false,
 			ExpectedLatency: 2 * time.Millisecond,
@@ -162,7 +159,7 @@ func (bs *BenchmarkSuite) SetupDefaultQueries() {
 		{
 			Name:            "get_user_trade_history",
 			SQL:             "SELECT * FROM trades WHERE user_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 200",
-			Args:            []interface{}{1, time.Now().Add(-24*time.Hour)},
+			Args:            []interface{}{1, time.Now().Add(-24 * time.Hour)},
 			Weight:          0.08,
 			Critical:        false,
 			ExpectedLatency: 3 * time.Millisecond,
@@ -211,8 +208,8 @@ func (bs *BenchmarkSuite) RunBenchmark(ctx context.Context) (*BenchmarkResults, 
 	bs.results.StartTime = time.Now()
 	for name := range bs.queries {
 		bs.results.QueryResults[name] = &QueryBenchmark{
-			Name:      name,
-			Latencies: make([]time.Duration, 0, bs.config.SampleSize),
+			Name:       name,
+			Latencies:  make([]time.Duration, 0, bs.config.SampleSize),
 			MinLatency: time.Hour, // Initialize to large value
 		}
 	}
@@ -237,7 +234,7 @@ func (bs *BenchmarkSuite) RunBenchmark(ctx context.Context) (*BenchmarkResults, 
 
 func (bs *BenchmarkSuite) setupTestData(ctx context.Context) error {
 	fmt.Println("📊 Setting up test data...")
-	
+
 	// Create test tables if they don't exist
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS benchmark_users (
@@ -281,7 +278,7 @@ func (bs *BenchmarkSuite) setupTestData(ctx context.Context) error {
 
 func (bs *BenchmarkSuite) insertTestData(ctx context.Context) error {
 	masterDB := bs.db.GetRepository().GetMasterDB()
-	
+
 	// Insert users
 	for i := 1; i <= bs.config.TestDataSize/100; i++ {
 		err := masterDB.WithContext(ctx).Exec(
@@ -296,7 +293,7 @@ func (bs *BenchmarkSuite) insertTestData(ctx context.Context) error {
 
 	// Insert orders
 	for i := 1; i <= bs.config.TestDataSize; i++ {
-		userID := (i % (bs.config.TestDataSize/100)) + 1
+		userID := (i % (bs.config.TestDataSize / 100)) + 1
 		err := masterDB.WithContext(ctx).Exec(
 			"INSERT INTO benchmark_orders (user_id, symbol, side, type, quantity, price, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			userID, "BTCUSD", "buy", "limit", 0.1, 50000.0, "active",
@@ -367,7 +364,7 @@ func (bs *BenchmarkSuite) worker(ctx context.Context, results chan<- *QueryExecu
 		default:
 			// Select random query based on weights
 			query := bs.selectWeightedQuery()
-			
+
 			start := time.Now()
 			_, err := bs.db.ExecuteQuery(ctx, query.SQL, query.Args...)
 			duration := time.Since(start)
@@ -411,14 +408,14 @@ func (bs *BenchmarkSuite) selectWeightedQuery() BenchmarkQuery {
 func (bs *BenchmarkSuite) collectResults(results <-chan *QueryExecution) {
 	for execution := range results {
 		queryResult := bs.results.QueryResults[execution.QueryName]
-		
+
 		queryResult.TotalExecutions++
 		if execution.Error != nil {
 			queryResult.ErrorCount++
 		} else {
 			queryResult.SuccessCount++
 			queryResult.Latencies = append(queryResult.Latencies, execution.Duration)
-			
+
 			// Update min/max
 			if execution.Duration < queryResult.MinLatency {
 				queryResult.MinLatency = execution.Duration
@@ -516,13 +513,13 @@ func (bs *BenchmarkSuite) generateRecommendations() {
 	if !bs.results.TargetMet {
 		recommendations = append(recommendations,
 			fmt.Sprintf("❌ Target latency of %v not met (actual: %v)", bs.config.TargetLatency, bs.results.AvgLatency))
-		
+
 		// Specific recommendations based on performance
 		if bs.results.AvgLatency > 5*time.Millisecond {
 			recommendations = append(recommendations, "🔧 Consider adding more database indexes")
 			recommendations = append(recommendations, "🔧 Implement connection pooling optimization")
 		}
-		
+
 		if bs.results.CacheHitRate < 0.8 {
 			recommendations = append(recommendations, "🔧 Increase cache TTL or size")
 			recommendations = append(recommendations, "🔧 Optimize cache key strategies")
@@ -563,7 +560,7 @@ func (bs *BenchmarkSuite) printResults() {
 	fmt.Printf("Queries/sec: %.2f\n", bs.results.QueriesPerSec)
 	fmt.Printf("Error Rate: %.2f%%\n", bs.results.ErrorRate*100)
 	fmt.Printf("Cache Hit Rate: %.2f%%\n", bs.results.CacheHitRate*100)
-	
+
 	fmt.Println("\n⏱️  LATENCY STATISTICS")
 	fmt.Printf("Average: %v\n", bs.results.AvgLatency)
 	fmt.Printf("P50: %v\n", bs.results.P50Latency)
@@ -571,8 +568,8 @@ func (bs *BenchmarkSuite) printResults() {
 	fmt.Printf("P99: %v\n", bs.results.P99Latency)
 	fmt.Printf("Max: %v\n", bs.results.MaxLatency)
 	fmt.Printf("Min: %v\n", bs.results.MinLatency)
-	
-	fmt.Printf("\n🎯 TARGET MET: %v (Target: %v, Actual: %v)\n", 
+
+	fmt.Printf("\n🎯 TARGET MET: %v (Target: %v, Actual: %v)\n",
 		bs.results.TargetMet, bs.config.TargetLatency, bs.results.AvgLatency)
 
 	fmt.Println("\n📊 QUERY BREAKDOWN")
@@ -581,7 +578,7 @@ func (bs *BenchmarkSuite) printResults() {
 		if !result.TargetMet {
 			status = "❌"
 		}
-		fmt.Printf("%s %s: %v avg (P95: %v, count: %d)\n", 
+		fmt.Printf("%s %s: %v avg (P95: %v, count: %d)\n",
 			status, name, result.AvgLatency, result.P95Latency, result.TotalExecutions)
 	}
 

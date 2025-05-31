@@ -31,14 +31,14 @@ func main() {
 
 	// Initialize optimized database with production config
 	config := database.DefaultConfig()
-	
+
 	// Customize for demo environment
 	config.Cache.Redis.Addr = "localhost:6379"
 	config.Monitoring.AlertThresholds.MaxQueryLatency = 1 * time.Millisecond
 	config.QueryOptimizer.SlowQueryThreshold = 100 * time.Microsecond
-	
+
 	fmt.Println("📊 Initializing optimized database system...")
-	
+
 	optimizedDB, err := database.NewOptimizedDatabase(config)
 	if err != nil {
 		log.Fatalf("Failed to create optimized database: %v", err)
@@ -80,7 +80,7 @@ func main() {
 	// Wait for user input or signal
 	fmt.Println("\n✅ Demo complete! Press Ctrl+C to exit...")
 	<-ctx.Done()
-	
+
 	fmt.Println("\n👋 Shutting down gracefully...")
 }
 
@@ -124,7 +124,7 @@ func demonstrateOptimizations(ctx context.Context, db *database.OptimizedDatabas
 	// Test query caching
 	fmt.Println("1. Testing Query Caching")
 	testQuery := "SELECT COUNT(*) FROM orders WHERE status = 'active'"
-	
+
 	// First execution (cache miss)
 	start := time.Now()
 	result1, err := db.ExecuteQuery(ctx, testQuery)
@@ -154,7 +154,7 @@ func demonstrateOptimizations(ctx context.Context, db *database.OptimizedDatabas
 	if router != nil {
 		readQuery := "SELECT * FROM orders LIMIT 10"
 		writeQuery := "INSERT INTO orders (user_id, symbol, status) VALUES (1, 'TEST', 'test')"
-		
+
 		fmt.Printf("   Read query routing: %s\n", getQueryDestination(readQuery))
 		fmt.Printf("   Write query routing: %s\n", getQueryDestination(writeQuery))
 	}
@@ -200,7 +200,7 @@ func showMonitoringDashboard(db *database.OptimizedDatabase) {
 	}
 
 	metrics := monitoring.GetCurrentMetrics()
-	
+
 	// Display key metrics
 	if dbMetrics, ok := metrics["database"].(map[string]interface{}); ok {
 		fmt.Printf("   Active Connections: %v\n", dbMetrics["active_connections"])
@@ -228,7 +228,7 @@ func showCachePerformance(ctx context.Context, db *database.OptimizedDatabase) {
 
 	for i, query := range queries {
 		fmt.Printf("   Query %d: %s\n", i+1, query)
-		
+
 		// Execute multiple times to show cache effect
 		var durations []time.Duration
 		for j := 0; j < 3; j++ {
@@ -236,14 +236,14 @@ func showCachePerformance(ctx context.Context, db *database.OptimizedDatabase) {
 			_, err := db.ExecuteQuery(ctx, query)
 			duration := time.Since(start)
 			durations = append(durations, duration)
-			
+
 			if err != nil {
 				fmt.Printf("     Execution %d: Error - %v\n", j+1, err)
 			} else {
 				fmt.Printf("     Execution %d: %v\n", j+1, duration)
 			}
 		}
-		
+
 		// Calculate speedup
 		if len(durations) >= 2 && durations[1] < durations[0] {
 			speedup := float64(durations[0]) / float64(durations[1])
@@ -257,7 +257,7 @@ func showCachePerformance(ctx context.Context, db *database.OptimizedDatabase) {
 func ExampleProductionUsage() {
 	// Production configuration example
 	config := database.DefaultConfig()
-	
+
 	// Production tuning
 	config.Master.MaxOpenConns = 100
 	config.Replica.MaxOpenConns = 200
@@ -279,7 +279,7 @@ func ExampleProductionUsage() {
 
 	// Use the optimized database
 	ctx := context.Background()
-	
+
 	// High-performance order retrieval
 	repo := db.GetRepository()
 	orders, err := repo.GetUserOrders(ctx, 12345, 50)
@@ -290,7 +290,7 @@ func ExampleProductionUsage() {
 	}
 
 	// Direct optimized query execution
-	result, err := db.ExecuteQuery(ctx, 
+	result, err := db.ExecuteQuery(ctx,
 		"SELECT * FROM trades WHERE user_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 100",
 		12345, time.Now().Add(-24*time.Hour))
 	if err != nil {
@@ -331,7 +331,7 @@ func ExampleCIBenchmark() {
 
 	// Fail CI if target not met
 	if !results.TargetMet {
-		log.Fatalf("Performance regression detected: %v > %v", 
+		log.Fatalf("Performance regression detected: %v > %v",
 			results.AvgLatency, benchConfig.TargetLatency)
 	}
 

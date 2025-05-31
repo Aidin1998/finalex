@@ -15,16 +15,16 @@ import (
 // EnhancedBadgerQueue extends BadgerQueue with additional enterprise features.
 type EnhancedBadgerQueue struct {
 	*BadgerQueue
-	
+
 	// Enhanced features
 	batchProcessor *BatchProcessor
 	metrics        *QueueMetrics
 	dlq            *DeadLetterQueue
 	logger         *zap.SugaredLogger
-	
+
 	// Configuration
 	config EnhancedQueueConfig
-	
+
 	// Lifecycle management
 	stopCh  chan struct{}
 	stopped bool
@@ -57,31 +57,31 @@ type BatchProcessor struct {
 // QueueMetrics tracks queue performance and health metrics.
 type QueueMetrics struct {
 	// Counters
-	enqueueCount   int64
-	dequeueCount   int64
-	ackCount       int64
-	replayCount    int64
-	errorCount     int64
-	
+	enqueueCount int64
+	dequeueCount int64
+	ackCount     int64
+	replayCount  int64
+	errorCount   int64
+
 	// Timing metrics
 	totalEnqueueTime time.Duration
 	totalDequeueTime time.Duration
 	avgProcessTime   time.Duration
-	
+
 	// Queue health
-	currentSize      int64
-	peakSize         int64
-	oldestOrderAge   time.Duration
-	processingRate   float64 // orders per second
-	
+	currentSize    int64
+	peakSize       int64
+	oldestOrderAge time.Duration
+	processingRate float64 // orders per second
+
 	// Error tracking
 	lastError     error
 	lastErrorTime time.Time
-	
+
 	// Batch metrics
 	batchesProcessed int64
 	avgBatchSize     float64
-	
+
 	mu sync.RWMutex
 }
 
@@ -93,16 +93,16 @@ type DeadLetterQueue struct {
 
 // HealthStatus represents the health status of the queue.
 type HealthStatus struct {
-	Status           string                 `json:"status"`
-	QueueSize        int64                  `json:"queue_size"`
-	ProcessingRate   float64               `json:"processing_rate"`
-	ErrorRate        float64               `json:"error_rate"`
-	OldestOrderAge   time.Duration         `json:"oldest_order_age"`
-	LastError        string                `json:"last_error,omitempty"`
-	LastErrorTime    time.Time             `json:"last_error_time,omitempty"`
-	Metrics          map[string]interface{} `json:"metrics"`
-	PendingRetries   int64                 `json:"pending_retries"`
-	DeadLetterCount  int64                 `json:"dead_letter_count"`
+	Status          string                 `json:"status"`
+	QueueSize       int64                  `json:"queue_size"`
+	ProcessingRate  float64                `json:"processing_rate"`
+	ErrorRate       float64                `json:"error_rate"`
+	OldestOrderAge  time.Duration          `json:"oldest_order_age"`
+	LastError       string                 `json:"last_error,omitempty"`
+	LastErrorTime   time.Time              `json:"last_error_time,omitempty"`
+	Metrics         map[string]interface{} `json:"metrics"`
+	PendingRetries  int64                  `json:"pending_retries"`
+	DeadLetterCount int64                  `json:"dead_letter_count"`
 }
 
 // NewEnhancedBadgerQueue creates a new enhanced BadgerDB queue.
@@ -116,7 +116,7 @@ func NewEnhancedBadgerQueue(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base queue: %w", err)
 	}
-	
+
 	// Set defaults
 	if config.BatchSize == 0 {
 		config.BatchSize = 100
@@ -133,19 +133,19 @@ func NewEnhancedBadgerQueue(
 	if config.HealthCheckInterval == 0 {
 		config.HealthCheckInterval = 30 * time.Second
 	}
-	
+
 	eq := &EnhancedBadgerQueue{
 		BadgerQueue: baseQueue,
 		config:      config,
 		logger:      logger,
 		stopCh:      make(chan struct{}),
 	}
-	
+
 	// Initialize metrics
 	if config.MetricsEnabled {
 		eq.metrics = &QueueMetrics{}
 	}
-	
+
 	// Initialize dead letter queue
 	if config.DeadLetterEnabled {
 		dlqPath := path + "_dlq"
@@ -154,7 +154,7 @@ func NewEnhancedBadgerQueue(
 			logger.Errorw("Failed to initialize dead letter queue", "error", err)
 		}
 	}
-	
+
 	// Initialize batch processor
 	eq.batchProcessor = &BatchProcessor{
 		batchSize:    config.BatchSize,
@@ -162,7 +162,7 @@ func NewEnhancedBadgerQueue(
 		buffer:       make([]Order, 0, config.BatchSize),
 		logger:       logger,
 	}
-	
+
 	return eq, nil
 }
 
@@ -174,36 +174,36 @@ func (eq *EnhancedBadgerQueue) Start(ctx context.Context) error {
 		return fmt.Errorf("queue already stopped")
 	}
 	eq.stopMu.Unlock()
-	
+
 	eq.logger.Info("Starting enhanced queue processing")
-	
+
 	// Start health monitoring
 	if eq.config.MetricsEnabled {
 		go eq.startHealthMonitoring(ctx)
 	}
-	
+
 	// Start batch processing
 	go eq.startBatchProcessing(ctx)
-	
+
 	return nil
 }
 
 // EnqueueBatch adds multiple orders to the queue in a single transaction.
 func (eq *EnhancedBadgerQueue) EnqueueBatch(ctx context.Context, orders []Order) error {
 	startTime := time.Now()
-	
+
 	err := eq.db.Update(func(txn *badger.Txn) error {
 		for _, order := range orders {
 			key, err := formatKey(order)
 			if err != nil {
 				return err
 			}
-			
+
 			val, err := json.Marshal(order)
 			if err != nil {
 				return err
 			}
-			
+
 			// Check for duplicates
 			_, err = txn.Get(key)
 			if err == nil {
@@ -212,14 +212,14 @@ func (eq *EnhancedBadgerQueue) EnqueueBatch(ctx context.Context, orders []Order)
 			if err != badger.ErrKeyNotFound {
 				return err
 			}
-			
+
 			if err := txn.Set(key, val); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-	
+
 	// Update metrics
 	if eq.metrics != nil {
 		eq.metrics.mu.Lock()
@@ -233,7 +233,7 @@ func (eq *EnhancedBadgerQueue) EnqueueBatch(ctx context.Context, orders []Order)
 		}
 		eq.metrics.mu.Unlock()
 	}
-	
+
 	return err
 }
 
@@ -241,11 +241,11 @@ func (eq *EnhancedBadgerQueue) EnqueueBatch(ctx context.Context, orders []Order)
 func (eq *EnhancedBadgerQueue) DequeueBatch(ctx context.Context, maxCount int) ([]Order, error) {
 	startTime := time.Now()
 	orders := make([]Order, 0, maxCount)
-	
+
 	err := eq.db.View(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()
-		
+
 		count := 0
 		for r.Rewind(); r.Valid() && count < maxCount; r.Next() {
 			item := r.Item()
@@ -261,7 +261,7 @@ func (eq *EnhancedBadgerQueue) DequeueBatch(ctx context.Context, maxCount int) (
 		}
 		return nil
 	})
-	
+
 	// Update metrics
 	if eq.metrics != nil {
 		eq.metrics.mu.Lock()
@@ -275,7 +275,7 @@ func (eq *EnhancedBadgerQueue) DequeueBatch(ctx context.Context, maxCount int) (
 		}
 		eq.metrics.mu.Unlock()
 	}
-	
+
 	return orders, err
 }
 
@@ -284,7 +284,7 @@ func (eq *EnhancedBadgerQueue) AcknowledgeBatch(ctx context.Context, orderIDs []
 	err := eq.db.Update(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()
-		
+
 		for _, orderID := range orderIDs {
 			found := false
 			for r.Rewind(); r.Valid(); r.Next() {
@@ -304,7 +304,7 @@ func (eq *EnhancedBadgerQueue) AcknowledgeBatch(ctx context.Context, orderIDs []
 		}
 		return nil
 	})
-	
+
 	// Update metrics
 	if eq.metrics != nil {
 		eq.metrics.mu.Lock()
@@ -317,35 +317,35 @@ func (eq *EnhancedBadgerQueue) AcknowledgeBatch(ctx context.Context, orderIDs []
 		}
 		eq.metrics.mu.Unlock()
 	}
-	
+
 	return err
 }
 
 // GetQueueSize returns the current number of orders in the queue.
 func (eq *EnhancedBadgerQueue) GetQueueSize(ctx context.Context) (int64, error) {
 	var count int64
-	
+
 	err := eq.db.View(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()
-		
+
 		for r.Rewind(); r.Valid(); r.Next() {
 			count++
 		}
 		return nil
 	})
-	
+
 	return count, err
 }
 
 // GetOldestOrder returns the oldest order in the queue.
 func (eq *EnhancedBadgerQueue) GetOldestOrder(ctx context.Context) (*Order, error) {
 	var oldestOrder *Order
-	
+
 	err := eq.db.View(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()
-		
+
 		if r.Rewind(); r.Valid() {
 			item := r.Item()
 			var order Order
@@ -359,7 +359,7 @@ func (eq *EnhancedBadgerQueue) GetOldestOrder(ctx context.Context) (*Order, erro
 		}
 		return nil
 	})
-	
+
 	return oldestOrder, err
 }
 
@@ -369,7 +369,7 @@ func (eq *EnhancedBadgerQueue) GetHealthStatus(ctx context.Context) (*HealthStat
 		Status:  "healthy",
 		Metrics: make(map[string]interface{}),
 	}
-	
+
 	// Get queue size
 	queueSize, err := eq.GetQueueSize(ctx)
 	if err != nil {
@@ -377,25 +377,25 @@ func (eq *EnhancedBadgerQueue) GetHealthStatus(ctx context.Context) (*HealthStat
 		return status, err
 	}
 	status.QueueSize = queueSize
-	
+
 	// Get oldest order age
 	oldestOrder, err := eq.GetOldestOrder(ctx)
 	if err == nil && oldestOrder != nil {
 		status.OldestOrderAge = time.Since(oldestOrder.CreatedAt)
 	}
-	
+
 	// Get metrics
 	if eq.metrics != nil {
 		eq.metrics.mu.RLock()
 		status.ProcessingRate = eq.metrics.processingRate
-		status.ErrorRate = float64(eq.metrics.errorCount) / 
+		status.ErrorRate = float64(eq.metrics.errorCount) /
 			max(float64(eq.metrics.enqueueCount), 1.0) * 100
 		status.LastError = ""
 		if eq.metrics.lastError != nil {
 			status.LastError = eq.metrics.lastError.Error()
 		}
 		status.LastErrorTime = eq.metrics.lastErrorTime
-		
+
 		status.Metrics = map[string]interface{}{
 			"enqueue_count":     eq.metrics.enqueueCount,
 			"dequeue_count":     eq.metrics.dequeueCount,
@@ -406,7 +406,7 @@ func (eq *EnhancedBadgerQueue) GetHealthStatus(ctx context.Context) (*HealthStat
 		}
 		eq.metrics.mu.RUnlock()
 	}
-	
+
 	// Get dead letter count
 	if eq.dlq != nil {
 		dlqCount, err := eq.dlq.GetCount(ctx)
@@ -414,7 +414,7 @@ func (eq *EnhancedBadgerQueue) GetHealthStatus(ctx context.Context) (*HealthStat
 			status.DeadLetterCount = dlqCount
 		}
 	}
-	
+
 	// Determine overall status
 	if status.ErrorRate > 5.0 { // 5% error rate threshold
 		status.Status = "degraded"
@@ -428,7 +428,7 @@ func (eq *EnhancedBadgerQueue) GetHealthStatus(ctx context.Context) (*HealthStat
 	if status.OldestOrderAge > 5*time.Minute { // Age threshold
 		status.Status = "degraded"
 	}
-	
+
 	return status, nil
 }
 
@@ -446,20 +446,20 @@ func (eq *EnhancedBadgerQueue) Shutdown(ctx context.Context) error {
 	}
 	eq.stopped = true
 	eq.stopMu.Unlock()
-	
+
 	eq.logger.Info("Shutting down enhanced queue")
-	
+
 	// Signal stop
 	close(eq.stopCh)
-	
+
 	// Process remaining batches
 	eq.batchProcessor.flush()
-	
+
 	// Close dead letter queue
 	if eq.dlq != nil {
 		eq.dlq.Close()
 	}
-	
+
 	// Call base shutdown
 	return eq.BadgerQueue.Shutdown(ctx)
 }
@@ -469,7 +469,7 @@ func (eq *EnhancedBadgerQueue) Shutdown(ctx context.Context) error {
 func (eq *EnhancedBadgerQueue) startHealthMonitoring(ctx context.Context) {
 	ticker := time.NewTicker(eq.config.HealthCheckInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -486,25 +486,25 @@ func (eq *EnhancedBadgerQueue) updateHealthMetrics(ctx context.Context) {
 	if eq.metrics == nil {
 		return
 	}
-	
+
 	queueSize, err := eq.GetQueueSize(ctx)
 	if err != nil {
 		eq.logger.Errorw("Failed to get queue size for metrics", "error", err)
 		return
 	}
-	
+
 	eq.metrics.mu.Lock()
 	defer eq.metrics.mu.Unlock()
-	
+
 	eq.metrics.currentSize = queueSize
 	if queueSize > eq.metrics.peakSize {
 		eq.metrics.peakSize = queueSize
 	}
-	
+
 	// Calculate processing rate (simplified)
 	// In production, this would use a sliding window
 	if eq.metrics.dequeueCount > 0 {
-		eq.metrics.processingRate = float64(eq.metrics.dequeueCount) / 
+		eq.metrics.processingRate = float64(eq.metrics.dequeueCount) /
 			eq.config.HealthCheckInterval.Seconds()
 	}
 }
@@ -513,7 +513,7 @@ func (eq *EnhancedBadgerQueue) startBatchProcessing(ctx context.Context) {
 	if eq.batchProcessor.processFn == nil {
 		return // No batch processor configured
 	}
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -529,14 +529,14 @@ func (eq *EnhancedBadgerQueue) startBatchProcessing(ctx context.Context) {
 func (bp *BatchProcessor) addToBatch(order Order) {
 	bp.bufferMu.Lock()
 	defer bp.bufferMu.Unlock()
-	
+
 	bp.buffer = append(bp.buffer, order)
-	
+
 	// Start timer on first item
 	if len(bp.buffer) == 1 {
 		bp.timer = time.NewTimer(bp.batchTimeout)
 	}
-	
+
 	// Flush if batch is full
 	if len(bp.buffer) >= bp.batchSize {
 		bp.flushLocked()
@@ -553,13 +553,13 @@ func (bp *BatchProcessor) flushLocked() {
 	if len(bp.buffer) == 0 {
 		return
 	}
-	
+
 	// Stop timer
 	if bp.timer != nil {
 		bp.timer.Stop()
 		bp.timer = nil
 	}
-	
+
 	// Process batch
 	if bp.processFn != nil {
 		if err := bp.processFn(bp.buffer); err != nil {
@@ -568,7 +568,7 @@ func (bp *BatchProcessor) flushLocked() {
 			bp.logger.Debugw("Processed batch", "size", len(bp.buffer))
 		}
 	}
-	
+
 	// Clear buffer
 	bp.buffer = bp.buffer[:0]
 }
@@ -582,7 +582,7 @@ func NewDeadLetterQueue(path string, logger *zap.SugaredLogger) (*DeadLetterQueu
 	if err != nil {
 		return nil, fmt.Errorf("failed to open dead letter queue: %w", err)
 	}
-	
+
 	return &DeadLetterQueue{
 		db:     db,
 		logger: logger,
@@ -599,12 +599,12 @@ func (dlq *DeadLetterQueue) Add(ctx context.Context, order Order, reason string)
 		Reason: reason,
 		Time:   time.Now(),
 	}
-	
+
 	data, err := json.Marshal(deadLetter)
 	if err != nil {
 		return err
 	}
-	
+
 	key := fmt.Sprintf("dlq:%d:%s", time.Now().UnixNano(), order.ID)
 	return dlq.db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte(key), data)
@@ -613,17 +613,17 @@ func (dlq *DeadLetterQueue) Add(ctx context.Context, order Order, reason string)
 
 func (dlq *DeadLetterQueue) GetCount(ctx context.Context) (int64, error) {
 	var count int64
-	
+
 	err := dlq.db.View(func(txn *badger.Txn) error {
 		r := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer r.Close()
-		
+
 		for r.Rewind(); r.Valid(); r.Next() {
 			count++
 		}
 		return nil
 	})
-	
+
 	return count, err
 }
 

@@ -13,134 +13,134 @@ import (
 
 // ConnectionManager manages database connections with advanced pooling and health checks
 type ConnectionManager struct {
-	pools      map[string]*ConnectionPool
-	config     ConnectionConfig
-	logger     *zap.Logger
-	metrics    *ConnectionMetrics
-	mu         sync.RWMutex
+	pools         map[string]*ConnectionPool
+	config        ConnectionConfig
+	logger        *zap.Logger
+	metrics       *ConnectionMetrics
+	mu            sync.RWMutex
 	healthChecker *HealthChecker
 }
 
 // ConnectionConfig contains connection pool configuration
 type ConnectionConfig struct {
-	Master ConnectionPoolConfig `json:"master"`
-	Replicas []ConnectionPoolConfig `json:"replicas"`
-	HealthCheck HealthCheckConfig `json:"health_check"`
-	LoadBalancing LoadBalancingConfig `json:"load_balancing"`
-	Failover FailoverConfig `json:"failover"`
+	Master        ConnectionPoolConfig   `json:"master"`
+	Replicas      []ConnectionPoolConfig `json:"replicas"`
+	HealthCheck   HealthCheckConfig      `json:"health_check"`
+	LoadBalancing LoadBalancingConfig    `json:"load_balancing"`
+	Failover      FailoverConfig         `json:"failover"`
 }
 
 // ConnectionPoolConfig contains individual pool configuration
 type ConnectionPoolConfig struct {
-	DSN                string        `json:"dsn"`
-	MaxOpenConns       int           `json:"max_open_conns"`
-	MaxIdleConns       int           `json:"max_idle_conns"`
-	ConnMaxLifetime    time.Duration `json:"conn_max_lifetime"`
-	ConnMaxIdleTime    time.Duration `json:"conn_max_idle_time"`
-	ConnTimeout        time.Duration `json:"conn_timeout"`
-	ReadTimeout        time.Duration `json:"read_timeout"`
-	WriteTimeout       time.Duration `json:"write_timeout"`
-	StatementTimeout   time.Duration `json:"statement_timeout"`
-	Name               string        `json:"name"`
-	Role               string        `json:"role"` // master, replica
-	Priority           int           `json:"priority"`
-	Weight             int           `json:"weight"` // for load balancing
+	DSN              string        `json:"dsn"`
+	MaxOpenConns     int           `json:"max_open_conns"`
+	MaxIdleConns     int           `json:"max_idle_conns"`
+	ConnMaxLifetime  time.Duration `json:"conn_max_lifetime"`
+	ConnMaxIdleTime  time.Duration `json:"conn_max_idle_time"`
+	ConnTimeout      time.Duration `json:"conn_timeout"`
+	ReadTimeout      time.Duration `json:"read_timeout"`
+	WriteTimeout     time.Duration `json:"write_timeout"`
+	StatementTimeout time.Duration `json:"statement_timeout"`
+	Name             string        `json:"name"`
+	Role             string        `json:"role"` // master, replica
+	Priority         int           `json:"priority"`
+	Weight           int           `json:"weight"` // for load balancing
 }
 
 // HealthCheckConfig contains health check configuration
 type HealthCheckConfig struct {
-	Enabled            bool          `json:"enabled"`
-	Interval           time.Duration `json:"interval"`
-	Timeout            time.Duration `json:"timeout"`
-	RetryAttempts      int           `json:"retry_attempts"`
-	FailureThreshold   int           `json:"failure_threshold"`
-	RecoveryThreshold  int           `json:"recovery_threshold"`
-	CustomQueries      []string      `json:"custom_queries"`
+	Enabled           bool          `json:"enabled"`
+	Interval          time.Duration `json:"interval"`
+	Timeout           time.Duration `json:"timeout"`
+	RetryAttempts     int           `json:"retry_attempts"`
+	FailureThreshold  int           `json:"failure_threshold"`
+	RecoveryThreshold int           `json:"recovery_threshold"`
+	CustomQueries     []string      `json:"custom_queries"`
 }
 
 // LoadBalancingConfig contains load balancing configuration
 type LoadBalancingConfig struct {
-	Strategy          string  `json:"strategy"` // round_robin, weighted, least_connections
-	HealthyOnly       bool    `json:"healthy_only"`
-	ReadPreference    string  `json:"read_preference"` // primary, secondary, any
-	MaxRetries        int     `json:"max_retries"`
-	RetryDelay        time.Duration `json:"retry_delay"`
+	Strategy       string        `json:"strategy"` // round_robin, weighted, least_connections
+	HealthyOnly    bool          `json:"healthy_only"`
+	ReadPreference string        `json:"read_preference"` // primary, secondary, any
+	MaxRetries     int           `json:"max_retries"`
+	RetryDelay     time.Duration `json:"retry_delay"`
 }
 
 // FailoverConfig contains failover configuration
 type FailoverConfig struct {
-	Enabled              bool          `json:"enabled"`
-	AutoFailover         bool          `json:"auto_failover"`
-	FailoverTimeout      time.Duration `json:"failover_timeout"`
-	RecoveryTimeout      time.Duration `json:"recovery_timeout"`
-	NotificationEnabled  bool          `json:"notification_enabled"`
+	Enabled             bool          `json:"enabled"`
+	AutoFailover        bool          `json:"auto_failover"`
+	FailoverTimeout     time.Duration `json:"failover_timeout"`
+	RecoveryTimeout     time.Duration `json:"recovery_timeout"`
+	NotificationEnabled bool          `json:"notification_enabled"`
 }
 
 // ConnectionPool represents a managed connection pool
 type ConnectionPool struct {
-	db          *gorm.DB
-	sqlDB       *sql.DB
-	config      ConnectionPoolConfig
-	metrics     *PoolMetrics
-	healthy     bool
-	lastCheck   time.Time
+	db           *gorm.DB
+	sqlDB        *sql.DB
+	config       ConnectionPoolConfig
+	metrics      *PoolMetrics
+	healthy      bool
+	lastCheck    time.Time
 	failureCount int
 	successCount int
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 }
 
 // PoolMetrics contains pool-specific metrics
 type PoolMetrics struct {
-	OpenConnections     int           `json:"open_connections"`
-	IdleConnections     int           `json:"idle_connections"`
-	InUseConnections    int           `json:"in_use_connections"`
-	WaitCount           int64         `json:"wait_count"`
-	WaitDuration        time.Duration `json:"wait_duration"`
-	MaxIdleClosed       int64         `json:"max_idle_closed"`
-	MaxLifetimeClosed   int64         `json:"max_lifetime_closed"`
-	QueryCount          int64         `json:"query_count"`
-	ErrorCount          int64         `json:"error_count"`
-	AvgResponseTime     time.Duration `json:"avg_response_time"`
-	LastActivity        time.Time     `json:"last_activity"`
+	OpenConnections   int           `json:"open_connections"`
+	IdleConnections   int           `json:"idle_connections"`
+	InUseConnections  int           `json:"in_use_connections"`
+	WaitCount         int64         `json:"wait_count"`
+	WaitDuration      time.Duration `json:"wait_duration"`
+	MaxIdleClosed     int64         `json:"max_idle_closed"`
+	MaxLifetimeClosed int64         `json:"max_lifetime_closed"`
+	QueryCount        int64         `json:"query_count"`
+	ErrorCount        int64         `json:"error_count"`
+	AvgResponseTime   time.Duration `json:"avg_response_time"`
+	LastActivity      time.Time     `json:"last_activity"`
 }
 
 // ConnectionMetrics contains overall connection metrics
 type ConnectionMetrics struct {
-	TotalPools          int            `json:"total_pools"`
-	HealthyPools        int            `json:"healthy_pools"`
-	UnhealthyPools      int            `json:"unhealthy_pools"`
-	TotalConnections    int            `json:"total_connections"`
-	TotalQueries        int64          `json:"total_queries"`
-	TotalErrors         int64          `json:"total_errors"`
-	PoolMetrics         map[string]*PoolMetrics `json:"pool_metrics"`
-	LastUpdated         time.Time      `json:"last_updated"`
+	TotalPools       int                     `json:"total_pools"`
+	HealthyPools     int                     `json:"healthy_pools"`
+	UnhealthyPools   int                     `json:"unhealthy_pools"`
+	TotalConnections int                     `json:"total_connections"`
+	TotalQueries     int64                   `json:"total_queries"`
+	TotalErrors      int64                   `json:"total_errors"`
+	PoolMetrics      map[string]*PoolMetrics `json:"pool_metrics"`
+	LastUpdated      time.Time               `json:"last_updated"`
 }
 
 // HealthChecker monitors connection pool health
 type HealthChecker struct {
-	config   HealthCheckConfig
-	manager  *ConnectionManager
-	logger   *zap.Logger
-	stopCh   chan struct{}
-	stopped  bool
-	mu       sync.RWMutex
+	config  HealthCheckConfig
+	manager *ConnectionManager
+	logger  *zap.Logger
+	stopCh  chan struct{}
+	stopped bool
+	mu      sync.RWMutex
 }
 
 // ReadWriteDB provides read/write separated database access
 type ReadWriteDB struct {
-	manager    *ConnectionManager
-	writePool  *ConnectionPool
-	readPools  []*ConnectionPool
-	rrIndex    int
-	mu         sync.RWMutex
+	manager   *ConnectionManager
+	writePool *ConnectionPool
+	readPools []*ConnectionPool
+	rrIndex   int
+	mu        sync.RWMutex
 }
 
 // NewConnectionManager creates a new connection manager
 func NewConnectionManager(config ConnectionConfig, logger *zap.Logger) (*ConnectionManager, error) {
 	manager := &ConnectionManager{
-		pools:   make(map[string]*ConnectionPool),
-		config:  config,
-		logger:  logger,
+		pools:  make(map[string]*ConnectionPool),
+		config: config,
+		logger: logger,
 		metrics: &ConnectionMetrics{
 			PoolMetrics: make(map[string]*PoolMetrics),
 		},
@@ -248,9 +248,9 @@ func (cm *ConnectionManager) GetMetrics() *ConnectionMetrics {
 
 	// Create a copy of metrics
 	metrics := &ConnectionMetrics{
-		TotalPools:       len(cm.pools),
-		PoolMetrics:      make(map[string]*PoolMetrics),
-		LastUpdated:      time.Now(),
+		TotalPools:  len(cm.pools),
+		PoolMetrics: make(map[string]*PoolMetrics),
+		LastUpdated: time.Now(),
 	}
 
 	healthyCount := 0
@@ -291,7 +291,7 @@ func (cm *ConnectionManager) initializePools() error {
 	// Initialize replica pools
 	for _, replicaConfig := range cm.config.Replicas {
 		if err := cm.createPool(replicaConfig); err != nil {
-			cm.logger.Error("Failed to create replica pool", 
+			cm.logger.Error("Failed to create replica pool",
 				zap.String("name", replicaConfig.Name), zap.Error(err))
 		}
 	}
@@ -311,19 +311,19 @@ func (cm *ConnectionManager) createPool(config ConnectionPoolConfig) error {
 	}
 
 	pool := &ConnectionPool{
-		db:       db,
-		sqlDB:    sqlDB,
-		config:   config,
-		healthy:  true,
+		db:        db,
+		sqlDB:     sqlDB,
+		config:    config,
+		healthy:   true,
 		lastCheck: time.Now(),
-		metrics:  &PoolMetrics{},
+		metrics:   &PoolMetrics{},
 	}
 
 	// Configure connection pool
 	pool.configure()
 
 	cm.pools[config.Name] = pool
-	cm.logger.Info("Created connection pool", 
+	cm.logger.Info("Created connection pool",
 		zap.String("name", config.Name),
 		zap.String("role", config.Role),
 		zap.Int("max_open_conns", config.MaxOpenConns))
@@ -369,16 +369,16 @@ func (cp *ConnectionPool) getMetrics() *PoolMetrics {
 	defer cp.mu.RUnlock()
 
 	stats := cp.sqlDB.Stats()
-	
+
 	return &PoolMetrics{
-		OpenConnections:     stats.OpenConnections,
-		IdleConnections:     stats.Idle,
-		InUseConnections:    stats.InUse,
-		WaitCount:           stats.WaitCount,
-		WaitDuration:        stats.WaitDuration,
-		MaxIdleClosed:       stats.MaxIdleClosed,
-		MaxLifetimeClosed:   stats.MaxLifetimeClosed,
-		LastActivity:        time.Now(),
+		OpenConnections:   stats.OpenConnections,
+		IdleConnections:   stats.Idle,
+		InUseConnections:  stats.InUse,
+		WaitCount:         stats.WaitCount,
+		WaitDuration:      stats.WaitDuration,
+		MaxIdleClosed:     stats.MaxIdleClosed,
+		MaxLifetimeClosed: stats.MaxLifetimeClosed,
+		LastActivity:      time.Now(),
 	}
 }
 
@@ -406,7 +406,7 @@ func (cp *ConnectionPool) isHealthy() bool {
 func (cp *ConnectionPool) setHealthy(healthy bool) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	
+
 	if cp.healthy != healthy {
 		cp.healthy = healthy
 		if healthy {
@@ -447,7 +447,7 @@ func (hc *HealthChecker) start(ctx context.Context) {
 func (hc *HealthChecker) stop() {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	
+
 	if !hc.stopped {
 		close(hc.stopCh)
 		hc.stopped = true
@@ -475,7 +475,7 @@ func (hc *HealthChecker) checkPool(pool *ConnectionPool) {
 
 	// Basic ping test
 	if err := pool.sqlDB.PingContext(ctx); err != nil {
-		hc.logger.Warn("Pool ping failed", 
+		hc.logger.Warn("Pool ping failed",
 			zap.String("pool", pool.config.Name), zap.Error(err))
 		healthy = false
 	}
@@ -569,9 +569,9 @@ func NewOptimizedPostgresDB(dsn string, config ConnectionPoolConfig) (*gorm.DB, 
 		optimizedDSN += fmt.Sprintf(" statement_timeout=%d", int(config.StatementTimeout.Milliseconds()))
 	}
 
-	return NewPostgresDB(optimizedDSN, 
-		config.MaxOpenConns, 
-		config.MaxIdleConns, 
+	return NewPostgresDB(optimizedDSN,
+		config.MaxOpenConns,
+		config.MaxIdleConns,
 		int(config.ConnMaxLifetime.Seconds()))
 }
 
@@ -579,18 +579,18 @@ func NewOptimizedPostgresDB(dsn string, config ConnectionPoolConfig) (*gorm.DB, 
 func DefaultConnectionConfig() ConnectionConfig {
 	return ConnectionConfig{
 		Master: ConnectionPoolConfig{
-			MaxOpenConns:      100,
-			MaxIdleConns:      20,
-			ConnMaxLifetime:   1 * time.Hour,
-			ConnMaxIdleTime:   30 * time.Minute,
-			ConnTimeout:       10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			StatementTimeout:  60 * time.Second,
-			Name:              "master",
-			Role:              "master",
-			Priority:          1,
-			Weight:            100,
+			MaxOpenConns:     100,
+			MaxIdleConns:     20,
+			ConnMaxLifetime:  1 * time.Hour,
+			ConnMaxIdleTime:  30 * time.Minute,
+			ConnTimeout:      10 * time.Second,
+			ReadTimeout:      30 * time.Second,
+			WriteTimeout:     30 * time.Second,
+			StatementTimeout: 60 * time.Second,
+			Name:             "master",
+			Role:             "master",
+			Priority:         1,
+			Weight:           100,
 		},
 		HealthCheck: HealthCheckConfig{
 			Enabled:           true,

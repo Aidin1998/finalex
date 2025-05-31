@@ -42,28 +42,28 @@ type OptimizerConfig struct {
 
 // QueryCache handles query result caching
 type QueryCache struct {
-	redis      *redis.Client
-	ttl        time.Duration
-	maxSize    int64
+	redis       *redis.Client
+	ttl         time.Duration
+	maxSize     int64
 	currentSize int64
-	mu         sync.RWMutex
+	mu          sync.RWMutex
 }
 
 // SlowQueryTracker tracks and analyzes slow queries
 type SlowQueryTracker struct {
-	threshold   time.Duration
-	queries     map[string]*SlowQueryInfo
-	mu          sync.RWMutex
+	threshold time.Duration
+	queries   map[string]*SlowQueryInfo
+	mu        sync.RWMutex
 }
 
 // SlowQueryInfo contains information about a slow query
 type SlowQueryInfo struct {
-	Query         string        `json:"query"`
-	Count         int64         `json:"count"`
-	TotalTime     time.Duration `json:"total_time"`
-	AverageTime   time.Duration `json:"average_time"`
-	LastSeen      time.Time     `json:"last_seen"`
-	Suggestions   []string      `json:"suggestions"`
+	Query       string        `json:"query"`
+	Count       int64         `json:"count"`
+	TotalTime   time.Duration `json:"total_time"`
+	AverageTime time.Duration `json:"average_time"`
+	LastSeen    time.Time     `json:"last_seen"`
+	Suggestions []string      `json:"suggestions"`
 }
 
 // IndexManager handles automatic index creation and optimization
@@ -75,20 +75,20 @@ type IndexManager struct {
 
 // IndexConfig contains index optimization configuration
 type IndexConfig struct {
-	AutoCreateIndexes    bool     `json:"auto_create_indexes"`
-	MinUsageThreshold    int64    `json:"min_usage_threshold"`
-	AnalyzeUsageInterval time.Duration `json:"analyze_usage_interval"`
+	AutoCreateIndexes    bool              `json:"auto_create_indexes"`
+	MinUsageThreshold    int64             `json:"min_usage_threshold"`
+	AnalyzeUsageInterval time.Duration     `json:"analyze_usage_interval"`
 	IndexSuggestions     []IndexSuggestion `json:"index_suggestions"`
 }
 
 // IndexSuggestion represents a suggested index
 type IndexSuggestion struct {
-	Table       string   `json:"table"`
-	Columns     []string `json:"columns"`
-	Type        string   `json:"type"` // btree, gin, gist, etc.
-	Condition   string   `json:"condition,omitempty"`
-	Priority    int      `json:"priority"`
-	Reason      string   `json:"reason"`
+	Table     string   `json:"table"`
+	Columns   []string `json:"columns"`
+	Type      string   `json:"type"` // btree, gin, gist, etc.
+	Condition string   `json:"condition,omitempty"`
+	Priority  int      `json:"priority"`
+	Reason    string   `json:"reason"`
 }
 
 // QueryStats contains performance statistics for queries
@@ -166,7 +166,7 @@ func (o *QueryOptimizer) Start(ctx context.Context) error {
 	// Start background optimization tasks
 	go o.runPeriodicOptimization(ctx)
 	go o.runDatabaseMaintenance(ctx)
-	
+
 	if o.config.EnableIndexOptimizer {
 		go o.runIndexOptimization(ctx)
 	}
@@ -226,7 +226,7 @@ func (o *QueryOptimizer) OptimizeQuery(ctx context.Context, query string) (*Quer
 	// Check for missing indexes
 	indexSuggestions := o.suggestIndexes(query)
 	for _, suggestion := range indexSuggestions {
-		optimization.Suggestions = append(optimization.Suggestions, 
+		optimization.Suggestions = append(optimization.Suggestions,
 			fmt.Sprintf("Consider creating index: %s", suggestion.Reason))
 	}
 
@@ -244,7 +244,7 @@ func (o *QueryOptimizer) GetQueryStats() *QueryStats {
 	return &QueryStats{
 		ActiveConnections: dbStats.OpenConnections,
 		IdleConnections:   dbStats.Idle,
-		CacheHitRate:     o.queryCache.getHitRate(),
+		CacheHitRate:      o.queryCache.getHitRate(),
 	}
 }
 
@@ -367,7 +367,7 @@ func (o *QueryOptimizer) trackQueryPerformance(query string, duration time.Durat
 
 func (o *QueryOptimizer) analyzeQueryPlan(ctx context.Context, query string) (*QueryPlan, error) {
 	explainQuery := fmt.Sprintf("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) %s", query)
-	
+
 	var result []map[string]interface{}
 	if err := o.db.WithContext(ctx).Raw(explainQuery).Scan(&result).Error; err != nil {
 		return nil, err
@@ -462,11 +462,11 @@ func (o *QueryOptimizer) vacuumTable(ctx context.Context, tableName string) erro
 
 // QueryOptimization contains optimization results
 type QueryOptimization struct {
-	OriginalQuery   string      `json:"original_query"`
-	OptimizedQuery  string      `json:"optimized_query,omitempty"`
-	ExecutionPlan   *QueryPlan  `json:"execution_plan,omitempty"`
-	Suggestions     []string    `json:"suggestions"`
-	EstimatedImprovement float64 `json:"estimated_improvement"`
+	OriginalQuery        string     `json:"original_query"`
+	OptimizedQuery       string     `json:"optimized_query,omitempty"`
+	ExecutionPlan        *QueryPlan `json:"execution_plan,omitempty"`
+	Suggestions          []string   `json:"suggestions"`
+	EstimatedImprovement float64    `json:"estimated_improvement"`
 }
 
 // QueryPlan contains query execution plan information
@@ -489,10 +489,10 @@ type performanceLogger struct {
 func (p *performanceLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	sql, rowsAffected := fc()
 	duration := time.Since(begin)
-	
+
 	// Track query performance
 	p.optimizer.trackQueryPerformance(sql, duration)
-	
+
 	// Call original logger
 	p.Interface.Trace(ctx, begin, func() (string, int64) {
 		return sql, rowsAffected
@@ -508,12 +508,12 @@ func (c *QueryCache) Get(ctx context.Context, key string) (interface{}, error) {
 func (c *QueryCache) Set(ctx context.Context, key string, value interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	if c.currentSize >= c.maxSize {
 		// Evict oldest entries
 		c.evictOldest(ctx)
 	}
-	
+
 	c.currentSize++
 	return c.redis.Set(ctx, "query:"+key, value, c.ttl).Err()
 }
@@ -536,7 +536,7 @@ func (c *QueryCache) evictOldest(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	
+
 	if len(keys) > 0 {
 		c.redis.Del(ctx, keys[0])
 		c.currentSize--
@@ -550,7 +550,7 @@ func (s *SlowQueryTracker) recordSlowQuery(query string, duration time.Duration)
 	defer s.mu.Unlock()
 
 	queryKey := s.normalizeQuery(query)
-	
+
 	if info, exists := s.queries[queryKey]; exists {
 		info.Count++
 		info.TotalTime += duration
@@ -605,7 +605,7 @@ func (im *IndexManager) analyzeAndOptimize(ctx context.Context) {
 			if err := im.createIndex(ctx, suggestion); err != nil {
 				im.logger.Error("Failed to create suggested index", zap.Error(err))
 			} else {
-				im.logger.Info("Created suggested index", 
+				im.logger.Info("Created suggested index",
 					zap.String("table", suggestion.Table),
 					zap.Strings("columns", suggestion.Columns))
 			}
@@ -619,7 +619,7 @@ func (im *IndexManager) getIndexUsageStats(ctx context.Context) (map[string]int6
 		FROM pg_stat_user_indexes 
 		WHERE schemaname = 'public'
 	`
-	
+
 	rows, err := im.db.WithContext(ctx).Raw(query).Rows()
 	if err != nil {
 		return nil, err
@@ -685,11 +685,11 @@ func (im *IndexManager) generateIndexSuggestions() []IndexSuggestion {
 
 func (im *IndexManager) createIndex(ctx context.Context, suggestion IndexSuggestion) error {
 	indexName := fmt.Sprintf("idx_%s_%s", suggestion.Table, strings.Join(suggestion.Columns, "_"))
-	
+
 	var query string
 	if suggestion.Condition != "" {
 		query = fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s USING %s (%s) WHERE %s",
-			indexName, suggestion.Table, suggestion.Type, 
+			indexName, suggestion.Table, suggestion.Type,
 			strings.Join(suggestion.Columns, ", "), suggestion.Condition)
 	} else {
 		query = fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s USING %s (%s)",

@@ -34,12 +34,12 @@ const (
 
 // Node represents a node in the failover cluster.
 type Node struct {
-	ID       string    `json:"id"`
-	Address  string    `json:"address"`
-	Role     NodeRole  `json:"role"`
+	ID       string     `json:"id"`
+	Address  string     `json:"address"`
+	Role     NodeRole   `json:"role"`
 	Status   NodeStatus `json:"status"`
-	LastSeen time.Time `json:"last_seen"`
-	Priority int       `json:"priority"` // Higher values = higher priority
+	LastSeen time.Time  `json:"last_seen"`
+	Priority int        `json:"priority"` // Higher values = higher priority
 }
 
 // FailoverManager orchestrates hot standby order processors and failover.
@@ -50,43 +50,43 @@ type FailoverManager struct {
 	priority int
 
 	// etcd client and concurrency
-	etcdClient    *clientv3.Client
-	session       *concurrency.Session
-	election      *concurrency.Election
-	
+	etcdClient *clientv3.Client
+	session    *concurrency.Session
+	election   *concurrency.Election
+
 	// State management
-	role           int32 // atomic NodeRole
-	status         int32 // atomic NodeStatus
-	leaderID       string
-	leaderMu       sync.RWMutex
-	
+	role     int32 // atomic NodeRole
+	status   int32 // atomic NodeStatus
+	leaderID string
+	leaderMu sync.RWMutex
+
 	// Health monitoring
 	healthCheckInterval time.Duration
 	nodes               map[string]*Node
 	nodesMu             sync.RWMutex
-	
+
 	// State synchronization
-	stateManager  *StateManager
-	queue         Queue
-	
+	stateManager *StateManager
+	queue        Queue
+
 	// Failover configuration
 	config FailoverConfig
 	logger *zap.SugaredLogger
-	
+
 	// Lifecycle management
-	stopCh   chan struct{}
-	stopped  bool
-	stopMu   sync.RWMutex
-	
+	stopCh  chan struct{}
+	stopped bool
+	stopMu  sync.RWMutex
+
 	// Split-brain prevention
 	splitBrainTTL       time.Duration
 	leadershipLeaseTTL  time.Duration
 	lastLeadershipCheck time.Time
-	
+
 	// Callbacks for failover events
-	onBecomeLeader   func() error
-	onBecomeStandby  func() error
-	onLeaderChange   func(newLeaderID string)
+	onBecomeLeader  func() error
+	onBecomeStandby func() error
+	onLeaderChange  func(newLeaderID string)
 }
 
 // FailoverConfig configures failover behavior.
@@ -244,24 +244,24 @@ func (fm *FailoverManager) GetStatus() NodeStatus {
 // Failover triggers a manual failover to a standby processor.
 func (fm *FailoverManager) Failover(ctx context.Context) error {
 	failoverStart := time.Now()
-	
+
 	fm.logger.Warnw("Manual failover triggered")
-	
+
 	// Check if we're the leader
 	if !fm.IsLeader() {
 		return fmt.Errorf("only leader can trigger failover")
 	}
-	
+
 	// Step down from leadership
 	if err := fm.stepDown(ctx); err != nil {
 		return fmt.Errorf("failed to step down from leadership: %w", err)
 	}
-	
+
 	// Wait for new leader election
 	timeout := time.After(fm.config.MaxFailoverTime)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-timeout:
@@ -285,17 +285,17 @@ func (fm *FailoverManager) Failover(ctx context.Context) error {
 // ForceFailover forces an immediate failover without leadership checks.
 func (fm *FailoverManager) ForceFailover(ctx context.Context) error {
 	fm.logger.Errorw("Force failover triggered - emergency procedure")
-	
+
 	// Mark current leader as failed
 	if err := fm.markNodeFailed(ctx, fm.GetLeader()); err != nil {
 		fm.logger.Errorw("Failed to mark leader as failed", "error", err)
 	}
-	
+
 	// If we're not leader, try to become leader
 	if !fm.IsLeader() {
 		return fm.becomeLeader(ctx)
 	}
-	
+
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (fm *FailoverManager) ForceFailover(ctx context.Context) error {
 func (fm *FailoverManager) GetClusterState() map[string]*Node {
 	fm.nodesMu.RLock()
 	defer fm.nodesMu.RUnlock()
-	
+
 	nodes := make(map[string]*Node)
 	for id, node := range fm.nodes {
 		// Deep copy to avoid races
@@ -316,7 +316,7 @@ func (fm *FailoverManager) GetClusterState() map[string]*Node {
 			Priority: node.Priority,
 		}
 	}
-	
+
 	return nodes
 }
 
@@ -396,7 +396,7 @@ func (fm *FailoverManager) runLeaderElection(ctx context.Context) error {
 	// Campaign for leadership
 	fm.logger.Debug("Campaigning for leadership")
 	atomic.StoreInt32(&fm.role, int32(NodeRoleCandidate))
-	
+
 	if err := fm.election.Campaign(ctx, fm.nodeID); err != nil {
 		atomic.StoreInt32(&fm.role, int32(NodeRoleStandby))
 		return fmt.Errorf("failed to campaign for leadership: %w", err)
@@ -422,7 +422,7 @@ func (fm *FailoverManager) runLeaderElection(ctx context.Context) error {
 
 func (fm *FailoverManager) becomeLeader(ctx context.Context) error {
 	atomic.StoreInt32(&fm.role, int32(NodeRoleLeader))
-	
+
 	fm.leaderMu.Lock()
 	fm.leaderID = fm.nodeID
 	fm.leaderMu.Unlock()
@@ -441,21 +441,21 @@ func (fm *FailoverManager) becomeLeader(ctx context.Context) error {
 
 func (fm *FailoverManager) stepDown(ctx context.Context) error {
 	fm.logger.Info("Stepping down from leadership")
-	
+
 	// Resign from election
 	if err := fm.election.Resign(ctx); err != nil {
 		return fmt.Errorf("failed to resign from election: %w", err)
 	}
-	
+
 	atomic.StoreInt32(&fm.role, int32(NodeRoleStandby))
-	
+
 	// Execute standby callback
 	if fm.onBecomeStandby != nil {
 		if err := fm.onBecomeStandby(); err != nil {
 			fm.logger.Errorw("Standby callback failed", "error", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -464,13 +464,13 @@ func (fm *FailoverManager) onLeadershipChange(newLeaderID string) {
 	oldLeaderID := fm.leaderID
 	fm.leaderID = newLeaderID
 	fm.leaderMu.Unlock()
-	
+
 	if oldLeaderID != newLeaderID {
 		fm.logger.Infow("Leadership changed",
 			"old_leader", oldLeaderID,
 			"new_leader", newLeaderID,
 		)
-		
+
 		// If we're no longer leader, become standby
 		if oldLeaderID == fm.nodeID && newLeaderID != fm.nodeID {
 			atomic.StoreInt32(&fm.role, int32(NodeRoleStandby))
@@ -480,7 +480,7 @@ func (fm *FailoverManager) onLeadershipChange(newLeaderID string) {
 				}
 			}
 		}
-		
+
 		// Execute leader change callback
 		if fm.onLeaderChange != nil {
 			fm.onLeaderChange(newLeaderID)
@@ -508,12 +508,12 @@ func (fm *FailoverManager) performHealthCheck(ctx context.Context) {
 	// Update our own health status
 	status := fm.checkOwnHealth()
 	atomic.StoreInt32(&fm.status, int32(status))
-	
+
 	// Update node registration
 	if err := fm.updateNodeHealth(ctx); err != nil {
 		fm.logger.Errorw("Failed to update node health", "error", err)
 	}
-	
+
 	// Check other nodes
 	fm.checkClusterHealth(ctx)
 }
@@ -531,14 +531,14 @@ func (fm *FailoverManager) checkClusterHealth(ctx context.Context) {
 		fm.logger.Errorw("Failed to get cluster nodes", "error", err)
 		return
 	}
-	
+
 	now := time.Now()
 	fm.nodesMu.Lock()
 	defer fm.nodesMu.Unlock()
-	
+
 	// Clear old nodes
 	fm.nodes = make(map[string]*Node)
-	
+
 	// Parse node information
 	for _, kv := range resp.Kvs {
 		var node Node
@@ -546,12 +546,12 @@ func (fm *FailoverManager) checkClusterHealth(ctx context.Context) {
 			fm.logger.Errorw("Failed to unmarshal node data", "error", err)
 			continue
 		}
-		
+
 		// Check if node is stale
 		if now.Sub(node.LastSeen) > fm.config.HealthCheckInterval*3 {
 			node.Status = NodeStatusUnhealthy
 		}
-		
+
 		fm.nodes[node.ID] = &node
 	}
 }
@@ -565,18 +565,18 @@ func (fm *FailoverManager) registerNode(ctx context.Context) error {
 		LastSeen: time.Now(),
 		Priority: fm.priority,
 	}
-	
+
 	data, err := json.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("failed to marshal node data: %w", err)
 	}
-	
+
 	key := fmt.Sprintf("/failover/nodes/%s", fm.nodeID)
 	_, err = fm.etcdClient.Put(ctx, key, string(data))
 	if err != nil {
 		return fmt.Errorf("failed to register node: %w", err)
 	}
-	
+
 	fm.logger.Infow("Registered node in cluster", "node_id", fm.nodeID)
 	return nil
 }
@@ -590,12 +590,12 @@ func (fm *FailoverManager) updateNodeHealth(ctx context.Context) error {
 		LastSeen: time.Now(),
 		Priority: fm.priority,
 	}
-	
+
 	data, err := json.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("failed to marshal node data: %w", err)
 	}
-	
+
 	key := fmt.Sprintf("/failover/nodes/%s", fm.nodeID)
 	_, err = fm.etcdClient.Put(ctx, key, string(data))
 	return err
@@ -607,7 +607,7 @@ func (fm *FailoverManager) unregisterNode(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to unregister node: %w", err)
 	}
-	
+
 	fm.logger.Infow("Unregistered node from cluster", "node_id", fm.nodeID)
 	return nil
 }
@@ -618,24 +618,24 @@ func (fm *FailoverManager) markNodeFailed(ctx context.Context, nodeID string) er
 	if err != nil {
 		return err
 	}
-	
+
 	if len(resp.Kvs) == 0 {
 		return fmt.Errorf("node not found: %s", nodeID)
 	}
-	
+
 	var node Node
 	if err := json.Unmarshal(resp.Kvs[0].Value, &node); err != nil {
 		return err
 	}
-	
+
 	node.Status = NodeStatusFailed
 	node.LastSeen = time.Now()
-	
+
 	data, err := json.Marshal(node)
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = fm.etcdClient.Put(ctx, key, string(data))
 	return err
 }

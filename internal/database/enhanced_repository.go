@@ -21,33 +21,33 @@ type EnhancedRepository struct {
 	optimizer *QueryOptimizer
 	cache     *redis.Client
 	logger    *zap.Logger
-	
+
 	// Cache TTL configurations
-	orderCacheTTL     time.Duration
-	tradeCacheTTL     time.Duration
-	userOrdersTTL     time.Duration
-	pairOrdersTTL     time.Duration
+	orderCacheTTL time.Duration
+	tradeCacheTTL time.Duration
+	userOrdersTTL time.Duration
+	pairOrdersTTL time.Duration
 }
 
 // EnhancedRepositoryConfig holds configuration for the enhanced repository
 type EnhancedRepositoryConfig struct {
-	OrderCacheTTL     time.Duration `yaml:"order_cache_ttl" json:"order_cache_ttl"`
-	TradeCacheTTL     time.Duration `yaml:"trade_cache_ttl" json:"trade_cache_ttl"`
-	UserOrdersTTL     time.Duration `yaml:"user_orders_ttl" json:"user_orders_ttl"`
-	PairOrdersTTL     time.Duration `yaml:"pair_orders_ttl" json:"pair_orders_ttl"`
-	EnableQueryCache  bool          `yaml:"enable_query_cache" json:"enable_query_cache"`
-	EnableIndexHints  bool          `yaml:"enable_index_hints" json:"enable_index_hints"`
+	OrderCacheTTL    time.Duration `yaml:"order_cache_ttl" json:"order_cache_ttl"`
+	TradeCacheTTL    time.Duration `yaml:"trade_cache_ttl" json:"trade_cache_ttl"`
+	UserOrdersTTL    time.Duration `yaml:"user_orders_ttl" json:"user_orders_ttl"`
+	PairOrdersTTL    time.Duration `yaml:"pair_orders_ttl" json:"pair_orders_ttl"`
+	EnableQueryCache bool          `yaml:"enable_query_cache" json:"enable_query_cache"`
+	EnableIndexHints bool          `yaml:"enable_index_hints" json:"enable_index_hints"`
 }
 
 // DefaultEnhancedRepositoryConfig returns default configuration
 func DefaultEnhancedRepositoryConfig() *EnhancedRepositoryConfig {
 	return &EnhancedRepositoryConfig{
-		OrderCacheTTL:     30 * time.Second,  // Hot data for active orders
-		TradeCacheTTL:     2 * time.Minute,   // Trade data can be cached longer
-		UserOrdersTTL:     10 * time.Second,  // User-specific queries
-		PairOrdersTTL:     5 * time.Second,   // Market data changes rapidly
-		EnableQueryCache:  true,
-		EnableIndexHints:  true,
+		OrderCacheTTL:    30 * time.Second, // Hot data for active orders
+		TradeCacheTTL:    2 * time.Minute,  // Trade data can be cached longer
+		UserOrdersTTL:    10 * time.Second, // User-specific queries
+		PairOrdersTTL:    5 * time.Second,  // Market data changes rapidly
+		EnableQueryCache: true,
+		EnableIndexHints: true,
 	}
 }
 
@@ -62,7 +62,7 @@ func NewEnhancedRepository(
 	if config == nil {
 		config = DefaultEnhancedRepositoryConfig()
 	}
-	
+
 	return &EnhancedRepository{
 		db:            db,
 		optimizer:     optimizer,
@@ -114,19 +114,19 @@ func (r *EnhancedRepository) GetOrderByIDCached(ctx context.Context, orderID uui
 		FROM orders 
 		WHERE id = $1
 	`
-	
+
 	start := time.Now()
 	var order model.Order
 	err = r.db.Reader().WithContext(ctx).Raw(query, orderID).Scan(&order).Error
-	
+
 	// Log slow queries
 	duration := time.Since(start)
 	if duration > 50*time.Millisecond {
-		r.logger.Warn("Slow order query", 
+		r.logger.Warn("Slow order query",
 			zap.String("order_id", orderID.String()),
 			zap.Duration("duration", duration))
 	}
-	
+
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, ErrOrderNotFound
@@ -166,19 +166,19 @@ func (r *EnhancedRepository) GetOpenOrdersByUserOptimized(ctx context.Context, u
 		ORDER BY created_at DESC
 		LIMIT $2
 	`
-	
+
 	start := time.Now()
 	var orders []*model.Order
 	err = r.db.Reader().WithContext(ctx).Raw(query, userID, limit).Scan(&orders).Error
-	
+
 	// Performance monitoring
 	duration := time.Since(start)
 	if duration > 100*time.Millisecond {
-		r.logger.Warn("Slow user orders query", 
+		r.logger.Warn("Slow user orders query",
 			zap.String("user_id", userID.String()),
 			zap.Duration("duration", duration))
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user orders: %w", err)
 	}
@@ -207,7 +207,7 @@ func (r *EnhancedRepository) GetOpenOrdersByPairOptimized(ctx context.Context, p
 	// Optimized query for order book reconstruction
 	var query string
 	var args []interface{}
-	
+
 	if side == "" {
 		// Get all sides
 		query = `
@@ -230,7 +230,7 @@ func (r *EnhancedRepository) GetOpenOrdersByPairOptimized(ctx context.Context, p
 		if side == "buy" {
 			orderBy = "price DESC"
 		}
-		
+
 		query = fmt.Sprintf(`
 			SELECT /*+ INDEX(orders_symbol_side_price_idx) */ 
 			       id, user_id, symbol, side, type, price, quantity, filled_quantity, 
@@ -244,20 +244,20 @@ func (r *EnhancedRepository) GetOpenOrdersByPairOptimized(ctx context.Context, p
 		`, orderBy)
 		args = []interface{}{pair, side, limit}
 	}
-	
+
 	start := time.Now()
 	var orders []*model.Order
 	err = r.db.Reader().WithContext(ctx).Raw(query, args...).Scan(&orders).Error
-	
+
 	// Performance monitoring
 	duration := time.Since(start)
 	if duration > 50*time.Millisecond {
-		r.logger.Warn("Slow pair orders query", 
+		r.logger.Warn("Slow pair orders query",
 			zap.String("pair", pair),
 			zap.String("side", side),
 			zap.Duration("duration", duration))
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pair orders: %w", err)
 	}
@@ -283,7 +283,7 @@ func (r *EnhancedRepository) CreateOrderOptimized(ctx context.Context, order *mo
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
 		)
 	`
-	
+
 	start := time.Now()
 	err := r.db.Writer().WithContext(ctx).Exec(query,
 		order.ID, order.UserID, order.Pair, order.Side, order.Type,
@@ -292,11 +292,11 @@ func (r *EnhancedRepository) CreateOrderOptimized(ctx context.Context, order *mo
 		order.TrailingOffset, order.ExpireAt, order.OCOGroupID, order.ParentOrderID,
 		order.CreatedAt, order.UpdatedAt,
 	).Error
-	
+
 	duration := time.Since(start)
 	if err != nil {
-		r.logger.Error("Failed to create order", 
-			zap.Error(err), 
+		r.logger.Error("Failed to create order",
+			zap.Error(err),
 			zap.String("order_id", order.ID.String()),
 			zap.Duration("duration", duration))
 		return fmt.Errorf("failed to create order: %w", err)
@@ -304,11 +304,11 @@ func (r *EnhancedRepository) CreateOrderOptimized(ctx context.Context, order *mo
 
 	// Invalidate related caches
 	r.invalidateOrderCaches(ctx, order)
-	
-	r.logger.Debug("Order created successfully", 
+
+	r.logger.Debug("Order created successfully",
 		zap.String("order_id", order.ID.String()),
 		zap.Duration("duration", duration))
-	
+
 	return nil
 }
 
@@ -319,10 +319,10 @@ func (r *EnhancedRepository) UpdateOrderStatusOptimized(ctx context.Context, ord
 		SET status = $2, filled_quantity = $3, average_price = $4, updated_at = $5
 		WHERE id = $1
 	`
-	
+
 	start := time.Now()
 	result := r.db.Writer().WithContext(ctx).Exec(query, orderID, status, filledQty, avgPrice, time.Now())
-	
+
 	duration := time.Since(start)
 	if result.Error != nil {
 		r.logger.Error("Failed to update order status",
@@ -338,12 +338,12 @@ func (r *EnhancedRepository) UpdateOrderStatusOptimized(ctx context.Context, ord
 
 	// Invalidate order cache
 	r.cache.Del(ctx, r.orderCacheKey(orderID))
-	
+
 	r.logger.Debug("Order status updated successfully",
 		zap.String("order_id", orderID.String()),
 		zap.String("status", status),
 		zap.Duration("duration", duration))
-	
+
 	return nil
 }
 
@@ -356,22 +356,22 @@ func (r *EnhancedRepository) BatchCreateTradesOptimized(ctx context.Context, tra
 	// Build batch insert query
 	values := make([]string, len(trades))
 	args := make([]interface{}, 0, len(trades)*7)
-	
+
 	for i, trade := range trades {
-		values[i] = fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)", 
+		values[i] = fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 			i*7+1, i*7+2, i*7+3, i*7+4, i*7+5, i*7+6, i*7+7)
-		args = append(args, trade.ID, trade.OrderID, trade.Pair, 
+		args = append(args, trade.ID, trade.OrderID, trade.Pair,
 			trade.Price, trade.Quantity, trade.Side, trade.CreatedAt)
 	}
-	
+
 	query := fmt.Sprintf(`
 		INSERT INTO trades (id, order_id, symbol, price, quantity, side, created_at) 
 		VALUES %s
 	`, strings.Join(values, ","))
-	
+
 	start := time.Now()
 	err := r.db.Writer().WithContext(ctx).Exec(query, args...).Error
-	
+
 	duration := time.Since(start)
 	if err != nil {
 		r.logger.Error("Failed to batch create trades",
@@ -384,7 +384,7 @@ func (r *EnhancedRepository) BatchCreateTradesOptimized(ctx context.Context, tra
 	r.logger.Debug("Trades batch created successfully",
 		zap.Int("count", len(trades)),
 		zap.Duration("duration", duration))
-	
+
 	return nil
 }
 
@@ -394,19 +394,19 @@ func (r *EnhancedRepository) GetTradeHistoryOptimized(ctx context.Context, userI
 	whereConditions := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
-	
+
 	if userID != uuid.Nil {
 		whereConditions = append(whereConditions, fmt.Sprintf("t.order_id IN (SELECT id FROM orders WHERE user_id = $%d)", argIndex))
 		args = append(args, userID)
 		argIndex++
 	}
-	
+
 	if pair != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("t.symbol = $%d", argIndex))
 		args = append(args, pair)
 		argIndex++
 	}
-	
+
 	query := fmt.Sprintf(`
 		SELECT /*+ INDEX(trades_symbol_created_idx) */ 
 		       t.id, t.order_id, t.symbol, t.price, t.quantity, t.side, t.is_maker, t.created_at
@@ -415,13 +415,13 @@ func (r *EnhancedRepository) GetTradeHistoryOptimized(ctx context.Context, userI
 		ORDER BY t.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, strings.Join(whereConditions, " AND "), argIndex, argIndex+1)
-	
+
 	args = append(args, limit, offset)
-	
+
 	start := time.Now()
 	var trades []*model.Trade
 	err := r.db.Reader().WithContext(ctx).Raw(query, args...).Scan(&trades).Error
-	
+
 	duration := time.Since(start)
 	if duration > 100*time.Millisecond {
 		r.logger.Warn("Slow trade history query",
@@ -429,7 +429,7 @@ func (r *EnhancedRepository) GetTradeHistoryOptimized(ctx context.Context, userI
 			zap.String("pair", pair),
 			zap.Duration("duration", duration))
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get trade history: %w", err)
 	}
@@ -441,10 +441,10 @@ func (r *EnhancedRepository) GetTradeHistoryOptimized(ctx context.Context, userI
 func (r *EnhancedRepository) invalidateOrderCaches(ctx context.Context, order *model.Order) {
 	// Invalidate specific order cache
 	r.cache.Del(ctx, r.orderCacheKey(order.ID))
-	
+
 	// Invalidate user orders cache
 	r.cache.Del(ctx, r.userOrdersCacheKey(order.UserID, "open"))
-	
+
 	// Invalidate pair orders cache
 	r.cache.Del(ctx, r.pairOrdersCacheKey(order.Pair, fmt.Sprintf("open_%s", order.Side)))
 	r.cache.Del(ctx, r.pairOrdersCacheKey(order.Pair, "open_"))
@@ -457,11 +457,11 @@ func (r *EnhancedRepository) ClearUserCache(ctx context.Context, userID uuid.UUI
 	if err != nil {
 		return err
 	}
-	
+
 	if len(keys) > 0 {
 		return r.cache.Del(ctx, keys...).Err()
 	}
-	
+
 	return nil
 }
 
@@ -472,36 +472,36 @@ func (r *EnhancedRepository) ClearPairCache(ctx context.Context, pair string) er
 	if err != nil {
 		return err
 	}
-	
+
 	if len(keys) > 0 {
 		return r.cache.Del(ctx, keys...).Err()
 	}
-	
+
 	return nil
 }
 
 // GetCacheStats returns cache statistics
 func (r *EnhancedRepository) GetCacheStats(ctx context.Context) (map[string]interface{}, error) {
 	info := r.cache.Info(ctx, "stats").Val()
-	
+
 	// Parse basic stats (this is simplified - real implementation would parse the full INFO output)
 	stats := map[string]interface{}{
 		"hits":   0,
 		"misses": 0,
 		"keys":   0,
 	}
-	
+
 	// Get key count for our prefixes
 	orderKeys, _ := r.cache.Keys(ctx, "order:*").Result()
 	userOrderKeys, _ := r.cache.Keys(ctx, "user_orders:*").Result()
 	pairOrderKeys, _ := r.cache.Keys(ctx, "pair_orders:*").Result()
-	
+
 	stats["order_keys"] = len(orderKeys)
 	stats["user_order_keys"] = len(userOrderKeys)
 	stats["pair_order_keys"] = len(pairOrderKeys)
 	stats["total_keys"] = len(orderKeys) + len(userOrderKeys) + len(pairOrderKeys)
 	stats["info"] = info
-	
+
 	return stats, nil
 }
 
