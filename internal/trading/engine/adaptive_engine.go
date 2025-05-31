@@ -14,15 +14,76 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
+
+// Async Risk Checking Data Structures
+
+// RiskCheckRequest represents an async risk check request
+type RiskCheckRequest struct {
+	RequestID string         `json:"request_id"`
+	Order     *model.Order   `json:"order"`
+	Trades    []*model.Trade `json:"trades"`
+	Timestamp time.Time      `json:"timestamp"`
+	UserID    string         `json:"user_id"`
+}
+
+// RiskCheckResult represents the result of an async risk check
+type RiskCheckResult struct {
+	RequestID        string                `json:"request_id"`
+	Approved         bool                  `json:"approved"`
+	Reason           string                `json:"reason,omitempty"`
+	RiskMetrics      *aml.RiskMetrics      `json:"risk_metrics,omitempty"`
+	ComplianceResult *aml.ComplianceResult `json:"compliance_result,omitempty"`
+	ProcessingTime   time.Duration         `json:"processing_time"`
+	Timestamp        time.Time             `json:"timestamp"`
+	Error            error                 `json:"error,omitempty"`
+}
+
+// PendingOrder tracks orders waiting for risk check completion
+type PendingOrder struct {
+	Order         *model.Order   `json:"order"`
+	Trades        []*model.Trade `json:"trades"`
+	RestingOrders []*model.Order `json:"resting_orders"`
+	RequestID     string         `json:"request_id"`
+	SubmittedAt   time.Time      `json:"submitted_at"`
+	ExpiresAt     time.Time      `json:"expires_at"`
+}
+
+// RiskCheckConfig configures async risk checking behavior
+type RiskCheckConfig struct {
+	Enabled             bool          `json:"enabled"`
+	Timeout             time.Duration `json:"timeout"`
+	WorkerCount         int           `json:"worker_count"`
+	BufferSize          int           `json:"buffer_size"`
+	RetryAttempts       int           `json:"retry_attempts"`
+	RetryDelay          time.Duration `json:"retry_delay"`
+	EnableTradeReversal bool          `json:"enable_trade_reversal"`
+	MaxPendingOrders    int           `json:"max_pending_orders"`
+}
+
+// DefaultRiskCheckConfig returns default configuration for async risk checking
+func DefaultRiskCheckConfig() *RiskCheckConfig {
+	return &RiskCheckConfig{
+		Enabled:             true,
+		Timeout:             time.Second * 10,       // 10 second timeout
+		WorkerCount:         4,                      // 4 parallel workers
+		BufferSize:          1000,                   // 1000 pending requests buffer
+		RetryAttempts:       3,                      // 3 retry attempts
+		RetryDelay:          time.Millisecond * 100, // 100ms retry delay
+		EnableTradeReversal: true,                   // Enable trade reversal on risk failure
+		MaxPendingOrders:    5000,                   // Max 5000 pending orders
+	}
+}
 
 // AdaptiveEngineConfig extends the existing Config with adaptive features
 type AdaptiveEngineConfig struct {
@@ -44,6 +105,9 @@ type AdaptiveEngineConfig struct {
 	MigrationCooldownPeriod    time.Duration `json:"migration_cooldown_period"`
 	FallbackOnHighErrorRate    bool          `json:"fallback_on_high_error_rate"`
 	ErrorRateThreshold         float64       `json:"error_rate_threshold"`
+
+	// Async Risk Checking settings
+	RiskCheckConfig *RiskCheckConfig `json:"risk_check_config"`
 }
 
 // AutoMigrationThresholds defines thresholds for automatic migration decisions
@@ -74,6 +138,7 @@ func DefaultAdaptiveEngineConfig() *AdaptiveEngineConfig {
 		MigrationCooldownPeriod:    time.Minute * 5,
 		FallbackOnHighErrorRate:    true,
 		ErrorRateThreshold:         0.02, // 2% error rate threshold
+		RiskCheckConfig:            DefaultRiskCheckConfig(),
 		AutoMigrationThresholds: &AutoMigrationThresholds{
 			LatencyP95ThresholdMs:       50.0,
 			ThroughputDegradationPct:    20.0,
@@ -112,6 +177,16 @@ type AdaptiveMatchingEngine struct {
 
 	// Auto-migration state
 	autoMigrationEnabled int32 // atomic
+
+	// Async risk checking
+	riskService        aml.RiskService
+	riskCheckConfig    *RiskCheckConfig
+	pendingOrders      map[string]*PendingOrder
+	riskResults        map[string]*RiskCheckResult
+	riskMu             sync.RWMutex
+	riskRequestChan    chan RiskCheckRequest
+	riskResultChan     chan RiskCheckResult
+	riskWorkerShutdown chan struct{}
 }
 
 // MigrationState tracks the migration status for a trading pair
@@ -213,13 +288,14 @@ func NewAdaptiveMatchingEngine(
 	config *AdaptiveEngineConfig,
 	eventJournal *eventjournal.EventJournal,
 	wsHub *ws.Hub,
+	riskService aml.RiskService,
 ) *AdaptiveMatchingEngine {
 	// Before calling NewMatchingEngine, instantiate a settlement engine
 	settlementEngine := settlement.NewSettlementEngine()
-	
+
 	// Create a placeholder trigger monitor for the base engine
 	triggerMonitor := &trigger.TriggerMonitor{}
-	
+
 	// Create base engine with existing config
 	baseEngine := NewMatchingEngine(orderRepo, tradeRepo, logger, config.Config, eventJournal, wsHub, dummyRiskManagerType{}, settlementEngine, triggerMonitor)
 
@@ -231,12 +307,23 @@ func NewAdaptiveMatchingEngine(
 		migrationControlChan: make(chan MigrationControlMessage, 100),
 		metricsReportChan:    make(chan MetricsReport, 10),
 		shutdownChan:         make(chan struct{}),
+		riskService:          riskService,
+		riskCheckConfig:      config.RiskCheckConfig,
 	}
 
 	// Initialize monitoring if metrics collection is enabled
 	if config.MetricsCollectionInterval > 0 {
 		ame.metricsCollector = NewEngineMetricsCollector(config.MetricsCollectionInterval)
 		ame.performanceMonitor = NewEnginePerformanceMonitor()
+	}
+
+	// Initialize risk checking if enabled
+	if config.RiskCheckConfig.Enabled {
+		ame.pendingOrders = make(map[string]*PendingOrder)
+		ame.riskResults = make(map[string]*RiskCheckResult)
+		ame.riskRequestChan = make(chan RiskCheckRequest, config.RiskCheckConfig.BufferSize)
+		ame.riskResultChan = make(chan RiskCheckResult, config.RiskCheckConfig.BufferSize)
+		ame.riskWorkerShutdown = make(chan struct{})
 	}
 
 	// Start background workers
@@ -634,6 +721,18 @@ func (ame *AdaptiveMatchingEngine) startBackgroundWorkers() {
 
 	// Metrics reporting worker
 	go ame.metricsReportingWorker()
+
+	// Risk checking workers
+	if ame.adaptiveConfig.RiskCheckConfig.Enabled {
+		// Start multiple risk checking workers
+		for i := 0; i < ame.adaptiveConfig.RiskCheckConfig.WorkerCount; i++ {
+			go ame.riskCheckWorker()
+		}
+		// Start risk result processor
+		go ame.riskResultProcessor()
+		// Start pending order cleanup worker
+		go ame.pendingOrderCleanupWorker()
+	}
 }
 
 // migrationControlWorker handles migration control messages
@@ -1279,4 +1378,450 @@ type OverallPerformanceMetrics struct {
 	OverallThroughput    float64 `json:"overall_throughput"`
 	ActiveMigrations     int     `json:"active_migrations"`
 	MigrationHealthScore float64 `json:"migration_health_score"`
+}
+
+// Async Risk Checking Implementation
+
+// riskCheckWorker processes async risk check requests
+func (ame *AdaptiveMatchingEngine) riskCheckWorker() {
+	for {
+		select {
+		case <-ame.riskWorkerShutdown:
+			return
+		case request := <-ame.riskRequestChan:
+			result := ame.processRiskCheckRequest(request)
+
+			select {
+			case ame.riskResultChan <- result:
+				// Result sent successfully
+			case <-time.After(time.Second):
+				// Timeout sending result, log error
+				ame.logger.Errorw("Failed to send risk check result",
+					"request_id", request.RequestID,
+					"timeout", "1s",
+				)
+			}
+		}
+	}
+}
+
+// processRiskCheckRequest performs the actual risk check
+func (ame *AdaptiveMatchingEngine) processRiskCheckRequest(request RiskCheckRequest) RiskCheckResult {
+	startTime := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), ame.riskCheckConfig.Timeout)
+	defer cancel()
+
+	result := RiskCheckResult{
+		RequestID: request.RequestID,
+		Timestamp: time.Now(),
+		Approved:  false,
+	}
+
+	// Perform position limit check
+	positionAllowed, err := ame.riskService.CheckPositionLimit(
+		ctx,
+		request.UserID,
+		request.Order.Pair,
+		request.Order.Quantity,
+		request.Order.Price,
+	)
+
+	if err != nil {
+		result.Error = err
+		result.Reason = fmt.Sprintf("Position limit check failed: %v", err)
+		result.ProcessingTime = time.Since(startTime)
+		return result
+	}
+
+	if !positionAllowed {
+		result.Reason = "Position limit exceeded"
+		result.ProcessingTime = time.Since(startTime)
+		return result
+	}
+
+	// Calculate risk metrics
+	riskMetrics, err := ame.riskService.CalculateRealTimeRisk(ctx, request.UserID)
+	if err != nil {
+		result.Error = err
+		result.Reason = fmt.Sprintf("Risk calculation failed: %v", err)
+		result.ProcessingTime = time.Since(startTime)
+		return result
+	}
+
+	result.RiskMetrics = riskMetrics
+
+	// Perform compliance check if trades were executed
+	if len(request.Trades) > 0 {
+		for _, trade := range request.Trades {
+			tradeValue := trade.Quantity.Mul(trade.Price)
+			complianceResult, err := ame.riskService.ComplianceCheck(
+				ctx,
+				trade.ID.String(),
+				request.UserID,
+				tradeValue,
+				map[string]interface{}{
+					"pair":     trade.Pair,
+					"order_id": trade.OrderID.String(),
+					"trade_id": trade.ID.String(),
+					"quantity": trade.Quantity.String(),
+					"price":    trade.Price.String(),
+				},
+			)
+
+			if err != nil {
+				result.Error = err
+				result.Reason = fmt.Sprintf("Compliance check failed: %v", err)
+				result.ProcessingTime = time.Since(startTime)
+				return result
+			}
+
+			result.ComplianceResult = complianceResult
+
+			// If compliance check fails, reject the risk check
+			if complianceResult != nil && complianceResult.IsSuspicious {
+				result.Reason = fmt.Sprintf("Compliance violation: %t", complianceResult.AlertRaised)
+				result.ProcessingTime = time.Since(startTime)
+				return result
+			}
+		}
+
+		// Process trades in risk system
+		for _, trade := range request.Trades {
+			err := ame.riskService.ProcessTrade(
+				ctx,
+				trade.ID.String(),
+				request.UserID,
+				trade.Pair,
+				trade.Quantity,
+				trade.Price,
+			)
+
+			if err != nil {
+				ame.logger.Errorw("Failed to process trade in risk system",
+					"trade_id", trade.ID.String(),
+					"user_id", request.UserID,
+					"error", err,
+				)
+				// Continue processing - don't fail the entire risk check for this
+			}
+		}
+	}
+
+	// All checks passed
+	result.Approved = true
+	result.ProcessingTime = time.Since(startTime)
+
+	ame.logger.Debugw("Risk check completed",
+		"request_id", request.RequestID,
+		"user_id", request.UserID,
+		"approved", result.Approved,
+		"processing_time", result.ProcessingTime,
+	)
+
+	return result
+}
+
+// riskResultProcessor processes async risk check results
+func (ame *AdaptiveMatchingEngine) riskResultProcessor() {
+	for {
+		select {
+		case <-ame.riskWorkerShutdown:
+			return
+		case result := <-ame.riskResultChan:
+			ame.handleRiskCheckResult(result)
+		}
+	}
+}
+
+// handleRiskCheckResult handles the result of a risk check
+func (ame *AdaptiveMatchingEngine) handleRiskCheckResult(result RiskCheckResult) {
+	ame.riskMu.Lock()
+	defer ame.riskMu.Unlock()
+
+	// Store the result
+	ame.riskResults[result.RequestID] = &result
+
+	// Get the pending order
+	pendingOrder, exists := ame.pendingOrders[result.RequestID]
+	if !exists {
+		ame.logger.Warnw("No pending order found for risk check result",
+			"request_id", result.RequestID,
+		)
+		return
+	}
+
+	// Remove from pending orders
+	delete(ame.pendingOrders, result.RequestID)
+
+	if !result.Approved {
+		// Risk check failed - cancel the order and reverse trades if necessary
+		ame.handleRiskCheckFailure(pendingOrder, result)
+	} else {
+		// Risk check passed - log success
+		ame.logger.Debugw("Risk check passed for order",
+			"request_id", result.RequestID,
+			"order_id", pendingOrder.Order.ID,
+			"user_id", pendingOrder.Order.UserID,
+			"processing_time", result.ProcessingTime,
+		)
+	}
+}
+
+// handleRiskCheckFailure handles a failed risk check
+func (ame *AdaptiveMatchingEngine) handleRiskCheckFailure(pendingOrder *PendingOrder, result RiskCheckResult) {
+	ame.logger.Warnw("Risk check failed for order",
+		"request_id", result.RequestID,
+		"order_id", pendingOrder.Order.ID,
+		"user_id", pendingOrder.Order.UserID,
+		"reason", result.Reason,
+		"processing_time", result.ProcessingTime,
+	)
+
+	// Cancel the order
+	err := ame.cancelOrderDueToRisk(pendingOrder.Order)
+	if err != nil {
+		ame.logger.Errorw("Failed to cancel order after risk check failure",
+			"order_id", pendingOrder.Order.ID,
+			"error", err,
+		)
+	}
+
+	// Reverse trades if enabled and trades were executed
+	if ame.riskCheckConfig.EnableTradeReversal && len(pendingOrder.Trades) > 0 {
+		err := ame.reverseTradesForRiskFailure(pendingOrder.Trades, result.Reason)
+		if err != nil {
+			ame.logger.Errorw("Failed to reverse trades after risk check failure",
+				"request_id", result.RequestID,
+				"trade_count", len(pendingOrder.Trades),
+				"error", err,
+			)
+		}
+	}
+}
+
+// cancelOrderDueToRisk cancels an order due to risk check failure
+func (ame *AdaptiveMatchingEngine) cancelOrderDueToRisk(order *model.Order) error {
+	// Update order status to cancelled
+	order.Status = model.OrderStatusCancelled
+
+	// Get the order book and remove any remaining quantity
+	orderBook := ame.GetOrderBook(order.Pair)
+
+	// Try to cancel the order from the order book
+	err := orderBook.CancelOrder(order.ID)
+	if err != nil {
+		// Order might have been fully filled already, which is okay
+		ame.logger.Debugw("Could not cancel order from book (might be fully filled)",
+			"order_id", order.ID,
+			"error", err,
+		)
+	}
+
+	// Save the updated order
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	err = ame.orderRepo.UpdateOrder(ctx, order)
+	if err != nil {
+		return fmt.Errorf("failed to update cancelled order: %w", err)
+	}
+
+	ame.logger.Infow("Order cancelled due to risk check failure",
+		"order_id", order.ID,
+		"user_id", order.UserID,
+		"pair", order.Pair,
+	)
+
+	return nil
+}
+
+// reverseTradesForRiskFailure reverses trades when risk check fails
+func (ame *AdaptiveMatchingEngine) reverseTradesForRiskFailure(trades []*model.Trade, reason string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	var reversalErrors []error
+
+	for _, trade := range trades {
+		// Create a reversal trade
+		reversalTrade := &model.Trade{
+			ID:        uuid.New(),
+			OrderID:   trade.OrderID,
+			Pair:      trade.Pair,
+			Quantity:  trade.Quantity.Neg(), // Negative quantity for reversal
+			Price:     trade.Price,
+			Side:      getOppositeSide(trade.Side),
+			CreatedAt: time.Now(),
+		}
+
+		// Save the reversal trade
+		err := ame.tradeRepo.CreateTrade(ctx, reversalTrade)
+		if err != nil {
+			reversalErrors = append(reversalErrors, fmt.Errorf("failed to create reversal trade for %s: %w", trade.ID, err))
+			continue
+		}
+
+		ame.logger.Infow("Trade reversed due to risk check failure",
+			"original_trade_id", trade.ID,
+			"reversal_trade_id", reversalTrade.ID,
+			"reason", reason,
+		)
+	}
+
+	if len(reversalErrors) > 0 {
+		return fmt.Errorf("trade reversal errors: %v", reversalErrors)
+	}
+
+	return nil
+}
+
+// getOppositeSide returns the opposite side for trade reversal
+func getOppositeSide(side string) string {
+	if side == model.OrderSideBuy {
+		return model.OrderSideSell
+	}
+	return model.OrderSideBuy
+}
+
+// pendingOrderCleanupWorker cleans up expired pending orders
+func (ame *AdaptiveMatchingEngine) pendingOrderCleanupWorker() {
+	ticker := time.NewTicker(time.Minute) // Clean up every minute
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ame.riskWorkerShutdown:
+			return
+		case <-ticker.C:
+			ame.cleanupExpiredPendingOrders()
+		}
+	}
+}
+
+// cleanupExpiredPendingOrders removes expired pending orders
+func (ame *AdaptiveMatchingEngine) cleanupExpiredPendingOrders() {
+	ame.riskMu.Lock()
+	defer ame.riskMu.Unlock()
+
+	now := time.Now()
+	var expiredRequestIDs []string
+
+	for requestID, pendingOrder := range ame.pendingOrders {
+		if now.After(pendingOrder.ExpiresAt) {
+			expiredRequestIDs = append(expiredRequestIDs, requestID)
+		}
+	}
+
+	for _, requestID := range expiredRequestIDs {
+		pendingOrder := ame.pendingOrders[requestID]
+		delete(ame.pendingOrders, requestID)
+
+		ame.logger.Warnw("Pending order expired before risk check completion",
+			"request_id", requestID,
+			"order_id", pendingOrder.Order.ID,
+			"submitted_at", pendingOrder.SubmittedAt,
+			"expires_at", pendingOrder.ExpiresAt,
+		)
+
+		// Cancel the expired order
+		err := ame.cancelOrderDueToRisk(pendingOrder.Order)
+		if err != nil {
+			ame.logger.Errorw("Failed to cancel expired pending order",
+				"order_id", pendingOrder.Order.ID,
+				"error", err,
+			)
+		}
+	}
+
+	if len(expiredRequestIDs) > 0 {
+		ame.logger.Infow("Cleaned up expired pending orders",
+			"count", len(expiredRequestIDs),
+		)
+	}
+}
+
+// submitAsyncRiskCheck submits an order for async risk checking
+func (ame *AdaptiveMatchingEngine) submitAsyncRiskCheck(order *model.Order, trades []*model.Trade) (string, error) {
+	if !ame.riskCheckConfig.Enabled {
+		return "", nil // Risk checking disabled
+	}
+
+	// Check if we're at max pending orders limit
+	ame.riskMu.RLock()
+	pendingCount := len(ame.pendingOrders)
+	ame.riskMu.RUnlock()
+
+	if pendingCount >= ame.riskCheckConfig.MaxPendingOrders {
+		return "", fmt.Errorf("maximum pending orders limit reached (%d)", ame.riskCheckConfig.MaxPendingOrders)
+	}
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("risk_%s_%d", order.ID, time.Now().UnixNano())
+
+	// Create risk check request
+	request := RiskCheckRequest{
+		RequestID: requestID,
+		Order:     order,
+		Trades:    trades,
+		Timestamp: time.Now(),
+		UserID:    order.UserID.String(),
+	}
+
+	// Create pending order tracking
+	pendingOrder := &PendingOrder{
+		Order:       order,
+		Trades:      trades,
+		RequestID:   requestID,
+		SubmittedAt: time.Now(),
+		ExpiresAt:   time.Now().Add(ame.riskCheckConfig.Timeout * 2), // Double timeout for expiry
+	}
+
+	// Store pending order
+	ame.riskMu.Lock()
+	ame.pendingOrders[requestID] = pendingOrder
+	ame.riskMu.Unlock()
+
+	// Submit risk check request
+	select {
+	case ame.riskRequestChan <- request:
+		ame.logger.Debugw("Async risk check submitted",
+			"request_id", requestID,
+			"order_id", order.ID,
+			"user_id", order.UserID,
+			"trade_count", len(trades),
+		)
+		return requestID, nil
+	case <-time.After(time.Millisecond * 100):
+		// Remove from pending orders if we can't submit
+		ame.riskMu.Lock()
+		delete(ame.pendingOrders, requestID)
+		ame.riskMu.Unlock()
+
+		return "", fmt.Errorf("risk check request queue full")
+	}
+}
+
+// GetRiskCheckStatus returns the status of a risk check
+func (ame *AdaptiveMatchingEngine) GetRiskCheckStatus(requestID string) (*RiskCheckResult, bool) {
+	if !ame.riskCheckConfig.Enabled {
+		return nil, false
+	}
+
+	ame.riskMu.RLock()
+	defer ame.riskMu.RUnlock()
+
+	result, exists := ame.riskResults[requestID]
+	return result, exists
+}
+
+// GetPendingOrdersCount returns the count of pending orders awaiting risk check
+func (ame *AdaptiveMatchingEngine) GetPendingOrdersCount() int {
+	if !ame.riskCheckConfig.Enabled {
+		return 0
+	}
+
+	ame.riskMu.RLock()
+	defer ame.riskMu.RUnlock()
+
+	return len(ame.pendingOrders)
 }

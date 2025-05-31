@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -101,7 +102,6 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event journal: %w", err)
 	}
-
 	// Create adaptive trading engine
 	adaptiveEngine := engine.NewAdaptiveMatchingEngine(
 		orderRepo,
@@ -110,6 +110,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		adaptiveConfig,
 		eventJournal,
 		wsHub,
+		aml.NewRiskService(),
 	)
 
 	// Create adaptive service
