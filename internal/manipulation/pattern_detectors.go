@@ -7,7 +7,7 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
-	"pincex/internal/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
 
 // =======================

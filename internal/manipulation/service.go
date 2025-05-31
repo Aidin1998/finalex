@@ -685,7 +685,7 @@ func (ms *ManipulationService) UpdateConfig(config ManipulationServiceConfig) er
 	if ms.detector != nil {
 		ms.detector.UpdateConfig(config.DetectionConfig)
 	}
-	
+
 	if ms.alertingService != nil {
 		ms.alertingService.UpdateConfig(config.AlertingConfig)
 	}

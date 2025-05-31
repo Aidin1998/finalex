@@ -112,9 +112,8 @@ type VolumeDistribution struct {
 // calculatePumpDumpIndicators calculates key indicators for pump and dump detection
 func (pdd *PumpDumpDetector) calculatePumpDumpIndicators(activity *TradingActivity) PumpDumpIndicators {
 	indicators := PumpDumpIndicators{}
-
 	// Sort trades by time
-	trades := make([]*Trade, len(activity.Trades))
+	trades := make([]*model.Trade, len(activity.Trades))
 	copy(trades, activity.Trades)
 	sort.Slice(trades, func(i, j int) bool {
 		return trades[i].CreatedAt.Before(trades[j].CreatedAt)
@@ -480,7 +479,7 @@ func (pdd *PumpDumpDetector) buildPumpDumpEvidence(indicators PumpDumpIndicators
 		evidence = append(evidence, Evidence{
 			Type:        "pattern",
 			Description: "Pump and dump phases identified",
-			Value:       fmt.Sprintf("%v", indicators.PhasesDetected),
+			Data:        map[string]interface{}{"value": fmt.Sprintf("%v", indicators.PhasesDetected)},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -489,7 +488,7 @@ func (pdd *PumpDumpDetector) buildPumpDumpEvidence(indicators PumpDumpIndicators
 		evidence = append(evidence, Evidence{
 			Type:        "coordination",
 			Description: "High coordination between participants",
-			Value:       decimal.NewFromFloat(indicators.CoordinationScore).String(),
+			Data:        map[string]interface{}{"value": decimal.NewFromFloat(indicators.CoordinationScore).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -577,7 +576,6 @@ type LayeringIndicators struct {
 // calculateLayeringIndicators calculates key indicators for layering detection
 func (ld *LayeringDetector) calculateLayeringIndicators(activity *TradingActivity) LayeringIndicators {
 	indicators := LayeringIndicators{}
-
 	// 1. Count layers (price levels with multiple orders)
 	indicators.LayerCount = ld.countLayers(activity.Orders)
 
@@ -603,7 +601,7 @@ func (ld *LayeringDetector) calculateLayeringIndicators(activity *TradingActivit
 }
 
 // countLayers counts the number of price levels with multiple orders
-func (ld *LayeringDetector) countLayers(orders []*Order) int {
+func (ld *LayeringDetector) countLayers(orders []*model.Order) int {
 	priceLevels := make(map[string]int)
 
 	for _, order := range orders {
@@ -622,13 +620,13 @@ func (ld *LayeringDetector) countLayers(orders []*Order) int {
 }
 
 // calculateDepthDistortion calculates how much the order book depth is artificially inflated
-func (ld *LayeringDetector) calculateDepthDistortion(orders []*Order) decimal.Decimal {
+func (ld *LayeringDetector) calculateDepthDistortion(orders []*model.Order) decimal.Decimal {
 	if len(orders) == 0 {
 		return decimal.Zero
 	}
 
 	// Group orders by side
-	var bidOrders, askOrders []*Order
+	var bidOrders, askOrders []*model.Order
 	for _, order := range orders {
 		if order.Side == "buy" {
 			bidOrders = append(bidOrders, order)
@@ -646,13 +644,13 @@ func (ld *LayeringDetector) calculateDepthDistortion(orders []*Order) decimal.De
 }
 
 // calculateSideDepthDistortion calculates depth distortion for one side (bid or ask)
-func (ld *LayeringDetector) calculateSideDepthDistortion(orders []*Order) decimal.Decimal {
+func (ld *LayeringDetector) calculateSideDepthDistortion(orders []*model.Order) decimal.Decimal {
 	if len(orders) < 3 {
 		return decimal.Zero
 	}
 
 	// Group by price level
-	priceLevels := make(map[string][]*Order)
+	priceLevels := make(map[string][]*model.Order)
 	for _, order := range orders {
 		priceKey := order.Price.Round(4).String()
 		priceLevels[priceKey] = append(priceLevels[priceKey], order)
@@ -690,15 +688,15 @@ func (ld *LayeringDetector) calculateSideDepthDistortion(orders []*Order) decima
 }
 
 // calculateLayeredCancellationRate calculates cancellation rate for orders in layers
-func (ld *LayeringDetector) calculateLayeredCancellationRate(orders []*Order) decimal.Decimal {
+func (ld *LayeringDetector) calculateLayeredCancellationRate(orders []*model.Order) decimal.Decimal {
 	// Find orders that are part of layers
-	priceLevels := make(map[string][]*Order)
+	priceLevels := make(map[string][]*model.Order)
 	for _, order := range orders {
 		priceKey := order.Price.Round(4).String()
 		priceLevels[priceKey] = append(priceLevels[priceKey], order)
 	}
 
-	var layeredOrders []*Order
+	var layeredOrders []*model.Order
 	for _, levelOrders := range priceLevels {
 		if len(levelOrders) >= 2 { // Part of a layer
 			layeredOrders = append(layeredOrders, levelOrders...)
@@ -720,23 +718,22 @@ func (ld *LayeringDetector) calculateLayeredCancellationRate(orders []*Order) de
 }
 
 // detectSequentialLayers detects sequential layering patterns
-func (ld *LayeringDetector) detectSequentialLayers(orders []*Order) int {
+func (ld *LayeringDetector) detectSequentialLayers(orders []*model.Order) int {
 	if len(orders) < 6 {
 		return 0
 	}
 
 	// Sort orders by time
-	sortedOrders := make([]*Order, len(orders))
+	sortedOrders := make([]*model.Order, len(orders))
 	copy(sortedOrders, orders)
 	sort.Slice(sortedOrders, func(i, j int) bool {
 		return sortedOrders[i].CreatedAt.Before(sortedOrders[j].CreatedAt)
 	})
 
 	var sequentialLayers int
-	var currentSequence []*Order
+	var currentSequence []*model.Order
 
-	for _, order := range sortedOrders {
-		// Check if this order continues the sequence
+	for _, order := range sortedOrders { // Check if this order continues the sequence
 		if ld.isPartOfSequence(order, currentSequence) {
 			currentSequence = append(currentSequence, order)
 		} else {
@@ -745,7 +742,7 @@ func (ld *LayeringDetector) detectSequentialLayers(orders []*Order) int {
 				sequentialLayers++
 			}
 			// Start new sequence
-			currentSequence = []*Order{order}
+			currentSequence = []*model.Order{order}
 		}
 	}
 
@@ -758,7 +755,7 @@ func (ld *LayeringDetector) detectSequentialLayers(orders []*Order) int {
 }
 
 // isPartOfSequence checks if an order is part of a sequential layering pattern
-func (ld *LayeringDetector) isPartOfSequence(order *Order, sequence []*Order) bool {
+func (ld *LayeringDetector) isPartOfSequence(order *model.Order, sequence []*model.Order) bool {
 	if len(sequence) == 0 {
 		return true
 	}
@@ -787,7 +784,7 @@ func (ld *LayeringDetector) isPartOfSequence(order *Order, sequence []*Order) bo
 }
 
 // isValidLayeringSequence checks if a sequence represents valid layering
-func (ld *LayeringDetector) isValidLayeringSequence(sequence []*Order) bool {
+func (ld *LayeringDetector) isValidLayeringSequence(sequence []*model.Order) bool {
 	if len(sequence) < 3 {
 		return false
 	}
@@ -826,14 +823,14 @@ func (ld *LayeringDetector) isValidLayeringSequence(sequence []*Order) bool {
 }
 
 // analyzeSizeProgression analyzes order size progression across layers
-func (ld *LayeringDetector) analyzeSizeProgression(orders []*Order) decimal.Decimal {
+func (ld *LayeringDetector) analyzeSizeProgression(orders []*model.Order) decimal.Decimal {
 	if len(orders) < 4 {
 		return decimal.Zero
 	}
 
 	// Group by side and sort by price
-	bidOrders := make([]*Order, 0)
-	askOrders := make([]*Order, 0)
+	bidOrders := make([]*model.Order, 0)
+	askOrders := make([]*model.Order, 0)
 
 	for _, order := range orders {
 		if order.Side == "buy" {
@@ -851,7 +848,7 @@ func (ld *LayeringDetector) analyzeSizeProgression(orders []*Order) decimal.Deci
 }
 
 // calculateSideProgression calculates size progression for one side
-func (ld *LayeringDetector) calculateSideProgression(orders []*Order, ascending bool) decimal.Decimal {
+func (ld *LayeringDetector) calculateSideProgression(orders []*model.Order, ascending bool) decimal.Decimal {
 	if len(orders) < 3 {
 		return decimal.Zero
 	}
@@ -884,13 +881,13 @@ func (ld *LayeringDetector) calculateSideProgression(orders []*Order, ascending 
 }
 
 // calculateTimeClusterScore calculates how clustered orders are in time
-func (ld *LayeringDetector) calculateTimeClusterScore(orders []*Order) float64 {
+func (ld *LayeringDetector) calculateTimeClusterScore(orders []*model.Order) float64 {
 	if len(orders) < 4 {
 		return 0.0
 	}
 
 	// Sort by time
-	sortedOrders := make([]*Order, len(orders))
+	sortedOrders := make([]*model.Order, len(orders))
 	copy(sortedOrders, orders)
 	sort.Slice(sortedOrders, func(i, j int) bool {
 		return sortedOrders[i].CreatedAt.Before(sortedOrders[j].CreatedAt)
@@ -928,7 +925,7 @@ func (ld *LayeringDetector) calculateTimeClusterScore(orders []*Order) float64 {
 }
 
 // calculatePriceLevelDensity calculates density of orders across price levels
-func (ld *LayeringDetector) calculatePriceLevelDensity(orders []*Order) float64 {
+func (ld *LayeringDetector) calculatePriceLevelDensity(orders []*model.Order) float64 {
 	if len(orders) < 3 {
 		return 0.0
 	}
@@ -1022,7 +1019,7 @@ func (ld *LayeringDetector) buildLayeringEvidence(indicators LayeringIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "structure",
 			Description: "Multiple price levels with layered orders",
-			Value:       decimal.NewFromInt(int64(indicators.LayerCount)).String(),
+			Data:        map[string]interface{}{"value": decimal.NewFromInt(int64(indicators.LayerCount)).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -1031,7 +1028,7 @@ func (ld *LayeringDetector) buildLayeringEvidence(indicators LayeringIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "depth",
 			Description: "Artificial market depth inflation",
-			Value:       indicators.DepthDistortion.String(),
+			Data:        map[string]interface{}{"value": indicators.DepthDistortion.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -1040,7 +1037,7 @@ func (ld *LayeringDetector) buildLayeringEvidence(indicators LayeringIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "cancellation",
 			Description: "High cancellation rate in layered orders",
-			Value:       indicators.CancellationRate.String(),
+			Data:        map[string]interface{}{"value": indicators.CancellationRate.String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -1049,7 +1046,7 @@ func (ld *LayeringDetector) buildLayeringEvidence(indicators LayeringIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "pattern",
 			Description: "Sequential layering patterns detected",
-			Value:       decimal.NewFromInt(int64(indicators.SequentialLayers)).String(),
+			Data:        map[string]interface{}{"value": decimal.NewFromInt(int64(indicators.SequentialLayers)).String()},
 			Timestamp:   time.Now(),
 		})
 	}
@@ -1058,7 +1055,7 @@ func (ld *LayeringDetector) buildLayeringEvidence(indicators LayeringIndicators)
 		evidence = append(evidence, Evidence{
 			Type:        "timing",
 			Description: "Orders clustered in suspicious time patterns",
-			Value:       decimal.NewFromFloat(indicators.TimeClusterScore).String(),
+			Data:        map[string]interface{}{"value": decimal.NewFromFloat(indicators.TimeClusterScore).String()},
 			Timestamp:   time.Now(),
 		})
 	}

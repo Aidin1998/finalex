@@ -246,6 +246,11 @@ func (md *ManipulationDetector) Stop() {
 	close(md.tradeChan)
 }
 
+// Clock returns the current time (can be mocked for testing)
+func (md *ManipulationDetector) Clock() time.Time {
+	return time.Now()
+}
+
 // ProcessOrder processes a new order for manipulation detection
 func (md *ManipulationDetector) ProcessOrder(order *model.Order) {
 	if !md.config.Enabled {
