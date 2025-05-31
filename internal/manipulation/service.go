@@ -267,18 +267,26 @@ func (ms *ManipulationService) Stop(ctx context.Context) error {
 // setupIntegrations sets up integrations with other services
 func (ms *ManipulationService) setupIntegrations(ctx context.Context) error {
 	if ms.config.IntegrationConfig.TradingEngineIntegration && ms.tradingEngine != nil {
-		// Set up trading engine integration
 		ms.logger.Info("Setting up trading engine integration")
-		// In a real implementation, we would register callbacks with the trading engine
+		// Register trade handler to forward trades to manipulation detector
+		ms.tradingEngine.RegisterTradeHandler(func(event engine.TradeEvent) {
+			if event.Trade != nil {
+				ms.detector.ProcessTrade(event.Trade)
+			}
+		})
+		// If the engine supports order handlers, register here for real-time order monitoring
+		// Example (pseudo-code):
+		// ms.tradingEngine.RegisterOrderHandler(func(order *model.Order) {
+		//     ms.detector.ProcessOrder(order)
+		// })
+		// If not, ensure ProcessOrder is called from the trading engine (see engine.go)
 	}
 
 	if ms.config.IntegrationConfig.RiskServiceIntegration && ms.riskService != nil {
-		// Set up risk service integration
 		ms.logger.Info("Setting up risk service integration")
 	}
 
 	if ms.config.IntegrationConfig.DatabaseIntegration && ms.database != nil {
-		// Set up database integration
 		ms.logger.Info("Setting up database integration")
 	}
 

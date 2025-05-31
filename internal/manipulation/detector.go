@@ -7,12 +7,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
 	"github.com/Aidin1998/pincex_unified/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
+
+// TradingEngine defines the enforcement interface for trading engine integration
+// This allows ManipulationDetector to call enforcement actions without tight coupling
+// to a specific engine implementation.
+type TradingEngine interface {
+	CancelOrder(req *engine.CancelRequest) error
+	GetOrderRepository() model.Repository
+}
 
 // ManipulationPattern represents a detected manipulation pattern
 type ManipulationPattern struct {
@@ -115,6 +125,9 @@ type ManipulationDetector struct {
 	tradeChan    chan *model.Trade
 	stopChan     chan struct{}
 	processingWG sync.WaitGroup
+
+	// Trading engine integration (for enforcement actions)
+	tradingEngine TradingEngine
 }
 
 // DetectionConfig contains configuration for manipulation detection
@@ -185,7 +198,7 @@ type OrderBookDepth struct {
 }
 
 // NewManipulationDetector creates a new manipulation detection engine
-func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskService, config DetectionConfig) *ManipulationDetector {
+func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskService, config DetectionConfig, tradingEngine TradingEngine) *ManipulationDetector {
 	md := &ManipulationDetector{
 		logger:         logger,
 		riskService:    riskService,
@@ -196,6 +209,7 @@ func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskSer
 		orderChan:      make(chan *model.Order, 10000),
 		tradeChan:      make(chan *model.Trade, 10000),
 		stopChan:       make(chan struct{}),
+		tradingEngine:  tradingEngine,
 	}
 
 	// Initialize pattern detection engines
@@ -535,12 +549,25 @@ func (md *ManipulationDetector) suspendUserTrading(userID, market, alertID strin
 		"market", market,
 		"alert_id", alertID)
 
-	// Integration with trading engine would go here
-	// This would typically involve:
-	// 1. Cancelling all open orders for the user/market
-	// 2. Adding user to suspension list
-	// 3. Blocking new order submissions
-	// 4. Notifying compliance team
+	// Integration with trading engine: cancel all open orders for the user in the market
+	if md.tradingEngine != nil {
+		ctx := context.Background()
+		// Cancel all open orders for this user and market
+		userUUID, err := uuid.Parse(userID)
+		if err == nil {
+			orders, err := md.tradingEngine.GetOrderRepository().GetOpenOrdersByUser(ctx, userUUID)
+			if err == nil {
+				for _, order := range orders {
+					if order.Pair == market {
+						_ = md.tradingEngine.CancelOrder(&engine.CancelRequest{OrderID: order.ID})
+					}
+				}
+			}
+		}
+		// Optionally: add user to a suspension list (in-memory or persistent)
+		// Optionally: block new order submissions (requires integration with trading service)
+	}
+	// Notify compliance team (already handled by alerting/compliance tooling)
 }
 
 // sendRealTimeAlert sends a real-time alert notification
