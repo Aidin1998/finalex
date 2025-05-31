@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/migration"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -73,7 +73,7 @@ type EngineParticipant struct {
 	id                 string
 	pair               string
 	engine             *engine.AdaptiveMatchingEngine
-	riskManager        risk.RiskService // Risk management integration
+	riskManager        aml.RiskService // Risk management integration
 	logger             *zap.SugaredLogger
 	migrationMu        sync.RWMutex
 	currentMigrationID uuid.UUID
@@ -296,7 +296,7 @@ type EngineCircuitBreaker struct {
 func NewEngineParticipant(
 	pair string,
 	engine *engine.AdaptiveMatchingEngine,
-	riskManager risk.RiskService,
+	riskManager aml.RiskService,
 	logger *zap.SugaredLogger,
 ) *EngineParticipant {
 	p := &EngineParticipant{

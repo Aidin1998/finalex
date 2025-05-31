@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/database"
-	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/gin-gonic/gin"
 
@@ -34,7 +34,7 @@ type ManipulationService struct {
 	// Integration points
 	tradingEngine *engine.MatchingEngine
 	database      *database.OptimizedDatabase
-	riskService   risk.RiskService
+	riskService   aml.RiskService
 
 	// Service state
 	started   bool

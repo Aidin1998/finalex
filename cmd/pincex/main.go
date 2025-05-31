@@ -17,12 +17,12 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/config"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/identities"
 	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
-	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
@@ -238,9 +238,6 @@ func main() {
 	}()
 	// --- END SETTLEMENT PIPELINE WIRING ---
 
-	// Create RiskService
-	riskSvc := risk.NewRiskService()
-
 	// Create API server
 	apiServer := server.NewServer(
 		zapLogger,
@@ -252,7 +249,7 @@ func main() {
 		tradingSvc,
 		wsHub,
 		tieredRateLimiter,
-		riskSvc,
+		aml.NewRiskService(),
 	)
 
 	// Initialize transaction API

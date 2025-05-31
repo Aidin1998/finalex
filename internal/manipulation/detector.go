@@ -11,7 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
-	"github.com/Aidin1998/pincex_unified/internal/risk"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
@@ -98,7 +98,7 @@ type DetectedPattern struct {
 type ManipulationDetector struct {
 	mu          sync.RWMutex
 	logger      *zap.SugaredLogger
-	riskService risk.RiskService
+	riskService aml.RiskService
 
 	// Detection configuration
 	config DetectionConfig
@@ -198,7 +198,7 @@ type OrderBookDepth struct {
 }
 
 // NewManipulationDetector creates a new manipulation detection engine
-func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskService, config DetectionConfig, tradingEngine TradingEngine) *ManipulationDetector {
+func NewManipulationDetector(logger *zap.SugaredLogger, riskService aml.RiskService, config DetectionConfig, tradingEngine TradingEngine) *ManipulationDetector {
 	md := &ManipulationDetector{
 		logger:         logger,
 		riskService:    riskService,
