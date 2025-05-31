@@ -38,7 +38,7 @@ type Server struct {
 	tradingSvc        trading.TradingService
 	wsHub             *ws.Hub
 	tieredRateLimiter *auth.TieredRateLimiter
-	riskSvc           risk.RiskService
+	riskSvc           aml.RiskService
 }
 
 // NewServer creates a new HTTP server
@@ -52,7 +52,7 @@ func NewServer(
 	tradingSvc trading.TradingService,
 	wsHub *ws.Hub,
 	tieredRateLimiter *auth.TieredRateLimiter,
-	riskSvc risk.RiskService,
+	riskSvc aml.RiskService,
 ) *Server {
 	return &Server{
 		logger:            logger,
@@ -809,7 +809,7 @@ func (s *Server) handleCreateRiskLimit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit value"})
 		return
 	}
-	if err := s.riskSvc.CreateRiskLimit(c.Request.Context(), risk.LimitType(req.Type), req.ID, limVal); err != nil {
+	if err := s.riskSvc.CreateRiskLimit(c.Request.Context(), aml.LimitType(req.Type), req.ID, limVal); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -832,7 +832,7 @@ func (s *Server) handleUpdateRiskLimit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit value"})
 		return
 	}
-	if err := s.riskSvc.UpdateRiskLimit(c.Request.Context(), risk.LimitType(limitType), id, limVal); err != nil {
+	if err := s.riskSvc.UpdateRiskLimit(c.Request.Context(), aml.LimitType(limitType), id, limVal); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -842,7 +842,7 @@ func (s *Server) handleUpdateRiskLimit(c *gin.Context) {
 func (s *Server) handleDeleteRiskLimit(c *gin.Context) {
 	limitType := c.Param("type")
 	id := c.Param("id")
-	if err := s.riskSvc.DeleteRiskLimit(c.Request.Context(), risk.LimitType(limitType), id); err != nil {
+	if err := s.riskSvc.DeleteRiskLimit(c.Request.Context(), aml.LimitType(limitType), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -987,7 +987,7 @@ func (s *Server) handleUpdateComplianceAlert(c *gin.Context) {
 
 // handleAddComplianceRule adds a new compliance rule
 func (s *Server) handleAddComplianceRule(c *gin.Context) {
-	var rule risk.ComplianceRule
+	var rule aml.ComplianceRule
 	if err := c.ShouldBindJSON(&rule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

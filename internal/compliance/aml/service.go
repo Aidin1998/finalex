@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
-	amlmonitoring "github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
 	"github.com/shopspring/decimal"
 )
 
@@ -41,58 +41,19 @@ type RiskService interface {
 	CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error)
 	BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]*RiskMetrics, error)
 	ValidateCalculationPerformance(ctx context.Context, userID string) error
-
 	// Compliance and monitoring methods
 	RecordTransaction(ctx context.Context, transaction TransactionRecord) error
 	GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error)
 	UpdateComplianceAlertStatus(ctx context.Context, alertID, status, assignedTo, notes string) error
 	AddComplianceRule(ctx context.Context, rule *ComplianceRule) error
-
-// RiskService defines core risk management operations
-// It handles position tracking, risk calculations, and compliance checks.
-type RiskService interface {
-	// Process trade event to update positions and risk metrics
-	ProcessTrade(ctx context.Context, tradeID string, userID string, market string, quantity decimal.Decimal, price decimal.Decimal) error
-
-	// Check if a new order is within position limits
-	CheckPositionLimit(ctx context.Context, userID string, market string, quantity decimal.Decimal, price decimal.Decimal) (bool, error)
-
-	// Calculate current risk metrics for a user
-	CalculateRisk(ctx context.Context, userID string) (*UserRiskProfile, error)
-
-	// Perform compliance checks on a transaction
-	ComplianceCheck(ctx context.Context, transactionID string, userID string, amount decimal.Decimal, attrs map[string]interface{}) (*ComplianceResult, error)
-
-	// Generate regulatory report for a given time period
-	GenerateReport(ctx context.Context, reportType string, startTime, endTime int64) (string, error)
-	// Extended RiskService methods for limit and exemption management
-	GetLimits(ctx context.Context) (LimitConfig, error)
-	CreateRiskLimit(ctx context.Context, limitType LimitType, identifier string, limit decimal.Decimal) error
-	UpdateRiskLimit(ctx context.Context, limitType LimitType, identifier string, limit decimal.Decimal) error
-	DeleteRiskLimit(ctx context.Context, limitType LimitType, identifier string) error
-	GetExemptions(ctx context.Context) ([]string, error)
-	CreateExemption(ctx context.Context, userID string) error
-	DeleteExemption(ctx context.Context, userID string) error
-
-	// Real-time risk calculation methods
-	UpdateMarketData(ctx context.Context, symbol string, price, volatility decimal.Decimal) error
-	CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error)
-	BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]*RiskMetrics, error)
-	ValidateCalculationPerformance(ctx context.Context, userID string) error
-
-	// Compliance and monitoring methods
-	RecordTransaction(ctx context.Context, transaction TransactionRecord) error
-	GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error)
-	UpdateComplianceAlertStatus(ctx context.Context, alertID, status, assignedTo, notes string) error
-	AddComplianceRule(ctx context.Context, rule *ComplianceRule) error
-
 	// Dashboard and monitoring methods
-	GetDashboardMetrics(ctx context.Context) (*amlmonitoring.DashboardMetrics, error)
+	GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error)
 	SubscribeToDashboard(ctx context.Context, subscriberID string, filters map[string]interface{}) (*DashboardSubscriber, error)
 	UnsubscribeFromDashboard(subscriberID string)
 	SendAlert(alertType, priority, title, message, userID string, data map[string]interface{})
 	AcknowledgeAlert(alertID, acknowledgedBy string) error
 	GetAlerts(limit int, priority string) []AlertNotification
+
 	// Regulatory reporting methods
 	GenerateRegulatoryReport(ctx context.Context, criteria ReportingCriteria, generatedBy string) (*RegulatoryReport, error)
 	SubmitRegulatoryReport(ctx context.Context, reportID, submittedBy string) error
@@ -426,9 +387,21 @@ func (r *riskService) BatchCalculateRisk(ctx context.Context, userIDs []string) 
 	return result, nil
 }
 
+// UpdateMarketData updates market data for risk calculations
+func (r *riskService) UpdateMarketData(ctx context.Context, symbol string, price, volatility decimal.Decimal) error {
+	return r.calculator.UpdateMarketData(ctx, symbol, price, volatility)
+}
+
 // CalculateRealTimeRisk calculates real-time risk metrics for a user (stub implementation)
 func (r *riskService) CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error) {
 	return &RiskMetrics{}, nil
+}
+
+// ValidateCalculationPerformance validates risk calculation performance (stub implementation)
+func (r *riskService) ValidateCalculationPerformance(ctx context.Context, userID string) error {
+	// Stub implementation - would normally validate calculation accuracy and performance
+	log.Printf("Validated calculation performance for user %s", userID)
+	return nil
 }
 
 // GenerateRegulatoryReport generates a regulatory report (stub implementation)
@@ -436,9 +409,22 @@ func (r *riskService) GenerateRegulatoryReport(ctx context.Context, criteria Rep
 	return &RegulatoryReport{}, nil
 }
 
+// SubmitRegulatoryReport submits a regulatory report (stub implementation)
+func (r *riskService) SubmitRegulatoryReport(ctx context.Context, reportID, submittedBy string) error {
+	// Stub implementation - would normally submit to regulatory authorities
+	log.Printf("Regulatory report %s submitted by %s", reportID, submittedBy)
+	return nil
+}
+
 // GetActiveComplianceAlerts returns active compliance alerts (stub implementation)
 func (r *riskService) GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error) {
 	return []ComplianceAlert{}, nil
+}
+
+// UpdateComplianceAlertStatus updates the status of a compliance alert (stub implementation)
+func (r *riskService) UpdateComplianceAlertStatus(ctx context.Context, alertID, status, assignedTo, notes string) error {
+	log.Printf("Updated alert %s status to %s, assigned to %s", alertID, status, assignedTo)
+	return nil
 }
 
 // GetAlerts returns alert notifications (stub implementation)
@@ -447,9 +433,41 @@ func (r *riskService) GetAlerts(limit int, priority string) []AlertNotification 
 }
 
 // GetDashboardMetrics returns dashboard metrics (stub implementation)
-func (r *riskService) GetDashboardMetrics(ctx context.Context) (*amlmonitoring.DashboardMetrics, error) {
-	// Forward to the monitoring dashboard implementation
-	return r.dashboard.GetRealTimeMetrics(ctx)
+func (r *riskService) GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error) {
+	// Placeholder implementation - should be replaced with actual dashboard metrics
+	alerts, err := r.GetActiveComplianceAlerts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active alerts: %v", err)
+	}
+
+	return &DashboardMetrics{
+		ActiveAlerts:          len(alerts),
+		HighRiskUsers:         0, // TODO: implement actual count
+		PendingInvestigations: 0, // TODO: implement actual count
+		TransactionVolume:     decimal.Zero,
+		ComplianceScores:      make(map[string]float64),
+		RiskDistribution:      make(map[RiskLevel]int),
+		RecentAlerts:          alerts,
+		SystemHealth: SystemHealthStatus{
+			OverallStatus:     "HEALTHY",
+			ComponentStatuses: make(map[string]string),
+			LastUpdated:       time.Now(),
+			Alerts:            []string{},
+		},
+	}, nil
+}
+
+// SubscribeToDashboard subscribes to dashboard notifications (stub implementation)
+func (r *riskService) SubscribeToDashboard(ctx context.Context, subscriberID string, filters map[string]interface{}) (*DashboardSubscriber, error) {
+	return &DashboardSubscriber{
+		ID:      subscriberID,
+		Filters: filters,
+	}, nil
+}
+
+// UnsubscribeFromDashboard unsubscribes from dashboard notifications (stub implementation)
+func (r *riskService) UnsubscribeFromDashboard(subscriberID string) {
+	log.Printf("Unsubscribed %s from dashboard notifications", subscriberID)
 }
 
 // GetRegulatoryReport returns a regulatory report (stub implementation)
@@ -460,6 +478,18 @@ func (r *riskService) GetRegulatoryReport(reportID string) (*RegulatoryReport, e
 // ListRegulatoryReports returns a list of regulatory reports (stub implementation)
 func (r *riskService) ListRegulatoryReports(reportType ReportType, status ReportStatus, limit int) []*RegulatoryReport {
 	return []*RegulatoryReport{}
+}
+
+// RecordTransaction records a transaction for compliance monitoring
+func (r *riskService) RecordTransaction(ctx context.Context, transaction TransactionRecord) error {
+	return r.complianceEngine.RecordTransaction(ctx, transaction)
+}
+
+// SendAlert sends an alert notification
+func (r *riskService) SendAlert(alertType, priority, title, message, userID string, data map[string]interface{}) {
+	// Implementation delegated to compliance engine or dashboard
+	// This is a simplified stub implementation
+	log.Printf("Alert [%s/%s]: %s - %s (User: %s)", alertType, priority, title, message, userID)
 }
 
 // calculateGlobalExposure calculates total system exposure

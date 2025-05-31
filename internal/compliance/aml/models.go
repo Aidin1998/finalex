@@ -297,16 +297,35 @@ type ComplianceRule struct {
 	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
-// DashboardSubscriber represents a dashboard subscription
-type DashboardSubscriber struct {
-	ID        string                 `json:"id"`
-	UserID    string                 `json:"user_id"`
-	Filters   map[string]interface{} `json:"filters"`
-	Active    bool                   `json:"active"`
-	CreatedAt time.Time              `json:"created_at"`
+// DashboardMetrics represents metrics displayed on the monitoring dashboard
+type DashboardMetrics struct {
+	ActiveAlerts          int                `json:"active_alerts"`
+	HighRiskUsers         int                `json:"high_risk_users"`
+	PendingInvestigations int                `json:"pending_investigations"`
+	TransactionVolume     decimal.Decimal    `json:"transaction_volume"`
+	ComplianceScores      map[string]float64 `json:"compliance_scores"`
+	RiskDistribution      map[RiskLevel]int  `json:"risk_distribution"`
+	RecentAlerts          []ComplianceAlert  `json:"recent_alerts"`
+	SystemHealth          SystemHealthStatus `json:"system_health"`
 }
 
-// AlertNotification represents a system alert notification
+// SystemHealthStatus represents the health status of monitoring systems
+type SystemHealthStatus struct {
+	OverallStatus     string            `json:"overall_status"`
+	ComponentStatuses map[string]string `json:"component_statuses"`
+	LastUpdated       time.Time         `json:"last_updated"`
+	Alerts            []string          `json:"alerts"`
+}
+
+// DashboardSubscriber represents a subscriber to dashboard updates
+type DashboardSubscriber struct {
+	ID         string                 `json:"id"`
+	Filters    map[string]interface{} `json:"filters"`
+	LastUpdate time.Time              `json:"last_update"`
+	IsActive   bool                   `json:"is_active"`
+}
+
+// AlertNotification represents an alert notification
 type AlertNotification struct {
 	ID             string                 `json:"id"`
 	Type           string                 `json:"type"`
@@ -315,10 +334,9 @@ type AlertNotification struct {
 	Message        string                 `json:"message"`
 	UserID         string                 `json:"user_id"`
 	Data           map[string]interface{} `json:"data"`
-	Acknowledged   bool                   `json:"acknowledged"`
-	AcknowledgedBy string                 `json:"acknowledged_by"`
-	AcknowledgedAt *time.Time             `json:"acknowledged_at"`
 	CreatedAt      time.Time              `json:"created_at"`
+	AcknowledgedBy string                 `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt *time.Time             `json:"acknowledged_at,omitempty"`
 }
 
 // ReportingCriteria defines criteria for regulatory reporting

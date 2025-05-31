@@ -7,13 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pincex/internal/compliance/aml/actions"
-	"github.com/pincex/internal/compliance/aml/analytics"
-	"github.com/pincex/internal/compliance/aml/detection"
-	"github.com/pincex/internal/compliance/aml/models"
-	"github.com/pincex/internal/compliance/aml/monitoring"
-	"github.com/pincex/internal/compliance/aml/rules"
-	"github.com/pincex/internal/compliance/aml/scoring"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/rules"
 )
 
 // TestConfig holds configuration for AML testing
