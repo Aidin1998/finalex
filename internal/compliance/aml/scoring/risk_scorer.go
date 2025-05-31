@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -16,8 +15,7 @@ import (
 type RiskScorer struct {
 	mu          sync.RWMutex
 	logger      *zap.SugaredLogger
-	riskService risk.RiskService
-	calculator  *risk.RiskCalculator
+	riskService aml.RiskService
 
 	// Scoring models
 	models map[string]*ScoringModel
@@ -74,7 +72,7 @@ type HistoricalScore struct {
 }
 
 // NewRiskScorer creates a new AML risk scorer
-func NewRiskScorer(riskService risk.RiskService, logger *zap.SugaredLogger) *RiskScorer {
+func NewRiskScorer(riskService aml.RiskService, logger *zap.SugaredLogger) *RiskScorer {
 	scorer := &RiskScorer{
 		logger:         logger,
 		riskService:    riskService,

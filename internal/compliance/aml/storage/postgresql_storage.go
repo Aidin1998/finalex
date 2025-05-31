@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/models"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
 )
 
@@ -314,7 +314,7 @@ func (s *PostgreSQLStorage) initializeSchema() error {
 }
 
 // AMLUser methods
-func (s *PostgreSQLStorage) CreateAMLUser(ctx context.Context, user *models.AMLUser) error {
+func (s *PostgreSQLStorage) CreateAMLUser(ctx context.Context, user *aml.AMLUser) error {
 	profileData, _ := json.Marshal(user.ProfileData)
 
 	query := `
@@ -333,8 +333,8 @@ func (s *PostgreSQLStorage) CreateAMLUser(ctx context.Context, user *models.AMLU
 	return err
 }
 
-func (s *PostgreSQLStorage) GetAMLUser(ctx context.Context, userID string) (*models.AMLUser, error) {
-	var user models.AMLUser
+func (s *PostgreSQLStorage) GetAMLUser(ctx context.Context, userID string) (*aml.AMLUser, error) {
+	var user aml.AMLUser
 	var profileData []byte
 
 	query := `
@@ -360,7 +360,7 @@ func (s *PostgreSQLStorage) GetAMLUser(ctx context.Context, userID string) (*mod
 	return &user, nil
 }
 
-func (s *PostgreSQLStorage) UpdateAMLUser(ctx context.Context, user *models.AMLUser) error {
+func (s *PostgreSQLStorage) UpdateAMLUser(ctx context.Context, user *aml.AMLUser) error {
 	profileData, _ := json.Marshal(user.ProfileData)
 
 	query := `
@@ -379,7 +379,7 @@ func (s *PostgreSQLStorage) UpdateAMLUser(ctx context.Context, user *models.AMLU
 }
 
 // Transaction methods
-func (s *PostgreSQLStorage) CreateTransaction(ctx context.Context, tx *models.Transaction) error {
+func (s *PostgreSQLStorage) CreateTransaction(ctx context.Context, tx *aml.Transaction) error {
 	metadata, _ := json.Marshal(tx.Metadata)
 
 	query := `
@@ -396,8 +396,8 @@ func (s *PostgreSQLStorage) CreateTransaction(ctx context.Context, tx *models.Tr
 	return err
 }
 
-func (s *PostgreSQLStorage) GetTransaction(ctx context.Context, transactionID string) (*models.Transaction, error) {
-	var tx models.Transaction
+func (s *PostgreSQLStorage) GetTransaction(ctx context.Context, transactionID string) (*aml.Transaction, error) {
+	var tx aml.Transaction
 	var metadata []byte
 
 	query := `
@@ -421,7 +421,7 @@ func (s *PostgreSQLStorage) GetTransaction(ctx context.Context, transactionID st
 	return &tx, nil
 }
 
-func (s *PostgreSQLStorage) GetUserTransactions(ctx context.Context, userID string, limit int) ([]*models.Transaction, error) {
+func (s *PostgreSQLStorage) GetUserTransactions(ctx context.Context, userID string, limit int) ([]*aml.Transaction, error) {
 	query := `
 		SELECT id, transaction_id, user_id, from_address, to_address, asset, amount,
 			fee, transaction_type, risk_score, suspicious, timestamp, metadata, created_at
@@ -436,9 +436,9 @@ func (s *PostgreSQLStorage) GetUserTransactions(ctx context.Context, userID stri
 	}
 	defer rows.Close()
 
-	var transactions []*models.Transaction
+	var transactions []*aml.Transaction
 	for rows.Next() {
-		var tx models.Transaction
+		var tx aml.Transaction
 		var metadata []byte
 
 		err := rows.Scan(
@@ -461,7 +461,7 @@ func (s *PostgreSQLStorage) GetUserTransactions(ctx context.Context, userID stri
 }
 
 // Suspicious Activity methods
-func (s *PostgreSQLStorage) CreateSuspiciousActivity(ctx context.Context, activity *models.SuspiciousActivity) error {
+func (s *PostgreSQLStorage) CreateSuspiciousActivity(ctx context.Context, activity *aml.SuspiciousActivity) error {
 	evidence, _ := json.Marshal(activity.Evidence)
 
 	query := `
@@ -478,8 +478,8 @@ func (s *PostgreSQLStorage) CreateSuspiciousActivity(ctx context.Context, activi
 	return err
 }
 
-func (s *PostgreSQLStorage) GetSuspiciousActivity(ctx context.Context, id uint) (*models.SuspiciousActivity, error) {
-	var activity models.SuspiciousActivity
+func (s *PostgreSQLStorage) GetSuspiciousActivity(ctx context.Context, id uint) (*aml.SuspiciousActivity, error) {
+	var activity aml.SuspiciousActivity
 	var evidence []byte
 
 	query := `
@@ -505,7 +505,7 @@ func (s *PostgreSQLStorage) GetSuspiciousActivity(ctx context.Context, id uint) 
 	return &activity, nil
 }
 
-func (s *PostgreSQLStorage) UpdateSuspiciousActivity(ctx context.Context, activity *models.SuspiciousActivity) error {
+func (s *PostgreSQLStorage) UpdateSuspiciousActivity(ctx context.Context, activity *aml.SuspiciousActivity) error {
 	evidence, _ := json.Marshal(activity.Evidence)
 
 	query := `
@@ -522,7 +522,7 @@ func (s *PostgreSQLStorage) UpdateSuspiciousActivity(ctx context.Context, activi
 }
 
 // Compliance Action methods
-func (s *PostgreSQLStorage) CreateComplianceAction(ctx context.Context, action *models.ComplianceAction) error {
+func (s *PostgreSQLStorage) CreateComplianceAction(ctx context.Context, action *aml.ComplianceAction) error {
 	details, _ := json.Marshal(action.Details)
 
 	query := `
@@ -538,7 +538,7 @@ func (s *PostgreSQLStorage) CreateComplianceAction(ctx context.Context, action *
 	return err
 }
 
-func (s *PostgreSQLStorage) GetUserComplianceActions(ctx context.Context, userID string) ([]*models.ComplianceAction, error) {
+func (s *PostgreSQLStorage) GetUserComplianceActions(ctx context.Context, userID string) ([]*aml.ComplianceAction, error) {
 	query := `
 		SELECT id, user_id, action_type, reason, automated, taken_by, details,
 			effective_date, expiry_date, reversed, reversed_at, reversed_by, created_at
@@ -552,9 +552,9 @@ func (s *PostgreSQLStorage) GetUserComplianceActions(ctx context.Context, userID
 	}
 	defer rows.Close()
 
-	var actions []*models.ComplianceAction
+	var actions []*aml.ComplianceAction
 	for rows.Next() {
-		var action models.ComplianceAction
+		var action aml.ComplianceAction
 		var details []byte
 
 		err := rows.Scan(
@@ -578,7 +578,7 @@ func (s *PostgreSQLStorage) GetUserComplianceActions(ctx context.Context, userID
 }
 
 // Investigation Case methods
-func (s *PostgreSQLStorage) CreateInvestigationCase(ctx context.Context, case_ *models.InvestigationCase) error {
+func (s *PostgreSQLStorage) CreateInvestigationCase(ctx context.Context, case_ *aml.InvestigationCase) error {
 	evidence, _ := json.Marshal(case_.Evidence)
 
 	query := `
@@ -595,8 +595,8 @@ func (s *PostgreSQLStorage) CreateInvestigationCase(ctx context.Context, case_ *
 	return err
 }
 
-func (s *PostgreSQLStorage) GetInvestigationCase(ctx context.Context, id uint) (*models.InvestigationCase, error) {
-	var case_ models.InvestigationCase
+func (s *PostgreSQLStorage) GetInvestigationCase(ctx context.Context, id uint) (*aml.InvestigationCase, error) {
+	var case_ aml.InvestigationCase
 	var evidence []byte
 
 	query := `
@@ -622,7 +622,7 @@ func (s *PostgreSQLStorage) GetInvestigationCase(ctx context.Context, id uint) (
 	return &case_, nil
 }
 
-func (s *PostgreSQLStorage) UpdateInvestigationCase(ctx context.Context, case_ *models.InvestigationCase) error {
+func (s *PostgreSQLStorage) UpdateInvestigationCase(ctx context.Context, case_ *aml.InvestigationCase) error {
 	evidence, _ := json.Marshal(case_.Evidence)
 
 	query := `
@@ -641,7 +641,7 @@ func (s *PostgreSQLStorage) UpdateInvestigationCase(ctx context.Context, case_ *
 }
 
 // Regulatory Report methods
-func (s *PostgreSQLStorage) CreateRegulatoryReport(ctx context.Context, report *models.RegulatoryReport) error {
+func (s *PostgreSQLStorage) CreateRegulatoryReport(ctx context.Context, report *aml.RegulatoryReport) error {
 	data, _ := json.Marshal(report.Data)
 
 	query := `
@@ -659,8 +659,8 @@ func (s *PostgreSQLStorage) CreateRegulatoryReport(ctx context.Context, report *
 	return err
 }
 
-func (s *PostgreSQLStorage) GetRegulatoryReport(ctx context.Context, reportID string) (*models.RegulatoryReport, error) {
-	var report models.RegulatoryReport
+func (s *PostgreSQLStorage) GetRegulatoryReport(ctx context.Context, reportID string) (*aml.RegulatoryReport, error) {
+	var report aml.RegulatoryReport
 	var data []byte
 
 	query := `

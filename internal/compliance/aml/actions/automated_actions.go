@@ -785,7 +785,6 @@ func (we *WorkflowEngine) executeWorkflowStep(ctx context.Context, step Workflow
 	}
 
 	startTime := time.Now()
-
 	// Create action from workflow step
 	action := &Action{
 		ID:         step.ID,
@@ -797,6 +796,7 @@ func (we *WorkflowEngine) executeWorkflowStep(ctx context.Context, step Workflow
 
 	// This would integrate with the action execution system
 	// For now, simulate successful execution
+	action.Status = StatusCompleted
 	stepResult.Status = "completed"
 	stepResult.Duration = time.Since(startTime)
 

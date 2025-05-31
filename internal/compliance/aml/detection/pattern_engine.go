@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/risk"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -17,9 +16,8 @@ import (
 type PatternEngine struct {
 	mu     sync.RWMutex
 	logger *zap.SugaredLogger
-
 	// Integration with existing compliance engine
-	complianceEngine *risk.ComplianceEngine
+	complianceEngine *ComplianceEngine
 
 	// Pattern detection configuration
 	config PatternConfig
@@ -49,7 +47,7 @@ type PatternStats struct {
 }
 
 // NewPatternEngine creates a new AML pattern detection engine
-func NewPatternEngine(complianceEngine *risk.ComplianceEngine, logger *zap.SugaredLogger) *PatternEngine {
+func NewPatternEngine(complianceEngine *ComplianceEngine, logger *zap.SugaredLogger) *PatternEngine {
 	return &PatternEngine{
 		logger:           logger,
 		complianceEngine: complianceEngine,
@@ -66,7 +64,7 @@ func NewPatternEngine(complianceEngine *risk.ComplianceEngine, logger *zap.Sugar
 }
 
 // DetectPatterns analyzes transactions for suspicious patterns using existing compliance engine
-func (pe *PatternEngine) DetectPatterns(ctx context.Context, userID uuid.UUID, transactions []risk.TransactionRecord) ([]*aml.SuspiciousActivity, error) {
+func (pe *PatternEngine) DetectPatterns(ctx context.Context, userID uuid.UUID, transactions []TransactionRecord) ([]*aml.SuspiciousActivity, error) {
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 
@@ -103,7 +101,7 @@ func (pe *PatternEngine) DetectPatterns(ctx context.Context, userID uuid.UUID, t
 }
 
 // convertAlertToSuspiciousActivity converts compliance alert to suspicious activity
-func (pe *PatternEngine) convertAlertToSuspiciousActivity(alert risk.ComplianceAlert) *aml.SuspiciousActivity {
+func (pe *PatternEngine) convertAlertToSuspiciousActivity(alert ComplianceAlert) *aml.SuspiciousActivity {
 	// Map severity to risk level
 	var riskLevel aml.RiskLevel
 	switch alert.Severity {

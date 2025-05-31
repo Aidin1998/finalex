@@ -169,6 +169,8 @@ type InvestigationCase struct {
 	Resolution  string                 `json:"resolution" db:"resolution"`
 	SARFiled    bool                   `json:"sar_filed" db:"sar_filed"`
 	SARReportID *uuid.UUID             `json:"sar_report_id" db:"sar_report_id"`
+	IsEscalated bool                   `json:"is_escalated" db:"is_escalated"`
+	EscalatedAt *time.Time             `json:"escalated_at" db:"escalated_at"`
 	CreatedAt   time.Time              `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at" db:"updated_at"`
 }

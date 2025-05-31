@@ -6,9 +6,47 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shopspring/decimal"
 	amlmonitoring "github.com/Aidin1998/pincex_unified/internal/compliance/aml/monitoring"
+	"github.com/shopspring/decimal"
 )
+
+// RiskService defines core risk management operations
+// It handles position tracking, risk calculations, and compliance checks.
+type RiskService interface {
+	// Process trade event to update positions and risk metrics
+	ProcessTrade(ctx context.Context, tradeID string, userID string, market string, quantity decimal.Decimal, price decimal.Decimal) error
+
+	// Check if a new order is within position limits
+	CheckPositionLimit(ctx context.Context, userID string, market string, quantity decimal.Decimal, price decimal.Decimal) (bool, error)
+
+	// Calculate current risk metrics for a user
+	CalculateRisk(ctx context.Context, userID string) (*UserRiskProfile, error)
+
+	// Perform compliance checks on a transaction
+	ComplianceCheck(ctx context.Context, transactionID string, userID string, amount decimal.Decimal, attrs map[string]interface{}) (*ComplianceResult, error)
+
+	// Generate regulatory report for a given time period
+	GenerateReport(ctx context.Context, reportType string, startTime, endTime int64) (string, error)
+	// Extended RiskService methods for limit and exemption management
+	GetLimits(ctx context.Context) (LimitConfig, error)
+	CreateRiskLimit(ctx context.Context, limitType LimitType, identifier string, limit decimal.Decimal) error
+	UpdateRiskLimit(ctx context.Context, limitType LimitType, identifier string, limit decimal.Decimal) error
+	DeleteRiskLimit(ctx context.Context, limitType LimitType, identifier string) error
+	GetExemptions(ctx context.Context) ([]string, error)
+	CreateExemption(ctx context.Context, userID string) error
+	DeleteExemption(ctx context.Context, userID string) error
+
+	// Real-time risk calculation methods
+	UpdateMarketData(ctx context.Context, symbol string, price, volatility decimal.Decimal) error
+	CalculateRealTimeRisk(ctx context.Context, userID string) (*RiskMetrics, error)
+	BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]*RiskMetrics, error)
+	ValidateCalculationPerformance(ctx context.Context, userID string) error
+
+	// Compliance and monitoring methods
+	RecordTransaction(ctx context.Context, transaction TransactionRecord) error
+	GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error)
+	UpdateComplianceAlertStatus(ctx context.Context, alertID, status, assignedTo, notes string) error
+	AddComplianceRule(ctx context.Context, rule *ComplianceRule) error
 
 // RiskService defines core risk management operations
 // It handles position tracking, risk calculations, and compliance checks.
