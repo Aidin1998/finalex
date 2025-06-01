@@ -300,7 +300,6 @@ func (config *RiskManagementConfig) ToAsyncRiskConfig() *AsyncRiskConfig {
 		// Worker configuration
 		RiskWorkerCount:   8, // Default from async service
 		CacheWorkerCount:  4, // Default from async service
-		PubSubWorkerCount: 2, // Default from async service
 
 		// Performance targets from config
 		TargetLatencyMs:        int(config.RiskCalculation.CalculationTimeout.Milliseconds()),

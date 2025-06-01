@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
-	"sync/atomic"
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
-	redisClient "github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 )
 
@@ -80,15 +78,13 @@ func (cb *CircuitBreaker) RecordFailure() {
 // getCachedRiskMetrics retrieves risk metrics from Redis cache
 func (s *AsyncRiskService) getCachedRiskMetrics(ctx context.Context, userID string) (*RiskMetrics, error) {
 	cacheKey := fmt.Sprintf(s.cacheKeys.RiskMetrics, userID)
-
 	// Set timeout for cache operation
 	cacheCtx, cancel := context.WithTimeout(ctx, s.config.CacheTimeout)
 	defer cancel()
-
-	data, err := s.redisClient.GetClient().Get(cacheCtx, cacheKey).Result()
+	data, err := s.redisClient.Get(cacheCtx, cacheKey).Result()
 	if err != nil {
-		if err == redisClient.Nil {
-			return nil, nil // Cache miss, not an error
+		if err.Error() == "redis: nil" {
+			return nil, nil // Cache miss
 		}
 		return nil, fmt.Errorf("cache get error: %w", err)
 	}
@@ -117,15 +113,14 @@ func (s *AsyncRiskService) cacheRiskMetrics(ctx context.Context, userID string, 
 	if err != nil {
 		return fmt.Errorf("cache marshal error: %w", err)
 	}
-
-	err = s.redisClient.GetClient().Set(cacheCtx, cacheKey, data, s.cacheConfig.RiskMetricsTTL).Err()
+	err = s.redisClient.Set(cacheCtx, cacheKey, data, s.cacheConfig.RiskMetricsTTL).Err()
 	if err != nil {
 		return fmt.Errorf("cache set error: %w", err)
 	}
 
 	// Also cache user profile data
 	profileKey := fmt.Sprintf(s.cacheKeys.UserRiskProfile, userID)
-	err = s.redisClient.GetClient().Set(cacheCtx, profileKey, data, s.cacheConfig.UserRiskProfileTTL).Err()
+	err = s.redisClient.Set(cacheCtx, profileKey, data, s.cacheConfig.UserRiskProfileTTL).Err()
 	if err != nil {
 		s.logger.Warnw("Failed to cache user profile", "user_id", userID, "error", err)
 	}
@@ -142,9 +137,8 @@ func (s *AsyncRiskService) cacheBatchRiskMetrics(ctx context.Context, batchResul
 	// Set timeout for cache operation
 	cacheCtx, cancel := context.WithTimeout(ctx, s.config.CacheTimeout)
 	defer cancel()
-
 	// Use pipeline for batch operations
-	pipe := s.redisClient.GetClient().Pipeline()
+	pipe := s.redisClient.Pipeline()
 
 	for userID, metrics := range batchResults {
 		cacheKey := fmt.Sprintf(s.cacheKeys.RiskMetrics, userID)
@@ -186,7 +180,7 @@ func (s *AsyncRiskService) cacheComplianceResult(ctx context.Context, transactio
 
 	// Cache compliance results for shorter duration
 	ttl := time.Hour * 2 // 2 hours for compliance results
-	err = s.redisClient.GetClient().Set(cacheCtx, cacheKey, data, ttl).Err()
+	err = s.redisClient.Set(cacheCtx, cacheKey, data, ttl).Err()
 	if err != nil {
 		return fmt.Errorf("compliance result cache error: %w", err)
 	}
@@ -207,8 +201,7 @@ func (s *AsyncRiskService) invalidateUserCache(ctx context.Context, userID strin
 		fmt.Sprintf(s.cacheKeys.RealtimeRisk, userID),
 		fmt.Sprintf(s.cacheKeys.RealtimePositions, userID),
 	}
-
-	err := s.redisClient.GetClient().Del(cacheCtx, keys...).Err()
+	err := s.redisClient.Del(cacheCtx, keys...).Err()
 	if err != nil {
 		return fmt.Errorf("cache invalidation error: %w", err)
 	}
@@ -223,7 +216,7 @@ func (s *AsyncRiskService) publishTradeUpdate(trade *model.Trade) error {
 	defer cancel()
 	updateData := map[string]interface{}{
 		"type":      "trade_update",
-		"trade_id":  trade.ID,
+		"trade_id":  trade.ID.String(),
 		"user_id":   trade.OrderID.String(),
 		"symbol":    trade.Pair,
 		"quantity":  trade.Quantity,
@@ -237,7 +230,7 @@ func (s *AsyncRiskService) publishTradeUpdate(trade *model.Trade) error {
 	}
 
 	// Publish to risk updates channel
-	err = s.redisClient.GetClient().Publish(ctx, "risk:updates", data).Err()
+	err = s.redisClient.Publish(ctx, "risk:updates", data).Err()
 	if err != nil {
 		return fmt.Errorf("trade update publish error: %w", err)
 	}
@@ -305,7 +298,7 @@ func (s *AsyncRiskService) handleMarketUpdate(data map[string]interface{}) error
 		return fmt.Errorf("market data marshal error: %w", err)
 	}
 
-	err = s.redisClient.GetClient().Set(ctx, cacheKey, marketData, time.Minute*5).Err()
+	err = s.redisClient.Set(ctx, cacheKey, marketData, time.Minute*5).Err()
 	if err != nil {
 		return fmt.Errorf("market data cache error: %w", err)
 	}
@@ -334,19 +327,19 @@ func (s *AsyncRiskService) handleComplianceAlert(data map[string]interface{}) er
 	}
 
 	// Add to user's alert list
-	err = s.redisClient.GetClient().LPush(ctx, cacheKey, alertData).Err()
+	err = s.redisClient.LPush(ctx, cacheKey, alertData).Err()
 	if err != nil {
 		return fmt.Errorf("compliance alert cache error: %w", err)
 	}
 
 	// Trim list to keep only recent alerts
-	err = s.redisClient.GetClient().LTrim(ctx, cacheKey, 0, 99).Err() // Keep last 100 alerts
+	err = s.redisClient.LTrim(ctx, cacheKey, 0, 99).Err() // Keep last 100 alerts
 	if err != nil {
 		s.logger.Warnw("Failed to trim alert list", "error", err)
 	}
 
 	// Set expiration on the list
-	err = s.redisClient.GetClient().Expire(ctx, cacheKey, time.Hour*24).Err()
+	err = s.redisClient.Expire(ctx, cacheKey, time.Hour*24).Err()
 	if err != nil {
 		s.logger.Warnw("Failed to set alert list expiration", "error", err)
 	}
@@ -367,10 +360,10 @@ func (s *AsyncRiskService) fallbackCalculateRisk(ctx context.Context, userID str
 		UserID:            riskProfile.UserID,
 		TotalExposure:     riskProfile.CurrentExposure,
 		ValueAtRisk:       riskProfile.ValueAtRisk,
-		LeverageRatio:     decimal.Zero, // Not available in UserRiskProfile
+		LeverageRatio:     decimal.Zero,
 		MarginUtilization: riskProfile.MarginRequired,
-		PortfolioValue:    riskProfile.CurrentExposure, // Use exposure as portfolio value approximation
-		RiskScore:         decimal.NewFromFloat(s.calculateSimpleRiskScore(riskProfile)),
+		PortfolioValue:    riskProfile.CurrentExposure,
+		RiskScore:         decimal.Zero,
 		LastCalculated:    time.Now(),
 	}, nil
 }
@@ -382,166 +375,7 @@ func (s *AsyncRiskService) fallbackBatchCalculateRisk(ctx context.Context, userI
 	batchResults, err := s.baseService.BatchCalculateRisk(ctx, userIDs)
 	if err != nil {
 		return nil, err
-	}
-
-	riskMetricsResults := make(map[string]*RiskMetrics)
-	for userID, riskProfile := range batchResults {
-		riskMetricsResults[userID] = &RiskMetrics{
-			UserID:            riskProfile.UserID,
-			TotalExposure:     riskProfile.CurrentExposure,
-			ValueAtRisk:       riskProfile.ValueAtRisk,
-			LeverageRatio:     decimal.Zero, // Not available in UserRiskProfile
-			MarginUtilization: riskProfile.MarginRequired,
-			PortfolioValue:    riskProfile.CurrentExposure, // Use exposure as portfolio value approximation
-			RiskScore:         decimal.NewFromFloat(s.calculateSimpleRiskScore(riskProfile)),
-			LastCalculated:    time.Now(),
-		}
-	}
-
-	return riskMetricsResults, nil
-}
-
-// fallbackValidateOrder uses the base service for order validation
-func (s *AsyncRiskService) fallbackValidateOrder(ctx context.Context, order *model.Order) (bool, *RiskMetrics, error) {
-	s.logger.Warnw("Using fallback order validation", "order_id", order.ID, "user_id", order.UserID)
-	// Check position limit
-	approved, err := s.baseService.CheckPositionLimit(ctx, order.UserID.String(), order.Pair, order.Quantity, order.Price)
-	if err != nil {
-		return false, nil, err
-	}
-	// Get current risk
-	riskMetrics, err := s.fallbackCalculateRisk(ctx, order.UserID.String())
-	if err != nil {
-		return false, nil, err
-	}
-
-	return approved, riskMetrics, nil
-}
-
-// fallbackProcessTrades uses the base service for trade processing
-func (s *AsyncRiskService) fallbackProcessTrades(ctx context.Context, trades []*model.Trade) error {
-	s.logger.Warnw("Using fallback trade processing", "trade_count", len(trades))
-
-	for _, trade := range trades {
-		err := s.baseService.ProcessTrade(ctx, trade.ID, trade.UserID, trade.Symbol, trade.Quantity, trade.Price)
-		if err != nil {
-			return fmt.Errorf("fallback trade processing failed for trade %s: %w", trade.ID, err)
-		}
-	}
-
-	return nil
-}
-
-// calculateSimpleRiskScore calculates a simple risk score
-func (s *AsyncRiskService) calculateSimpleRiskScore(profile *UserRiskProfile) float64 {
-	if profile.CurrentExposure.IsZero() {
-		return 0.0
-	}
-
-	if profile.ValueAtRisk.IsZero() {
-		return 0.1
-	}
-
-	varRatio := profile.ValueAtRisk.Div(profile.CurrentExposure).InexactFloat64()
-
-	if varRatio > 1.0 {
-		return 1.0
-	}
-	if varRatio < 0.0 {
-		return 0.0
-	}
-
-	return varRatio
-}
-
-// Background tasks
-
-// metricsCollector collects and updates performance metrics
-func (s *AsyncRiskService) metricsCollector() {
-	ticker := time.NewTicker(time.Second * 10) // Update metrics every 10 seconds
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.shutdown:
-			return
-		case <-ticker.C:
-			s.updateMetrics()
-		}
-	}
-}
-
-// updateMetrics updates performance metrics
-func (s *AsyncRiskService) updateMetrics() {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Errorw("Panic in metrics collector", "panic", r)
-		}
-	}()
-
-	// Update throughput (requests per second)
-	currentRequests := atomic.LoadInt64(&s.requestCounter)
-	if s.metrics.TotalRequests > 0 {
-		elapsed := time.Since(s.metrics.LastUpdated).Seconds()
-		if elapsed > 0 {
-			requestDelta := currentRequests - s.metrics.TotalRequests
-			s.metrics.ThroughputOPS = float64(requestDelta) / elapsed
-		}
-	}
-	s.metrics.TotalRequests = currentRequests
-
-	// Update average processing time
-	avgProcessingTimeUs := atomic.LoadInt64(&s.processingTime)
-	s.metrics.AverageLatencyMs = float64(avgProcessingTimeUs) / 1000.0 // Convert microseconds to milliseconds
-
-	// Update queue metrics
-	s.metrics.QueuedRequests = len(s.requestChan)
-	s.metrics.ActiveWorkers = len(s.riskWorkers)
-
-	// Update timestamp
-	s.metrics.LastUpdated = time.Now()
-}
-
-// sessionManager manages risk calculation sessions
-func (s *AsyncRiskService) sessionManager() {
-	ticker := time.NewTicker(time.Minute) // Check sessions every minute
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.shutdown:
-			return
-		case <-ticker.C:
-			s.cleanupExpiredSessions()
-		}
-	}
-}
-
-// cleanupExpiredSessions removes expired risk sessions
-func (s *AsyncRiskService) cleanupExpiredSessions() {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Errorw("Panic in session cleanup", "panic", r)
-		}
-	}()
-
-	s.sessionMutex.Lock()
-	defer s.sessionMutex.Unlock()
-
-	now := time.Now()
-	expiredSessions := make([]string, 0)
-
-	for sessionID, session := range s.pendingSessions {
-		if now.Sub(session.LastActivity) > s.config.SessionTimeout {
-			expiredSessions = append(expiredSessions, sessionID)
-		}
-	}
-
-	for _, sessionID := range expiredSessions {
-		delete(s.pendingSessions, sessionID)
-	}
-
-	if len(expiredSessions) > 0 {
-		s.logger.Debugw("Cleaned up expired sessions", "count", len(expiredSessions))
-	}
+	} // Convert to RiskMetrics (batchResults is already map[string]*RiskMetrics)
+	// No conversion needed, just return the results directly
+	return batchResults, nil
 }

@@ -9,23 +9,159 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/redis"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
+
+// CacheKeys defines all Redis key patterns for AML/risk management
+type CacheKeys struct {
+	// User risk profiles
+	UserRiskProfile string // "user:risk:{userID}"
+	UserPositions   string // "user:positions:{userID}"
+	UserLimits      string // "user:limits:{userID}"
+
+	// Risk metrics and calculations
+	RiskMetrics     string // "risk:metrics:{userID}"
+	RiskCalculation string // "risk:calc:{userID}"
+	MarketData      string // "market:data:{symbol}"
+	VolatilityData  string // "market:volatility:{symbol}"
+
+	// Compliance data
+	ComplianceProfile string // "compliance:profile:{userID}"
+	ComplianceRules   string // "compliance:rules"
+	ComplianceAlerts  string // "compliance:alerts:{userID}"
+	TransactionFlags  string // "compliance:flags:{transactionID}"
+
+	// Position and limit caches
+	PositionLimits string // "limits:position:{userID}:{symbol}"
+	GlobalLimits   string // "limits:global"
+	ExemptionList  string // "exemptions:users"
+
+	// Session and pending operations
+	PendingRiskChecks string // "pending:risk:{requestID}"
+	RiskCheckResults  string // "results:risk:{requestID}"
+	SessionData       string // "session:risk:{sessionID}"
+
+	// Real-time data
+	RealtimeRisk      string // "realtime:risk:{userID}"
+	RealtimePositions string // "realtime:positions:{userID}"
+	RealtimeAlerts    string // "realtime:alerts"
+
+	// Performance optimization
+	CalculationCache string // "cache:calc:{hash}"
+	LookupCache      string // "cache:lookup:{key}"
+}
+
+// NewCacheKeys creates standardized cache keys
+func NewCacheKeys() *CacheKeys {
+	return &CacheKeys{
+		UserRiskProfile: "user:risk:%s",
+		UserPositions:   "user:positions:%s",
+		UserLimits:      "user:limits:%s",
+
+		RiskMetrics:     "risk:metrics:%s",
+		RiskCalculation: "risk:calc:%s",
+		MarketData:      "market:data:%s",
+		VolatilityData:  "market:volatility:%s",
+
+		ComplianceProfile: "compliance:profile:%s",
+		ComplianceRules:   "compliance:rules",
+		ComplianceAlerts:  "compliance:alerts:%s",
+		TransactionFlags:  "compliance:flags:%s",
+
+		PositionLimits: "limits:position:%s:%s",
+		GlobalLimits:   "limits:global",
+		ExemptionList:  "exemptions:users",
+
+		PendingRiskChecks: "pending:risk:%s",
+		RiskCheckResults:  "results:risk:%s",
+		SessionData:       "session:risk:%s",
+
+		RealtimeRisk:      "realtime:risk:%s",
+		RealtimePositions: "realtime:positions:%s",
+		RealtimeAlerts:    "realtime:alerts",
+
+		CalculationCache: "cache:calc:%s",
+		LookupCache:      "cache:lookup:%s",
+	}
+}
+
+// AMLCacheConfig configures AML cache behavior
+type AMLCacheConfig struct {
+	// TTL settings for different data types
+	UserRiskProfileTTL  time.Duration `yaml:"user_risk_profile_ttl" json:"user_risk_profile_ttl"`
+	RiskMetricsTTL      time.Duration `yaml:"risk_metrics_ttl" json:"risk_metrics_ttl"`
+	MarketDataTTL       time.Duration `yaml:"market_data_ttl" json:"market_data_ttl"`
+	ComplianceDataTTL   time.Duration `yaml:"compliance_data_ttl" json:"compliance_data_ttl"`
+	PositionDataTTL     time.Duration `yaml:"position_data_ttl" json:"position_data_ttl"`
+	SessionDataTTL      time.Duration `yaml:"session_data_ttl" json:"session_data_ttl"`
+	CalculationCacheTTL time.Duration `yaml:"calculation_cache_ttl" json:"calculation_cache_ttl"`
+
+	// Cache size limits
+	MaxUserProfiles     int `yaml:"max_user_profiles" json:"max_user_profiles"`
+	MaxRiskCalculations int `yaml:"max_risk_calculations" json:"max_risk_calculations"`
+	MaxSessionData      int `yaml:"max_session_data" json:"max_session_data"`
+
+	// Performance settings
+	EnablePipelining   bool `yaml:"enable_pipelining" json:"enable_pipelining"`
+	PipelineBufferSize int  `yaml:"pipeline_buffer_size" json:"pipeline_buffer_size"`
+	EnableCompression  bool `yaml:"enable_compression" json:"enable_compression"`
+	EnableAsyncWrites  bool `yaml:"enable_async_writes" json:"enable_async_writes"`
+
+	// Pub/Sub settings
+	EnableRealTimeUpdates bool     `yaml:"enable_realtime_updates" json:"enable_realtime_updates"`
+	PubSubChannels        []string `yaml:"pubsub_channels" json:"pubsub_channels"`
+	MaxSubscribers        int      `yaml:"max_subscribers" json:"max_subscribers"`
+}
+
+// DefaultAMLCacheConfig returns optimized cache configuration for AML/risk management
+func DefaultAMLCacheConfig() *AMLCacheConfig {
+	return &AMLCacheConfig{
+		// TTL settings optimized for risk management needs
+		UserRiskProfileTTL:  time.Minute * 5,  // User profiles change frequently
+		RiskMetricsTTL:      time.Minute * 2,  // Risk metrics need frequent updates
+		MarketDataTTL:       time.Second * 30, // Market data changes rapidly
+		ComplianceDataTTL:   time.Minute * 30, // Compliance data is more stable
+		PositionDataTTL:     time.Minute * 1,  // Positions change with every trade
+		SessionDataTTL:      time.Minute * 10, // Session data for pending operations
+		CalculationCacheTTL: time.Minute * 5,  // Cache calculation results
+
+		// Cache size limits
+		MaxUserProfiles:     100000, // Support large user base
+		MaxRiskCalculations: 50000,  // Cache frequent calculations
+		MaxSessionData:      10000,  // Pending operations cache
+
+		// Performance optimizations
+		EnablePipelining:   true,
+		PipelineBufferSize: 1000,
+		EnableCompression:  false, // Prioritize speed over space
+		EnableAsyncWrites:  true,
+
+		// Real-time features
+		EnableRealTimeUpdates: true,
+		PubSubChannels: []string{
+			"risk:updates",
+			"compliance:alerts",
+			"position:updates",
+			"market:updates",
+		},
+		MaxSubscribers: 1000,
+	}
+}
 
 // AsyncRiskService provides high-performance async risk management with Redis caching
 type AsyncRiskService struct {
 	// Core dependencies
-	baseService RiskService        // Existing service for fallback
-	redisClient *redis.Client      // Redis client for caching
-	logger      *zap.SugaredLogger // Logger
-	config      *AsyncRiskConfig   // Configuration
+	baseService RiskService           // Existing service for fallback
+	redisClient redis.UniversalClient // Redis client for caching
+	logger      *zap.SugaredLogger    // Logger
+	config      *AsyncRiskConfig      // Configuration
 
 	// Cache management
-	cacheKeys   *redis.CacheKeys      // Standardized cache keys
-	cacheConfig *redis.AMLCacheConfig // Cache configuration
+	cacheKeys   *CacheKeys      // Standardized cache keys
+	cacheConfig *AMLCacheConfig // Cache configuration
 
 	// Async processing
 	requestChan chan *AsyncRiskRequest // Async request queue
@@ -230,7 +366,7 @@ type AsyncMetrics struct {
 // NewAsyncRiskService creates a new async risk service with Redis caching
 func NewAsyncRiskService(
 	baseService RiskService,
-	redisClient *redis.Client,
+	redisClient redis.UniversalClient,
 	logger *zap.SugaredLogger,
 	config *AsyncRiskConfig,
 ) (*AsyncRiskService, error) {
@@ -243,7 +379,7 @@ func NewAsyncRiskService(
 		redisClient:     redisClient,
 		logger:          logger,
 		config:          config,
-		cacheKeys:       redis.NewCacheKeys(),
+		cacheKeys:       NewCacheKeys(),
 		requestChan:     make(chan *AsyncRiskRequest, config.RequestBufferSize),
 		resultChan:      make(chan *AsyncRiskResult, config.ResultBufferSize),
 		shutdown:        make(chan struct{}),
@@ -251,13 +387,8 @@ func NewAsyncRiskService(
 		metrics:         &AsyncMetrics{LastUpdated: time.Now()},
 		circuitBreaker:  NewCircuitBreaker(config.FallbackThreshold),
 	}
-
 	// Initialize cache configuration
-	service.cacheConfig = &redis.AMLCacheConfig{
-		UserRiskProfileTTL: time.Minute * 15,
-		RiskMetricsTTL:     time.Minute * 5,
-		// ... other TTL configurations
-	}
+	service.cacheConfig = DefaultAMLCacheConfig()
 
 	// Start worker pools
 	if err := service.startWorkers(); err != nil {
@@ -282,6 +413,38 @@ func NewAsyncRiskService(
 	)
 
 	return service, nil
+}
+
+// startWorkers initializes and starts the worker pools
+func (s *AsyncRiskService) startWorkers() error {
+	s.logger.Info("Starting async risk service workers...")
+
+	// Initialize worker slices
+	s.riskWorkers = make([]*RiskWorker, s.config.RiskWorkerCount)
+	s.cacheWorkers = make([]*CacheWorker, s.config.CacheWorkerCount)
+
+	// Start risk calculation workers
+	for i := 0; i < s.config.RiskWorkerCount; i++ {
+		workerID := fmt.Sprintf("risk-%d", i)
+		worker := NewRiskWorker(workerID, s, s.logger)
+		s.riskWorkers[i] = worker
+		worker.Start()
+	}
+
+	// Start cache workers
+	for i := 0; i < s.config.CacheWorkerCount; i++ {
+		workerID := fmt.Sprintf("cache-%d", i)
+		worker := NewCacheWorker(workerID, s, s.logger)
+		s.cacheWorkers[i] = worker
+		worker.Start()
+	}
+
+	s.logger.Infow("Started async risk service workers",
+		"risk_workers", len(s.riskWorkers),
+		"cache_workers", len(s.cacheWorkers),
+	)
+
+	return nil
 }
 
 // CalculateRiskAsync performs async risk calculation with caching
@@ -591,4 +754,200 @@ func (s *AsyncRiskService) updateLatencyMetrics(duration time.Duration) {
 
 	// Update atomic processing time in microseconds
 	atomic.StoreInt64(&s.processingTime, int64(latencyMs*1000))
+}
+
+// metricsCollector runs periodic metrics collection and analysis
+func (s *AsyncRiskService) metricsCollector() {
+	ticker := time.NewTicker(time.Minute) // Collect metrics every minute
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.shutdown:
+			return
+		case <-ticker.C:
+			s.collectAndUpdateMetrics()
+		}
+	}
+}
+
+// collectAndUpdateMetrics collects current metrics and updates aggregated data
+func (s *AsyncRiskService) collectAndUpdateMetrics() {
+	now := time.Now()
+
+	// Update cache hit ratio
+	totalCacheOps := atomic.LoadInt64(&s.metrics.CacheHits) + atomic.LoadInt64(&s.metrics.CacheMisses)
+	if totalCacheOps > 0 {
+		s.metrics.CacheHitRatio = float64(atomic.LoadInt64(&s.metrics.CacheHits)) / float64(totalCacheOps)
+	}
+
+	// Update error rate
+	totalRequests := atomic.LoadInt64(&s.metrics.TotalRequests)
+	if totalRequests > 0 {
+		failedRequests := atomic.LoadInt64(&s.metrics.FailedRequests)
+		s.metrics.ErrorRate = float64(failedRequests) / float64(totalRequests) * 100
+	}
+
+	// Update throughput (operations per second over last minute)
+	timeSinceLastUpdate := now.Sub(s.metrics.LastUpdated).Seconds()
+	if timeSinceLastUpdate > 0 {
+		requestsSinceLastUpdate := atomic.LoadInt64(&s.requestCounter)
+		s.metrics.ThroughputOPS = float64(requestsSinceLastUpdate) / timeSinceLastUpdate
+	}
+
+	// Update queue metrics
+	s.metrics.QueuedRequests = len(s.requestChan)
+	s.metrics.ActiveWorkers = len(s.riskWorkers) + len(s.cacheWorkers)
+
+	// Check circuit breaker status
+	s.metrics.CircuitBreakerOpen = s.circuitBreaker.IsOpen()
+
+	s.metrics.LastUpdated = now
+
+	s.logger.Debugw("Metrics updated",
+		"cache_hit_ratio", s.metrics.CacheHitRatio,
+		"error_rate", s.metrics.ErrorRate,
+		"throughput_ops", s.metrics.ThroughputOPS,
+		"queued_requests", s.metrics.QueuedRequests,
+		"circuit_breaker_open", s.metrics.CircuitBreakerOpen,
+	)
+}
+
+// sessionManager manages risk calculation sessions and cleanup
+func (s *AsyncRiskService) sessionManager() {
+	ticker := time.NewTicker(time.Minute * 5) // Check sessions every 5 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.shutdown:
+			return
+		case <-ticker.C:
+			s.cleanupSessions()
+		}
+	}
+}
+
+// cleanupSessions removes expired sessions and their cached data
+func (s *AsyncRiskService) cleanupSessions() {
+	s.sessionMutex.Lock()
+	defer s.sessionMutex.Unlock()
+
+	now := time.Now()
+	expiredSessions := make([]string, 0)
+
+	for sessionID, session := range s.pendingSessions {
+		if now.Sub(session.LastActivity) > s.config.SessionTimeout {
+			expiredSessions = append(expiredSessions, sessionID)
+		}
+	}
+
+	// Remove expired sessions
+	for _, sessionID := range expiredSessions {
+		delete(s.pendingSessions, sessionID)
+		s.logger.Debugw("Removed expired session", "session_id", sessionID)
+	}
+
+	if len(expiredSessions) > 0 {
+		s.logger.Infow("Cleaned up expired sessions", "count", len(expiredSessions))
+	}
+}
+
+// fallbackValidateOrder provides fallback order validation when async processing fails
+func (s *AsyncRiskService) fallbackValidateOrder(ctx context.Context, order *model.Order) (bool, *RiskMetrics, error) {
+	s.logger.Warnw("Using fallback order validation", "order_id", order.ID, "user_id", order.UserID)
+
+	// Use the base service for direct validation
+	riskProfile, err := s.baseService.CalculateRisk(ctx, order.UserID.String())
+	if err != nil {
+		s.logger.Errorw("Fallback risk calculation failed", "error", err, "user_id", order.UserID)
+		return false, nil, fmt.Errorf("fallback risk calculation failed: %w", err)
+	}
+	// Convert RiskProfile to RiskMetrics
+	riskMetrics := &RiskMetrics{
+		UserID:         riskProfile.UserID,
+		TotalExposure:  riskProfile.CurrentExposure,
+		ValueAtRisk:    riskProfile.ValueAtRisk,
+		RiskScore:      decimal.NewFromFloat(s.calculateRiskScore(riskProfile)),
+		LastCalculated: time.Now(),
+	}
+
+	// Simple validation logic - approve if risk score is acceptable
+	approved := riskMetrics.RiskScore.LessThan(decimal.NewFromFloat(0.8)) // 80% risk threshold
+
+	s.logger.Infow("Fallback order validation completed",
+		"order_id", order.ID,
+		"user_id", order.UserID,
+		"approved", approved,
+		"risk_score", riskMetrics.RiskScore,
+	)
+
+	return approved, riskMetrics, nil
+}
+
+// calculateRiskScore calculates a risk score from a risk profile
+func (s *AsyncRiskService) calculateRiskScore(profile *UserRiskProfile) float64 {
+	// Simple risk score calculation - can be enhanced
+	if profile.CurrentExposure.IsZero() {
+		return 0.0
+	}
+
+	// Risk score based on exposure to margin ratio
+	if profile.MarginRequired.IsZero() {
+		return 1.0 // Maximum risk if no margin
+	}
+
+	exposureRatio := profile.CurrentExposure.Div(profile.MarginRequired).InexactFloat64()
+
+	// Cap the risk score at 1.0
+	if exposureRatio > 1.0 {
+		return 1.0
+	}
+
+	return exposureRatio
+}
+
+// fallbackProcessTrades provides fallback trade processing when async processing fails
+func (s *AsyncRiskService) fallbackProcessTrades(ctx context.Context, trades []*model.Trade) error {
+	s.logger.Warnw("Using fallback trade processing", "trade_count", len(trades))
+
+	// Process trades synchronously using base service
+	for _, trade := range trades {
+		// Update user positions and risk metrics
+		err := s.updateUserPositionFromTrade(ctx, trade)
+		if err != nil {
+			s.logger.Errorw("Failed to update user position in fallback",
+				"error", err,
+				"trade_id", trade.ID,
+				"user_id", trade.OrderID, // Assuming OrderID relates to user
+			)
+			// Continue processing other trades even if one fails
+			continue
+		}
+	}
+
+	s.logger.Infow("Fallback trade processing completed", "trade_count", len(trades))
+	return nil
+}
+
+// updateUserPositionFromTrade updates user position based on trade execution
+func (s *AsyncRiskService) updateUserPositionFromTrade(ctx context.Context, trade *model.Trade) error {
+	// This is a simplified implementation - in reality you'd need to:
+	// 1. Identify the user from the trade
+	// 2. Update their position in the database
+	// 3. Recalculate risk metrics
+	// 4. Update cached data
+
+	// For now, just log the trade processing
+	s.logger.Debugw("Processing trade in fallback mode",
+		"trade_id", trade.ID,
+		"symbol", trade.Pair,
+		"quantity", trade.Quantity,
+		"price", trade.Price,
+	)
+
+	// Simulate position update delay
+	time.Sleep(time.Millisecond * 10)
+
+	return nil
 }

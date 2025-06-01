@@ -56,12 +56,12 @@ func DefaultConfig() *Config {
 		DB:       0,
 
 		// Optimized pool settings for high-frequency trading
-		PoolSize:           100,              // High pool size for concurrent access
-		MinIdleConns:       20,               // Keep connections warm
-		MaxConnAge:         time.Hour * 24,   // Rotate connections daily
-		PoolTimeout:        time.Second * 4,  // Fast pool timeout
-		IdleTimeout:        time.Minute * 5,  // Keep idle connections
-		IdleCheckFrequency: time.Minute,      // Check idle connections frequently
+		PoolSize:           100,             // High pool size for concurrent access
+		MinIdleConns:       20,              // Keep connections warm
+		MaxConnAge:         time.Hour * 24,  // Rotate connections daily
+		PoolTimeout:        time.Second * 4, // Fast pool timeout
+		IdleTimeout:        time.Minute * 5, // Keep idle connections
+		IdleCheckFrequency: time.Minute,     // Check idle connections frequently
 
 		// Fast retry settings
 		MaxRetries:      3,
@@ -70,8 +70,8 @@ func DefaultConfig() *Config {
 
 		// Aggressive timeout settings for low latency
 		DialTimeout:  time.Second * 5,
-		ReadTimeout:  time.Millisecond * 500,  // 500ms read timeout
-		WriteTimeout: time.Millisecond * 500,  // 500ms write timeout
+		ReadTimeout:  time.Millisecond * 500, // 500ms read timeout
+		WriteTimeout: time.Millisecond * 500, // 500ms write timeout
 
 		// Cache settings
 		DefaultTTL: time.Minute * 15, // 15 minute default TTL
@@ -98,7 +98,6 @@ type Client struct {
 // NewClient creates a new Redis client with the given configuration
 func NewClient(config *Config, logger *zap.SugaredLogger) (*Client, error) {
 	var rdb redis.UniversalClient
-
 	if config.EnableCluster {
 		// Create cluster client
 		rdb = redis.NewClusterClient(&redis.ClusterOptions{
@@ -106,12 +105,10 @@ func NewClient(config *Config, logger *zap.SugaredLogger) (*Client, error) {
 			Password: config.Password,
 
 			// Pool settings
-			PoolSize:           config.PoolSize,
-			MinIdleConns:       config.MinIdleConns,
-			MaxConnAge:         config.MaxConnAge,
-			PoolTimeout:        config.PoolTimeout,
-			IdleTimeout:        config.IdleTimeout,
-			IdleCheckFrequency: config.IdleCheckFrequency,
+			PoolSize:        config.PoolSize,
+			MinIdleConns:    config.MinIdleConns,
+			PoolTimeout:     config.PoolTimeout,
+			ConnMaxIdleTime: config.IdleTimeout,
 
 			// Retry settings
 			MaxRetries:      config.MaxRetries,
@@ -133,12 +130,10 @@ func NewClient(config *Config, logger *zap.SugaredLogger) (*Client, error) {
 			DB:               config.DB,
 
 			// Pool settings
-			PoolSize:           config.PoolSize,
-			MinIdleConns:       config.MinIdleConns,
-			MaxConnAge:         config.MaxConnAge,
-			PoolTimeout:        config.PoolTimeout,
-			IdleTimeout:        config.IdleTimeout,
-			IdleCheckFrequency: config.IdleCheckFrequency,
+			PoolSize:        config.PoolSize,
+			MinIdleConns:    config.MinIdleConns,
+			PoolTimeout:     config.PoolTimeout,
+			ConnMaxIdleTime: config.IdleTimeout,
 
 			// Retry settings
 			MaxRetries:      config.MaxRetries,
@@ -158,12 +153,10 @@ func NewClient(config *Config, logger *zap.SugaredLogger) (*Client, error) {
 			DB:       config.DB,
 
 			// Pool settings
-			PoolSize:           config.PoolSize,
-			MinIdleConns:       config.MinIdleConns,
-			MaxConnAge:         config.MaxConnAge,
-			PoolTimeout:        config.PoolTimeout,
-			IdleTimeout:        config.IdleTimeout,
-			IdleCheckFrequency: config.IdleCheckFrequency,
+			PoolSize:        config.PoolSize,
+			MinIdleConns:    config.MinIdleConns,
+			PoolTimeout:     config.PoolTimeout,
+			ConnMaxIdleTime: config.IdleTimeout,
 
 			// Retry settings
 			MaxRetries:      config.MaxRetries,

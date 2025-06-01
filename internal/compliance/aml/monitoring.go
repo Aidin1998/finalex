@@ -173,14 +173,16 @@ func (pm *PerformanceMonitor) handleCircuitBreakerStatus(c *gin.Context) {
 		return
 	}
 
+	// Access circuit breaker state directly
+	cb := pm.asyncService.circuitBreaker
 	status := map[string]interface{}{
-		"open":          pm.asyncService.circuitBreaker.IsOpen(),
-		"failure_count": pm.asyncService.circuitBreaker.FailureCount(),
-		"success_count": pm.asyncService.circuitBreaker.SuccessCount(),
-		"last_failure":  pm.asyncService.circuitBreaker.LastFailureTime(),
-		"last_success":  pm.asyncService.circuitBreaker.LastSuccessTime(),
-		"next_attempt":  pm.asyncService.circuitBreaker.NextAttempt(),
-		"timestamp":     time.Now(),
+		"open":          cb.IsOpen(),
+		"failure_count": cb.failureCount,
+		"success_count": cb.successCount,
+		"last_failure":  cb.lastFailureTime,
+		// Calculate next attempt time based on reset timeout
+		"next_attempt": cb.lastFailureTime.Add(cb.resetTimeout),
+		"timestamp":    time.Now(),
 	}
 
 	c.JSON(http.StatusOK, status)

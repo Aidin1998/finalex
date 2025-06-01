@@ -2195,4 +2195,7 @@ func (ame *AdaptiveMatchingEngine) processAsyncRiskCheckResult(result RiskCheckR
 		// Risk check passed - log success
 		ame.logger.Debugw("Async risk check passed for order",
 			"request_id", result.RequestID,
-			"order_id", pendingOrder.Order
+			"order_id", pendingOrder.Order .ID,
+			"user_id", pendingOrder.Order.UserID,
+			"processing_time", result.ProcessingTime,
+		

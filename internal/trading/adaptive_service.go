@@ -111,6 +111,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		eventJournal,
 		wsHub,
 		aml.NewRiskService(),
+		nil, // no Redis client configured yet
 	)
 
 	// Create adaptive service

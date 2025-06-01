@@ -10,6 +10,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Import the parent aml package for RiskMetrics
+// We'll use a type alias to access the RiskMetrics from the parent package
+// This is a temporary solution to resolve the import cycle
+
 // Position represents a trading position
 type Position struct {
 	Symbol    string          `json:"symbol"`
@@ -40,22 +44,7 @@ type MarketData struct {
 	Timestamp  time.Time       `json:"timestamp"`
 }
 
-// RiskMetrics holds real-time risk calculations
-type RiskMetrics struct {
-	UserID             string                     `json:"user_id"`
-	TotalExposure      decimal.Decimal            `json:"total_exposure"`
-	ValueAtRisk        decimal.Decimal            `json:"value_at_risk"`
-	MarginRequired     decimal.Decimal            `json:"margin_required"`
-	MarkToMarketPnL    decimal.Decimal            `json:"mark_to_market_pnl"`
-	PositionExposures  map[string]decimal.Decimal `json:"position_exposures"`
-	ConcentrationRisk  decimal.Decimal            `json:"concentration_risk"`
-	LiquidityRisk      decimal.Decimal            `json:"liquidity_risk"`
-	MaxDrawdown        decimal.Decimal            `json:"max_drawdown"`
-	SharpeRatio        decimal.Decimal            `json:"sharpe_ratio"`
-	RiskScore          decimal.Decimal            `json:"risk_score"`
-	LastUpdated        time.Time                  `json:"last_updated"`
-	CalculationLatency time.Duration              `json:"calculation_latency"`
-}
+// Note: RiskMetrics is now imported from the main aml package to avoid duplication
 
 // RiskCalculator provides real-time risk calculations
 type RiskCalculator struct {
