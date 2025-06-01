@@ -43,7 +43,7 @@ func (s *BookkeeperMessageService) registerHandlers() {
 	s.messageBus.RegisterHandler(MsgBalanceUpdated, s.handleBalanceUpdate)
 }
 
-// handleFundsLocked processes fund locking requests
+// handleFundsLocked processes fund locking requests with optimized account retrieval
 func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *ReceivedMessage) error {
 	var fundsMsg FundsOperationMessage
 	if err := json.Unmarshal(msg.Value, &fundsMsg); err != nil {
@@ -56,11 +56,15 @@ func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *R
 		zap.String("amount", fundsMsg.Amount.String()),
 		zap.String("order_id", fundsMsg.OrderID))
 
-	// Get current balance for event
+	// Get current balance for event (single call optimization)
 	oldAccount, err := s.bookkeeper.GetAccount(ctx, fundsMsg.UserID, fundsMsg.Currency)
 	if err != nil {
 		return fmt.Errorf("failed to get account before lock: %w", err)
 	}
+
+	// Calculate expected new values for better performance monitoring
+	expectedNewAvailable := oldAccount.Available - fundsMsg.Amount.InexactFloat64()
+	expectedNewLocked := oldAccount.Locked + fundsMsg.Amount.InexactFloat64()
 
 	// Lock the funds
 	err = s.bookkeeper.LockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount.InexactFloat64())
@@ -72,24 +76,17 @@ func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *R
 		return err
 	}
 
-	// Get updated balance for event
-	newAccount, err := s.bookkeeper.GetAccount(ctx, fundsMsg.UserID, fundsMsg.Currency)
-	if err != nil {
-		s.logger.Error("Failed to get account after lock", zap.Error(err))
-		return err
-	}
-
-	// Publish balance update event
+	// Publish balance update event with calculated values (eliminates second GetAccount call)
 	balanceEvent := &BalanceEventMessage{
 		BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", fundsMsg.MessageID),
 		UserID:       fundsMsg.UserID,
 		Currency:     fundsMsg.Currency,
 		OldBalance:   decimal.NewFromFloat(oldAccount.Balance),
-		NewBalance:   decimal.NewFromFloat(newAccount.Balance),
+		NewBalance:   decimal.NewFromFloat(oldAccount.Balance), // Balance unchanged in lock operation
 		OldAvailable: decimal.NewFromFloat(oldAccount.Available),
-		NewAvailable: decimal.NewFromFloat(newAccount.Available),
+		NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
 		OldLocked:    decimal.NewFromFloat(oldAccount.Locked),
-		NewLocked:    decimal.NewFromFloat(newAccount.Locked),
+		NewLocked:    decimal.NewFromFloat(expectedNewLocked),
 		Amount:       fundsMsg.Amount,
 		Reference:    fundsMsg.OrderID,
 		Description:  fmt.Sprintf("Funds locked for order: %s", fundsMsg.Reason),
@@ -98,7 +95,7 @@ func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *R
 	return s.messageBus.PublishBalanceEvent(ctx, balanceEvent)
 }
 
-// handleFundsUnlocked processes fund unlocking requests
+// handleFundsUnlocked processes fund unlocking requests with optimized account retrieval
 func (s *BookkeeperMessageService) handleFundsUnlocked(ctx context.Context, msg *ReceivedMessage) error {
 	var fundsMsg FundsOperationMessage
 	if err := json.Unmarshal(msg.Value, &fundsMsg); err != nil {
@@ -111,11 +108,15 @@ func (s *BookkeeperMessageService) handleFundsUnlocked(ctx context.Context, msg 
 		zap.String("amount", fundsMsg.Amount.String()),
 		zap.String("order_id", fundsMsg.OrderID))
 
-	// Get current balance for event
+	// Get current balance for event (single call optimization)
 	oldAccount, err := s.bookkeeper.GetAccount(ctx, fundsMsg.UserID, fundsMsg.Currency)
 	if err != nil {
 		return fmt.Errorf("failed to get account before unlock: %w", err)
 	}
+
+	// Calculate expected new values for better performance monitoring
+	expectedNewAvailable := oldAccount.Available + fundsMsg.Amount.InexactFloat64()
+	expectedNewLocked := oldAccount.Locked - fundsMsg.Amount.InexactFloat64()
 
 	// Unlock the funds
 	err = s.bookkeeper.UnlockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount.InexactFloat64())
@@ -127,24 +128,17 @@ func (s *BookkeeperMessageService) handleFundsUnlocked(ctx context.Context, msg 
 		return err
 	}
 
-	// Get updated balance for event
-	newAccount, err := s.bookkeeper.GetAccount(ctx, fundsMsg.UserID, fundsMsg.Currency)
-	if err != nil {
-		s.logger.Error("Failed to get account after unlock", zap.Error(err))
-		return err
-	}
-
-	// Publish balance update event
+	// Publish balance update event with calculated values (eliminates second GetAccount call)
 	balanceEvent := &BalanceEventMessage{
 		BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", fundsMsg.MessageID),
 		UserID:       fundsMsg.UserID,
 		Currency:     fundsMsg.Currency,
 		OldBalance:   decimal.NewFromFloat(oldAccount.Balance),
-		NewBalance:   decimal.NewFromFloat(newAccount.Balance),
+		NewBalance:   decimal.NewFromFloat(oldAccount.Balance), // Balance unchanged in unlock operation
 		OldAvailable: decimal.NewFromFloat(oldAccount.Available),
-		NewAvailable: decimal.NewFromFloat(newAccount.Available),
+		NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
 		OldLocked:    decimal.NewFromFloat(oldAccount.Locked),
-		NewLocked:    decimal.NewFromFloat(newAccount.Locked),
+		NewLocked:    decimal.NewFromFloat(expectedNewLocked),
 		Amount:       fundsMsg.Amount,
 		Reference:    fundsMsg.OrderID,
 		Description:  fmt.Sprintf("Funds unlocked for order: %s", fundsMsg.Reason),
@@ -288,6 +282,193 @@ func (s *BookkeeperMessageService) RequestFundsUnlock(ctx context.Context, userI
 	}
 
 	return s.messageBus.PublishFundsOperationEvent(ctx, fundsMsg)
+}
+
+// BatchFundsOperation represents a batch funds operation request
+type BatchFundsOperation struct {
+	UserID   string          `json:"user_id"`
+	Currency string          `json:"currency"`
+	Amount   decimal.Decimal `json:"amount"`
+	OrderID  string          `json:"order_id"`
+	Reason   string          `json:"reason"`
+	OpType   string          `json:"op_type"` // "lock" or "unlock"
+}
+
+// BatchFundsOperationMessage represents a batch of funds operations
+type BatchFundsOperationMessage struct {
+	BaseMessage
+	Operations []BatchFundsOperation `json:"operations"`
+	BatchID    string                `json:"batch_id"`
+}
+
+// handleBatchFundsOperations processes multiple fund operations efficiently
+func (s *BookkeeperMessageService) handleBatchFundsOperations(ctx context.Context, msg *ReceivedMessage) error {
+	var batchMsg BatchFundsOperationMessage
+	if err := json.Unmarshal(msg.Value, &batchMsg); err != nil {
+		return fmt.Errorf("failed to unmarshal batch funds operation message: %w", err)
+	}
+
+	s.logger.Info("Processing batch funds operations",
+		zap.String("batch_id", batchMsg.BatchID),
+		zap.Int("operation_count", len(batchMsg.Operations)))
+
+	// Group operations by user and currency for efficient account retrieval
+	userCurrencyMap := make(map[string]map[string][]BatchFundsOperation)
+	for _, op := range batchMsg.Operations {
+		if userCurrencyMap[op.UserID] == nil {
+			userCurrencyMap[op.UserID] = make(map[string][]BatchFundsOperation)
+		}
+		userCurrencyMap[op.UserID][op.Currency] = append(userCurrencyMap[op.UserID][op.Currency], op)
+	}
+
+	// Collect all unique user IDs and currencies for batch account retrieval
+	var userIDs []string
+	var currencies []string
+	userSet := make(map[string]bool)
+	currencySet := make(map[string]bool)
+
+	for userID, currencyMap := range userCurrencyMap {
+		if !userSet[userID] {
+			userIDs = append(userIDs, userID)
+			userSet[userID] = true
+		}
+		for currency := range currencyMap {
+			if !currencySet[currency] {
+				currencies = append(currencies, currency)
+				currencySet[currency] = true
+			}
+		}
+	}
+
+	// Batch get all required accounts (single query instead of N queries)
+	accounts, err := s.bookkeeper.BatchGetAccounts(ctx, userIDs, currencies)
+	if err != nil {
+		return fmt.Errorf("failed to batch get accounts: %w", err)
+	}
+
+	// Prepare batch operations for bookkeeper service
+	var lockOps []bookkeeper.FundsOperation
+	var unlockOps []bookkeeper.FundsOperation
+
+	for _, op := range batchMsg.Operations {
+		fundsOp := bookkeeper.FundsOperation{
+			UserID:   op.UserID,
+			Currency: op.Currency,
+			Amount:   op.Amount.InexactFloat64(),
+			OrderID:  op.OrderID,
+			Reason:   op.Reason,
+		}
+
+		if op.OpType == "lock" {
+			lockOps = append(lockOps, fundsOp)
+		} else if op.OpType == "unlock" {
+			unlockOps = append(unlockOps, fundsOp)
+		}
+	}
+
+	// Execute batch operations
+	var lockResult, unlockResult *bookkeeper.BatchOperationResult
+
+	if len(lockOps) > 0 {
+		lockResult, err = s.bookkeeper.BatchLockFunds(ctx, lockOps)
+		if err != nil {
+			s.logger.Error("Failed to execute batch lock operations", zap.Error(err))
+		}
+	}
+
+	if len(unlockOps) > 0 {
+		unlockResult, err = s.bookkeeper.BatchUnlockFunds(ctx, unlockOps)
+		if err != nil {
+			s.logger.Error("Failed to execute batch unlock operations", zap.Error(err))
+		}
+	}
+
+	// Publish balance events for successful operations
+	for _, op := range batchMsg.Operations {
+		// Find the account from batch results
+		account, exists := accounts[op.UserID][op.Currency]
+		if !exists {
+			s.logger.Warn("Account not found in batch results",
+				zap.String("user_id", op.UserID),
+				zap.String("currency", op.Currency))
+			continue
+		}
+
+		// Calculate expected new values
+		var expectedNewAvailable, expectedNewLocked float64
+		if op.OpType == "lock" {
+			expectedNewAvailable = account.Available - op.Amount.InexactFloat64()
+			expectedNewLocked = account.Locked + op.Amount.InexactFloat64()
+		} else {
+			expectedNewAvailable = account.Available + op.Amount.InexactFloat64()
+			expectedNewLocked = account.Locked - op.Amount.InexactFloat64()
+		}
+
+		// Create and publish balance event
+		balanceEvent := &BalanceEventMessage{
+			BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", batchMsg.MessageID),
+			UserID:       op.UserID,
+			Currency:     op.Currency,
+			OldBalance:   decimal.NewFromFloat(account.Balance),
+			NewBalance:   decimal.NewFromFloat(account.Balance), // Balance unchanged in lock/unlock operations
+			OldAvailable: decimal.NewFromFloat(account.Available),
+			NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
+			OldLocked:    decimal.NewFromFloat(account.Locked),
+			NewLocked:    decimal.NewFromFloat(expectedNewLocked),
+			Amount:       op.Amount,
+			Reference:    op.OrderID,
+			Description:  fmt.Sprintf("Funds %sed for order: %s", op.OpType, op.Reason),
+		}
+
+		if err := s.messageBus.PublishBalanceEvent(ctx, balanceEvent); err != nil {
+			s.logger.Error("Failed to publish balance event",
+				zap.Error(err),
+				zap.String("user_id", op.UserID),
+				zap.String("currency", op.Currency))
+		}
+	}
+
+	// Log batch operation results
+	s.logger.Info("Batch funds operations completed",
+		zap.String("batch_id", batchMsg.BatchID),
+		zap.Int("total_operations", len(batchMsg.Operations)),
+		zap.Int("lock_success", safeGetSuccessCount(lockResult)),
+		zap.Int("unlock_success", safeGetSuccessCount(unlockResult)))
+
+	return nil
+}
+
+// safeGetSuccessCount safely extracts success count from batch result
+func safeGetSuccessCount(result *bookkeeper.BatchOperationResult) int {
+	if result == nil {
+		return 0
+	}
+	return result.SuccessCount
+}
+
+// RequestBatchFundsOperations publishes a batch of fund operations
+func (s *BookkeeperMessageService) RequestBatchFundsOperations(ctx context.Context, operations []BatchFundsOperation, batchID string) error {
+	batchData := map[string]interface{}{
+		"operations": operations,
+		"batch_id":   batchID,
+	}
+
+	batchJson, err := json.Marshal(batchData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal batch operations: %w", err)
+	}
+
+	// Create a dedicated message for batch operations
+	batchMsg := &FundsOperationMessage{
+		BaseMessage: NewBaseMessage("batch_funds_operations", "trading", ""),
+		UserID:      batchID,      // Use UserID field for batch ID
+		Currency:    "BATCH",      // Indicates this is a batch operation
+		Amount:      decimal.Zero, // Not applicable for batch
+		OrderID:     "",
+		Reason:      string(batchJson), // Store batch data in reason field
+	}
+
+	return s.messageBus.PublishFundsOperationEvent(ctx, batchMsg)
 }
 
 // Helper function to parse trading symbol into base and quote currencies

@@ -25,6 +25,31 @@ var (
 	ErrConcurrencyConflict = errors.New("concurrency conflict")
 )
 
+// BatchOperationResult holds the result of a batch operation
+type BatchOperationResult struct {
+	SuccessCount int
+	FailedItems  map[string]error
+	Duration     time.Duration
+}
+
+// AccountBalance represents account balance for batch operations
+type AccountBalance struct {
+	UserID    string
+	Currency  string
+	Balance   float64
+	Available float64
+	Locked    float64
+}
+
+// FundsOperation represents a funds lock/unlock operation
+type FundsOperation struct {
+	UserID   string
+	Currency string
+	Amount   float64
+	OrderID  string
+	Reason   string
+}
+
 // TransactionOptions defines options for enhanced transaction handling
 type TransactionOptions struct {
 	Timeout             time.Duration
@@ -62,6 +87,10 @@ type BookkeeperService interface {
 	FailTransaction(ctx context.Context, transactionID string) error
 	LockFunds(ctx context.Context, userID, currency string, amount float64) error
 	UnlockFunds(ctx context.Context, userID, currency string, amount float64) error
+	// Batch operations for N+1 query resolution
+	BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error)
+	BatchLockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
+	BatchUnlockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
 }
 
 // Service implements BookkeeperService
@@ -1027,4 +1056,273 @@ func toLower(s string) string {
 		}
 	}
 	return string(result)
+}
+
+// BatchUpdateBalances updates account balances in batch
+func (s *Service) BatchUpdateBalances(ctx context.Context, userID string, currency string, updates []AccountBalance) (*BatchOperationResult, error) {
+	// Start transaction
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Result container
+	result := &BatchOperationResult{
+		SuccessCount: 0,
+		FailedItems:  make(map[string]error),
+		Duration:     0,
+	}
+
+	// Process each update
+	startTime := time.Now()
+	for _, update := range updates {
+		// Find account
+		var account models.Account
+		if err := tx.Where("user_id = ? AND currency = ?", update.UserID, update.Currency).First(&account).Error; err != nil {
+			tx.Rollback()
+			if err == gorm.ErrRecordNotFound {
+				result.FailedItems[update.UserID] = fmt.Errorf("account not found")
+			} else {
+				result.FailedItems[update.UserID] = fmt.Errorf("failed to find account: %w", err)
+			}
+			continue
+		}
+
+		// Update balance
+		account.Balance = update.Balance
+		account.Available = update.Available
+		account.Locked = update.Locked
+		account.UpdatedAt = time.Now()
+
+		// Save account to database
+		if err := tx.Save(&account).Error; err != nil {
+			tx.Rollback()
+			result.FailedItems[update.UserID] = fmt.Errorf("failed to update balance: %w", err)
+			continue
+		}
+
+		result.SuccessCount++
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit batch balance update: %w", err)
+	}
+
+	result.Duration = time.Since(startTime)
+	s.logger.Info("Batch balance update completed",
+		zap.Int("success_count", result.SuccessCount),
+		zap.Int("failed_count", len(result.FailedItems)),
+		zap.Duration("duration", result.Duration))
+
+	return result, nil
+}
+
+// BatchGetAccounts retrieves accounts for multiple users and currencies efficiently (resolves N+1 queries)
+func (s *Service) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	if len(userIDs) == 0 {
+		return make(map[string]map[string]*models.Account), nil
+	}
+
+	start := time.Now()
+	defer func() {
+		s.logger.Debug("BatchGetAccounts completed",
+			zap.Int("user_count", len(userIDs)),
+			zap.Int("currency_count", len(currencies)),
+			zap.Duration("duration", time.Since(start)))
+	}()
+
+	query := s.db.WithContext(ctx).Model(&models.Account{})
+
+	// Add user ID filter
+	query = query.Where("user_id IN ?", userIDs)
+
+	// Add currency filter if specified
+	if len(currencies) > 0 {
+		query = query.Where("currency IN ?", currencies)
+	}
+
+	var accounts []models.Account
+	if err := query.Find(&accounts).Error; err != nil {
+		return nil, fmt.Errorf("failed to batch get accounts: %w", err)
+	}
+
+	// Group accounts by user ID and currency
+	result := make(map[string]map[string]*models.Account)
+	for _, account := range accounts {
+		userID := account.UserID.String()
+		if result[userID] == nil {
+			result[userID] = make(map[string]*models.Account)
+		}
+		result[userID][account.Currency] = &account
+	}
+
+	return result, nil
+}
+
+// BatchLockFunds locks funds for multiple operations efficiently
+func (s *Service) BatchLockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error) {
+	start := time.Now()
+	result := &BatchOperationResult{
+		SuccessCount: 0,
+		FailedItems:  make(map[string]error),
+	}
+
+	if len(operations) == 0 {
+		result.Duration = time.Since(start)
+		return result, nil
+	}
+
+	// Process operations in batches to avoid transaction timeout
+	batchSize := 50
+	for i := 0; i < len(operations); i += batchSize {
+		end := i + batchSize
+		if end > len(operations) {
+			end = len(operations)
+		}
+
+		batchOps := operations[i:end]
+		if err := s.processBatchLockFunds(ctx, batchOps, result); err != nil {
+			s.logger.Error("Failed to process batch lock funds", zap.Error(err))
+		}
+	}
+
+	result.Duration = time.Since(start)
+	s.logger.Info("Batch lock funds completed",
+		zap.Int("total_operations", len(operations)),
+		zap.Int("success_count", result.SuccessCount),
+		zap.Int("failed_count", len(result.FailedItems)),
+		zap.Duration("duration", result.Duration))
+
+	return result, nil
+}
+
+// BatchUnlockFunds unlocks funds for multiple operations efficiently
+func (s *Service) BatchUnlockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error) {
+	start := time.Now()
+	result := &BatchOperationResult{
+		SuccessCount: 0,
+		FailedItems:  make(map[string]error),
+	}
+
+	if len(operations) == 0 {
+		result.Duration = time.Since(start)
+		return result, nil
+	}
+
+	// Process operations in batches to avoid transaction timeout
+	batchSize := 50
+	for i := 0; i < len(operations); i += batchSize {
+		end := i + batchSize
+		if end > len(operations) {
+			end = len(operations)
+		}
+
+		batchOps := operations[i:end]
+		if err := s.processBatchUnlockFunds(ctx, batchOps, result); err != nil {
+			s.logger.Error("Failed to process batch unlock funds", zap.Error(err))
+		}
+	}
+
+	result.Duration = time.Since(start)
+	s.logger.Info("Batch unlock funds completed",
+		zap.Int("total_operations", len(operations)),
+		zap.Int("success_count", result.SuccessCount),
+		zap.Int("failed_count", len(result.FailedItems)),
+		zap.Duration("duration", result.Duration))
+
+	return result, nil
+}
+
+// processBatchLockFunds processes a batch of lock funds operations in a single transaction
+func (s *Service) processBatchLockFunds(ctx context.Context, operations []FundsOperation, result *BatchOperationResult) error {
+	tx := s.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	for _, op := range operations {
+		opKey := fmt.Sprintf("%s-%s", op.UserID, op.Currency)
+
+		var account models.Account
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND currency = ?", op.UserID, op.Currency).
+			First(&account).Error; err != nil {
+			result.FailedItems[opKey] = fmt.Errorf("failed to find account: %w", err)
+			continue
+		}
+
+		if account.Available < op.Amount {
+			result.FailedItems[opKey] = fmt.Errorf("insufficient funds: available %.8f, required %.8f",
+				account.Available, op.Amount)
+			continue
+		}
+
+		if err := atomicBalanceUpdate(tx, &account, 0, -op.Amount, op.Amount); err != nil {
+			result.FailedItems[opKey] = fmt.Errorf("failed to lock funds: %w", err)
+			continue
+		}
+
+		result.SuccessCount++
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit batch lock transaction: %w", err)
+	}
+
+	return nil
+}
+
+// processBatchUnlockFunds processes a batch of unlock funds operations in a single transaction
+func (s *Service) processBatchUnlockFunds(ctx context.Context, operations []FundsOperation, result *BatchOperationResult) error {
+	tx := s.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	for _, op := range operations {
+		opKey := fmt.Sprintf("%s-%s", op.UserID, op.Currency)
+
+		var account models.Account
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND currency = ?", op.UserID, op.Currency).
+			First(&account).Error; err != nil {
+			result.FailedItems[opKey] = fmt.Errorf("failed to find account: %w", err)
+			continue
+		}
+
+		if account.Locked < op.Amount {
+			result.FailedItems[opKey] = fmt.Errorf("insufficient locked funds: locked %.8f, required %.8f",
+				account.Locked, op.Amount)
+			continue
+		}
+
+		if err := atomicBalanceUpdate(tx, &account, 0, op.Amount, -op.Amount); err != nil {
+			result.FailedItems[opKey] = fmt.Errorf("failed to unlock funds: %w", err)
+			continue
+		}
+
+		result.SuccessCount++
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit batch unlock transaction: %w", err)
+	}
+
+	return nil
 }
