@@ -184,7 +184,7 @@ type AdaptiveMatchingEngine struct {
 
 	// Async risk checking
 	riskService        aml.RiskService
-	asyncRiskService   *aml.AsyncRiskService  // Enhanced async service with Redis
+	asyncRiskService   *aml.AsyncRiskService // Enhanced async service with Redis
 	riskCheckConfig    *RiskCheckConfig
 	pendingOrders      map[string]*PendingOrder
 	riskResults        map[string]*RiskCheckResult
@@ -192,10 +192,10 @@ type AdaptiveMatchingEngine struct {
 	riskRequestChan    chan RiskCheckRequest
 	riskResultChan     chan RiskCheckResult
 	riskWorkerShutdown chan struct{}
-	
+
 	// Performance monitoring
-	perfMonitor        *aml.PerformanceMonitor
-	riskMgmtConfig     *aml.RiskManagementConfig
+	perfMonitor    *aml.PerformanceMonitor
+	riskMgmtConfig *aml.RiskManagementConfig
 }
 
 // MigrationState tracks the migration status for a trading pair
@@ -333,7 +333,7 @@ func NewAdaptiveMatchingEngine(
 	if redisClient != nil && config.RiskCheckConfig.Enabled {
 		// Use configuration from risk-management.yaml
 		asyncConfig := riskMgmtConfig.ToAsyncRiskConfig()
-		
+
 		// Override with any engine-specific config values
 		if config.RiskCheckConfig.Timeout > 0 {
 			asyncConfig.RiskCalculationTimeout = config.RiskCheckConfig.Timeout
@@ -341,11 +341,11 @@ func NewAdaptiveMatchingEngine(
 		if config.RiskCheckConfig.WorkerCount > 0 {
 			asyncConfig.RiskWorkerCount = config.RiskCheckConfig.WorkerCount
 		}
-		
+
 		var err error
 		ame.asyncRiskService, err = aml.NewAsyncRiskService(
 			riskService,
-			redisClient,
+			redisClient.GetClient(),
 			logger,
 			asyncConfig,
 		)
@@ -358,7 +358,7 @@ func NewAdaptiveMatchingEngine(
 				"cache_enabled", asyncConfig.EnableCaching,
 				"target_latency_ms", asyncConfig.TargetLatencyMs,
 				"target_throughput", asyncConfig.TargetThroughputOPS)
-			
+
 			// Initialize performance monitoring
 			ame.perfMonitor = aml.NewPerformanceMonitor(ame.asyncRiskService, logger)
 		}
@@ -1505,14 +1505,14 @@ func (ame *AdaptiveMatchingEngine) processRiskCheckRequest(request RiskCheckRequ
 		// Fallback to synchronous processing
 		result = ame.processRiskCheckSynchronous(ctx, request, result, startTime)
 	}
-	
+
 	// Record performance metrics
 	processingTime := time.Since(startTime)
 	success := result.Approved && result.Error == nil
 	timeout := processingTime > ame.riskCheckConfig.Timeout
-	
+
 	ame.RecordRiskCheckPerformance(processingTime, success, timeout)
-	
+
 	return result
 }
 
@@ -1549,7 +1549,7 @@ func (ame *AdaptiveMatchingEngine) processRiskCheckWithAsyncService(ctx context.
 		// Perform compliance checks on trades
 		for _, trade := range request.Trades {
 			tradeValue := trade.Quantity.Mul(trade.Price)
-			
+
 			// Create async compliance check request
 			complianceCtx, cancel := context.WithTimeout(ctx, time.Millisecond*200) // Fast compliance check
 			complianceResult, err := ame.riskService.ComplianceCheck(
@@ -1558,11 +1558,11 @@ func (ame *AdaptiveMatchingEngine) processRiskCheckWithAsyncService(ctx context.
 				request.UserID,
 				tradeValue,
 				map[string]interface{}{
-					"pair":     trade.Pair,
-					"order_id": trade.OrderID.String(),
-					"trade_id": trade.ID.String(),
-					"quantity": trade.Quantity.String(),
-					"price":    trade.Price.String(),
+					"pair":      trade.Pair,
+					"order_id":  trade.OrderID.String(),
+					"trade_id":  trade.ID.String(),
+					"quantity":  trade.Quantity.String(),
+					"price":     trade.Price.String(),
 					"timestamp": trade.CreatedAt,
 				},
 			)
@@ -2037,27 +2037,27 @@ func (ame *AdaptiveMatchingEngine) GetAsyncRiskServiceHealthStatus() map[string]
 			"reason": "async risk service not initialized",
 		}
 	}
-	
+
 	if ame.perfMonitor == nil {
 		return map[string]interface{}{
 			"status": "degraded",
 			"reason": "performance monitor not available",
 		}
 	}
-	
+
 	// Get detailed health status
 	healthStatus := ame.perfMonitor.getHealthStatus()
-	
+
 	return map[string]interface{}{
-		"status":              healthStatus.Status,
-		"async_service":       healthStatus.AsyncService,
-		"workers":             healthStatus.Workers,
-		"queue_depth":         healthStatus.QueueDepth,
-		"response_time_ms":    float64(healthStatus.ResponseTime.Nanoseconds()) / 1e6,
-		"last_error":          healthStatus.LastError,
-		"last_error_time":     healthStatus.LastErrorTime,
-		"dependencies":        healthStatus.Dependencies,
-		"timestamp":           healthStatus.Timestamp,
+		"status":           healthStatus.Status,
+		"async_service":    healthStatus.AsyncService,
+		"workers":          healthStatus.Workers,
+		"queue_depth":      healthStatus.QueueDepth,
+		"response_time_ms": float64(healthStatus.ResponseTime.Nanoseconds()) / 1e6,
+		"last_error":       healthStatus.LastError,
+		"last_error_time":  healthStatus.LastErrorTime,
+		"dependencies":     healthStatus.Dependencies,
+		"timestamp":        healthStatus.Timestamp,
 	}
 }
 
@@ -2068,7 +2068,7 @@ func (ame *AdaptiveMatchingEngine) GetPerformanceMetrics() map[string]interface{
 			"error": "performance monitoring not available",
 		}
 	}
-	
+
 	return ame.perfMonitor.generatePerformanceReport()
 }
 
@@ -2077,13 +2077,13 @@ func (ame *AdaptiveMatchingEngine) RegisterPerformanceEndpoints(router interface
 	if ame.perfMonitor == nil {
 		return fmt.Errorf("performance monitor not initialized")
 	}
-	
+
 	// Type assertion to gin.Engine
 	if ginRouter, ok := router.(*gin.Engine); ok {
 		aml.RegisterMonitoringEndpoints(ginRouter, ame.perfMonitor)
 		return nil
 	}
-	
+
 	return fmt.Errorf("unsupported router type")
 }
 
@@ -2195,7 +2195,9 @@ func (ame *AdaptiveMatchingEngine) processAsyncRiskCheckResult(result RiskCheckR
 		// Risk check passed - log success
 		ame.logger.Debugw("Async risk check passed for order",
 			"request_id", result.RequestID,
-			"order_id", pendingOrder.Order .ID,
+			"order_id", pendingOrder.Order.ID,
 			"user_id", pendingOrder.Order.UserID,
 			"processing_time", result.ProcessingTime,
-		
+		)
+	}
+}

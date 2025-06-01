@@ -126,7 +126,7 @@ func (w *RiskWorker) processLoop() {
 // processRequest processes a single risk request
 func (w *RiskWorker) processRequest(request *AsyncRiskRequest) *AsyncRiskResult {
 	start := time.Now()
-	
+
 	result := &AsyncRiskResult{
 		RequestID: request.RequestID,
 		Timestamp: time.Now(),
@@ -170,7 +170,7 @@ func (w *RiskWorker) processUserRiskCalculation(request *AsyncRiskRequest, resul
 
 	result.Success = true
 	result.RiskMetrics = riskMetrics
-	
+
 	return result
 }
 

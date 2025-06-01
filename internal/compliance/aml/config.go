@@ -298,8 +298,8 @@ func validateConfig(config *RiskManagementConfig) error {
 func (config *RiskManagementConfig) ToAsyncRiskConfig() *AsyncRiskConfig {
 	return &AsyncRiskConfig{
 		// Worker configuration
-		RiskWorkerCount:   8, // Default from async service
-		CacheWorkerCount:  4, // Default from async service
+		RiskWorkerCount:  8, // Default from async service
+		CacheWorkerCount: 4, // Default from async service
 
 		// Performance targets from config
 		TargetLatencyMs:        int(config.RiskCalculation.CalculationTimeout.Milliseconds()),

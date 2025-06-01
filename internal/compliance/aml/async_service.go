@@ -951,3 +951,18 @@ func (s *AsyncRiskService) updateUserPositionFromTrade(ctx context.Context, trad
 
 	return nil
 }
+
+// SubmitRiskCheck submits a risk check request for async processing
+func (s *AsyncRiskService) SubmitRiskCheck(request interface{}) error {
+	// Type assert the request to the expected type from adaptive engine
+	// This assumes the request is a RiskCheckRequest from the engine
+	s.logger.Debugw("Risk check submitted to async service")
+
+	// For now, this is a placeholder implementation
+	// In a full implementation, this would:
+	// 1. Convert the engine's RiskCheckRequest to AsyncRiskRequest
+	// 2. Submit it to the worker pool
+	// 3. Handle the async response via Redis streams or channels
+
+	return nil
+}

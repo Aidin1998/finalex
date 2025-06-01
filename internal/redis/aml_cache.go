@@ -20,10 +20,10 @@ type CacheKeys struct {
 	UserLimits      string // "user:limits:{userID}"
 
 	// Risk metrics and calculations
-	RiskMetrics        string // "risk:metrics:{userID}"
-	RiskCalculation    string // "risk:calc:{userID}"
-	MarketData         string // "market:data:{symbol}"
-	VolatilityData     string // "market:volatility:{symbol}"
+	RiskMetrics     string // "risk:metrics:{userID}"
+	RiskCalculation string // "risk:calc:{userID}"
+	MarketData      string // "market:data:{symbol}"
+	VolatilityData  string // "market:volatility:{symbol}"
 
 	// Compliance data
 	ComplianceProfile string // "compliance:profile:{userID}"
@@ -32,9 +32,9 @@ type CacheKeys struct {
 	TransactionFlags  string // "compliance:flags:{transactionID}"
 
 	// Position and limit caches
-	PositionLimits    string // "limits:position:{userID}:{symbol}"
-	GlobalLimits      string // "limits:global"
-	ExemptionList     string // "exemptions:users"
+	PositionLimits string // "limits:position:{userID}:{symbol}"
+	GlobalLimits   string // "limits:global"
+	ExemptionList  string // "exemptions:users"
 
 	// Session and pending operations
 	PendingRiskChecks string // "pending:risk:{requestID}"
@@ -58,19 +58,19 @@ func NewCacheKeys() *CacheKeys {
 		UserPositions:   "user:positions:%s",
 		UserLimits:      "user:limits:%s",
 
-		RiskMetrics:        "risk:metrics:%s",
-		RiskCalculation:    "risk:calc:%s",
-		MarketData:         "market:data:%s",
-		VolatilityData:     "market:volatility:%s",
+		RiskMetrics:     "risk:metrics:%s",
+		RiskCalculation: "risk:calc:%s",
+		MarketData:      "market:data:%s",
+		VolatilityData:  "market:volatility:%s",
 
 		ComplianceProfile: "compliance:profile:%s",
 		ComplianceRules:   "compliance:rules",
 		ComplianceAlerts:  "compliance:alerts:%s",
 		TransactionFlags:  "compliance:flags:%s",
 
-		PositionLimits:    "limits:position:%s:%s",
-		GlobalLimits:      "limits:global",
-		ExemptionList:     "exemptions:users",
+		PositionLimits: "limits:position:%s:%s",
+		GlobalLimits:   "limits:global",
+		ExemptionList:  "exemptions:users",
 
 		PendingRiskChecks: "pending:risk:%s",
 		RiskCheckResults:  "results:risk:%s",
@@ -87,23 +87,23 @@ func NewCacheKeys() *CacheKeys {
 
 // AMLCache provides Redis caching for AML/risk management operations
 type AMLCache struct {
-	client   *Client
-	keys     *CacheKeys
-	logger   *zap.SugaredLogger
-	pubsub   *redis.PubSub
-	config   *AMLCacheConfig
+	client *Client
+	keys   *CacheKeys
+	logger *zap.SugaredLogger
+	pubsub *redis.PubSub
+	config *AMLCacheConfig
 }
 
 // AMLCacheConfig configures AML cache behavior
 type AMLCacheConfig struct {
 	// TTL settings for different data types
-	UserRiskProfileTTL   time.Duration `yaml:"user_risk_profile_ttl" json:"user_risk_profile_ttl"`
-	RiskMetricsTTL       time.Duration `yaml:"risk_metrics_ttl" json:"risk_metrics_ttl"`
-	MarketDataTTL        time.Duration `yaml:"market_data_ttl" json:"market_data_ttl"`
-	ComplianceDataTTL    time.Duration `yaml:"compliance_data_ttl" json:"compliance_data_ttl"`
-	PositionDataTTL      time.Duration `yaml:"position_data_ttl" json:"position_data_ttl"`
-	SessionDataTTL       time.Duration `yaml:"session_data_ttl" json:"session_data_ttl"`
-	CalculationCacheTTL  time.Duration `yaml:"calculation_cache_ttl" json:"calculation_cache_ttl"`
+	UserRiskProfileTTL  time.Duration `yaml:"user_risk_profile_ttl" json:"user_risk_profile_ttl"`
+	RiskMetricsTTL      time.Duration `yaml:"risk_metrics_ttl" json:"risk_metrics_ttl"`
+	MarketDataTTL       time.Duration `yaml:"market_data_ttl" json:"market_data_ttl"`
+	ComplianceDataTTL   time.Duration `yaml:"compliance_data_ttl" json:"compliance_data_ttl"`
+	PositionDataTTL     time.Duration `yaml:"position_data_ttl" json:"position_data_ttl"`
+	SessionDataTTL      time.Duration `yaml:"session_data_ttl" json:"session_data_ttl"`
+	CalculationCacheTTL time.Duration `yaml:"calculation_cache_ttl" json:"calculation_cache_ttl"`
 
 	// Cache size limits
 	MaxUserProfiles     int `yaml:"max_user_profiles" json:"max_user_profiles"`
@@ -111,10 +111,10 @@ type AMLCacheConfig struct {
 	MaxSessionData      int `yaml:"max_session_data" json:"max_session_data"`
 
 	// Performance settings
-	EnablePipelining    bool `yaml:"enable_pipelining" json:"enable_pipelining"`
-	PipelineBufferSize  int  `yaml:"pipeline_buffer_size" json:"pipeline_buffer_size"`
-	EnableCompression   bool `yaml:"enable_compression" json:"enable_compression"`
-	EnableAsyncWrites   bool `yaml:"enable_async_writes" json:"enable_async_writes"`
+	EnablePipelining   bool `yaml:"enable_pipelining" json:"enable_pipelining"`
+	PipelineBufferSize int  `yaml:"pipeline_buffer_size" json:"pipeline_buffer_size"`
+	EnableCompression  bool `yaml:"enable_compression" json:"enable_compression"`
+	EnableAsyncWrites  bool `yaml:"enable_async_writes" json:"enable_async_writes"`
 
 	// Pub/Sub settings
 	EnableRealTimeUpdates bool     `yaml:"enable_realtime_updates" json:"enable_realtime_updates"`
@@ -126,13 +126,13 @@ type AMLCacheConfig struct {
 func DefaultAMLCacheConfig() *AMLCacheConfig {
 	return &AMLCacheConfig{
 		// TTL settings optimized for risk management needs
-		UserRiskProfileTTL:   time.Minute * 5,     // User profiles change frequently
-		RiskMetricsTTL:       time.Minute * 2,     // Risk metrics need frequent updates
-		MarketDataTTL:        time.Second * 30,    // Market data changes rapidly
-		ComplianceDataTTL:    time.Minute * 30,    // Compliance data is more stable
-		PositionDataTTL:      time.Minute * 1,     // Positions change with every trade
-		SessionDataTTL:       time.Minute * 10,    // Session data for pending operations
-		CalculationCacheTTL:  time.Minute * 5,     // Cache calculation results
+		UserRiskProfileTTL:  time.Minute * 5,  // User profiles change frequently
+		RiskMetricsTTL:      time.Minute * 2,  // Risk metrics need frequent updates
+		MarketDataTTL:       time.Second * 30, // Market data changes rapidly
+		ComplianceDataTTL:   time.Minute * 30, // Compliance data is more stable
+		PositionDataTTL:     time.Minute * 1,  // Positions change with every trade
+		SessionDataTTL:      time.Minute * 10, // Session data for pending operations
+		CalculationCacheTTL: time.Minute * 5,  // Cache calculation results
 
 		// Cache size limits
 		MaxUserProfiles:     100000, // Support large user base
@@ -140,10 +140,10 @@ func DefaultAMLCacheConfig() *AMLCacheConfig {
 		MaxSessionData:      10000,  // Pending operations cache
 
 		// Performance optimizations
-		EnablePipelining:    true,
-		PipelineBufferSize:  1000,
-		EnableCompression:   false, // Prioritize speed over space
-		EnableAsyncWrites:   true,
+		EnablePipelining:   true,
+		PipelineBufferSize: 1000,
+		EnableCompression:  false, // Prioritize speed over space
+		EnableAsyncWrites:  true,
 
 		// Real-time features
 		EnableRealTimeUpdates: true,
@@ -185,7 +185,7 @@ func NewAMLCache(client *Client, config *AMLCacheConfig, logger *zap.SugaredLogg
 // initializePubSub sets up Redis pub/sub for real-time updates
 func (c *AMLCache) initializePubSub() {
 	c.pubsub = c.client.rdb.Subscribe(context.Background(), c.config.PubSubChannels...)
-	
+
 	// Start background goroutine to handle pub/sub messages
 	go c.handlePubSubMessages()
 }
@@ -198,7 +198,7 @@ func (c *AMLCache) handlePubSubMessages() {
 			"channel", msg.Channel,
 			"payload", msg.Payload,
 		)
-		
+
 		// Handle different message types
 		switch msg.Channel {
 		case "risk:updates":
@@ -218,7 +218,7 @@ func (c *AMLCache) handlePubSubMessages() {
 // GetUserRiskProfile retrieves a user's risk profile from cache
 func (c *AMLCache) GetUserRiskProfile(ctx context.Context, userID string) (*aml.UserRiskProfile, error) {
 	key := fmt.Sprintf(c.keys.UserRiskProfile, userID)
-	
+
 	data, err := c.client.rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -238,7 +238,7 @@ func (c *AMLCache) GetUserRiskProfile(ctx context.Context, userID string) (*aml.
 // SetUserRiskProfile stores a user's risk profile in cache
 func (c *AMLCache) SetUserRiskProfile(ctx context.Context, userID string, profile *aml.UserRiskProfile) error {
 	key := fmt.Sprintf(c.keys.UserRiskProfile, userID)
-	
+
 	data, err := json.Marshal(profile)
 	if err != nil {
 		return fmt.Errorf("failed to marshal user risk profile: %w", err)
@@ -262,7 +262,7 @@ func (c *AMLCache) SetUserRiskProfile(ctx context.Context, userID string, profil
 // GetRiskMetrics retrieves risk metrics from cache
 func (c *AMLCache) GetRiskMetrics(ctx context.Context, userID string) (*aml.RiskMetrics, error) {
 	key := fmt.Sprintf(c.keys.RiskMetrics, userID)
-	
+
 	data, err := c.client.rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -282,7 +282,7 @@ func (c *AMLCache) GetRiskMetrics(ctx context.Context, userID string) (*aml.Risk
 // SetRiskMetrics stores risk metrics in cache
 func (c *AMLCache) SetRiskMetrics(ctx context.Context, userID string, metrics *aml.RiskMetrics) error {
 	key := fmt.Sprintf(c.keys.RiskMetrics, userID)
-	
+
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return fmt.Errorf("failed to marshal risk metrics: %w", err)
@@ -306,7 +306,7 @@ func (c *AMLCache) SetRiskMetrics(ctx context.Context, userID string, metrics *a
 // GetMarketData retrieves market data from cache
 func (c *AMLCache) GetMarketData(ctx context.Context, symbol string) (*MarketData, error) {
 	key := fmt.Sprintf(c.keys.MarketData, symbol)
-	
+
 	data, err := c.client.rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -332,7 +332,7 @@ func (c *AMLCache) SetMarketData(ctx context.Context, symbol string, price, vola
 	}
 
 	key := fmt.Sprintf(c.keys.MarketData, symbol)
-	
+
 	data, err := json.Marshal(marketData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal market data: %w", err)
@@ -363,7 +363,7 @@ type MarketData struct {
 // StorePendingRiskCheck stores a pending risk check in cache
 func (c *AMLCache) StorePendingRiskCheck(ctx context.Context, requestID string, pendingData interface{}) error {
 	key := fmt.Sprintf(c.keys.PendingRiskChecks, requestID)
-	
+
 	data, err := json.Marshal(pendingData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal pending risk check: %w", err)
@@ -380,7 +380,7 @@ func (c *AMLCache) StorePendingRiskCheck(ctx context.Context, requestID string, 
 // GetPendingRiskCheck retrieves a pending risk check from cache
 func (c *AMLCache) GetPendingRiskCheck(ctx context.Context, requestID string) ([]byte, error) {
 	key := fmt.Sprintf(c.keys.PendingRiskChecks, requestID)
-	
+
 	data, err := c.client.rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -446,7 +446,7 @@ func (c *AMLCache) BatchGetUserData(ctx context.Context, userIDs []string) (map[
 func (c *AMLCache) CleanupExpiredData(ctx context.Context) error {
 	// This is handled automatically by Redis TTL, but we can implement
 	// custom cleanup logic here if needed
-	
+
 	c.logger.Debugw("Cache cleanup completed")
 	return nil
 }
@@ -454,16 +454,16 @@ func (c *AMLCache) CleanupExpiredData(ctx context.Context) error {
 // GetCacheStats returns cache statistics
 func (c *AMLCache) GetCacheStats(ctx context.Context) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
-	
+
 	// Get Redis info
 	info, err := c.client.rdb.Info(ctx, "memory", "stats").Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Redis info: %w", err)
 	}
-	
+
 	stats["redis_info"] = info
 	stats["pool_stats"] = c.client.GetStats()
-	
+
 	return stats, nil
 }
 
