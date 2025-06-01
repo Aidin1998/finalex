@@ -1,4 +1,4 @@
-package trading_test
+package test
 
 import (
 	"context"
@@ -194,9 +194,21 @@ func (m *MockEngine) ResetMigration(pair string) error {
 // Remove stubAdaptiveMatchingEngine and use real AdaptiveMatchingEngine
 func TestEngineParticipant_ExportedMethods(t *testing.T) {
 	logger := zap.NewNop().Sugar()
-	// Use default config and nils for stub dependencies
-	adaptiveEngine := engine.NewAdaptiveMatchingEngine(nil, nil, logger, engine.DefaultAdaptiveEngineConfig(), nil, nil)
+
+	// Create mock dependencies
 	mockRiskService := new(MockRiskService)
+
+	// Create adaptive engine with all required parameters (8 total)
+	adaptiveEngine := engine.NewAdaptiveMatchingEngine(
+		nil,                                  // model.Repository
+		nil,                                  // engine.TradeRepository
+		logger,                               // *zap.SugaredLogger
+		engine.DefaultAdaptiveEngineConfig(), // *engine.AdaptiveEngineConfig
+		nil,                                  // *eventjournal.EventJournal
+		nil,                                  // *ws.Hub
+		mockRiskService,                      // aml.RiskService
+		nil,                                  // *redis.Client
+	)
 
 	participant := participants.NewEngineParticipant("BTCUSD", adaptiveEngine, mockRiskService, logger)
 

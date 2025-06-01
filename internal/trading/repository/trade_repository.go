@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
@@ -55,4 +57,14 @@ func (r *GormTradeRepository) CreateTrade(ctx context.Context, trade *model.Trad
 		zap.String("quantity", trade.Quantity.String()))
 
 	return nil
+}
+
+// ListTradesByUser returns all trades for a given user
+func (r *GormTradeRepository) ListTradesByUser(ctx context.Context, userID uuid.UUID) ([]*models.Trade, error) {
+	var trades []*models.Trade
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Find(&trades).Error
+	if err != nil {
+		return nil, err
+	}
+	return trades, nil
 }

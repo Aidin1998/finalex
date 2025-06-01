@@ -4,7 +4,7 @@
 // This file provides comprehensive integration tests for the adaptive trading
 // system, including migration scenarios, performance validation, and fault tolerance.
 
-package trading_test
+package test
 
 import (
 	"context"
