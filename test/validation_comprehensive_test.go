@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"pincex_unified/pkg/validation"
+	"github.com/Aidin1998/pincex_unified/pkg/validation"
 )
 
 // TestEnhancedValidationSuite contains comprehensive tests for the enhanced validation system

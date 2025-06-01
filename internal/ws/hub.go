@@ -2,20 +2,35 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"hash/fnv"
 	"net/http"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
+
+// EnhancedMessage extends Message with additional metadata for enhanced clients
+type EnhancedMessage struct {
+	Message
+	ClientID    string            `json:"client_id,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Priority    int               `json:"priority,omitempty"`
+	Retries     int               `json:"retries,omitempty"`
+	ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
+}
 
 // Message wraps a WebSocket payload with sequencing for replay.
 type Message struct {
-	Topic string
-	Seq   uint64
-	Data  []byte
+	Topic string `json:"topic"`
+	Seq   uint64 `json:"seq"`
+	Data  []byte `json:"data"`
 }
 
 // ringBuffer holds the last N messages for a topic.
