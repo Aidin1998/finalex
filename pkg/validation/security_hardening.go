@@ -28,31 +28,31 @@ type SecurityHardening struct {
 
 // SecurityConfig holds security hardening configuration
 type SecurityConfig struct {
-	EnableIPBlacklisting      bool          `json:"enable_ip_blacklisting"`
-	EnableFingerprintTracking bool          `json:"enable_fingerprint_tracking"`
-	EnableAdvancedSQLInjection bool         `json:"enable_advanced_sql_injection"`
-	EnableXSSProtection       bool          `json:"enable_xss_protection"`
-	EnableCSRFProtection      bool          `json:"enable_csrf_protection"`
-	EnableRateLimiting        bool          `json:"enable_rate_limiting"`
-	MaxRequestsPerMinute      int           `json:"max_requests_per_minute"`
-	MaxRequestsPerEndpoint    int           `json:"max_requests_per_endpoint"`
-	SuspiciousActivityWindow  time.Duration `json:"suspicious_activity_window"`
-	BlockDuration             time.Duration `json:"block_duration"`
+	EnableIPBlacklisting       bool          `json:"enable_ip_blacklisting"`
+	EnableFingerprintTracking  bool          `json:"enable_fingerprint_tracking"`
+	EnableAdvancedSQLInjection bool          `json:"enable_advanced_sql_injection"`
+	EnableXSSProtection        bool          `json:"enable_xss_protection"`
+	EnableCSRFProtection       bool          `json:"enable_csrf_protection"`
+	EnableRateLimiting         bool          `json:"enable_rate_limiting"`
+	MaxRequestsPerMinute       int           `json:"max_requests_per_minute"`
+	MaxRequestsPerEndpoint     int           `json:"max_requests_per_endpoint"`
+	SuspiciousActivityWindow   time.Duration `json:"suspicious_activity_window"`
+	BlockDuration              time.Duration `json:"block_duration"`
 }
 
 // DefaultSecurityConfig returns default security configuration
 func DefaultSecurityConfig() *SecurityConfig {
 	return &SecurityConfig{
-		EnableIPBlacklisting:      true,
-		EnableFingerprintTracking: true,
+		EnableIPBlacklisting:       true,
+		EnableFingerprintTracking:  true,
 		EnableAdvancedSQLInjection: true,
-		EnableXSSProtection:       true,
-		EnableCSRFProtection:      true,
-		EnableRateLimiting:        true,
-		MaxRequestsPerMinute:      300,
-		MaxRequestsPerEndpoint:    100,
-		SuspiciousActivityWindow:  5 * time.Minute,
-		BlockDuration:             15 * time.Minute,
+		EnableXSSProtection:        true,
+		EnableCSRFProtection:       true,
+		EnableRateLimiting:         true,
+		MaxRequestsPerMinute:       300,
+		MaxRequestsPerEndpoint:     100,
+		SuspiciousActivityWindow:   5 * time.Minute,
+		BlockDuration:              15 * time.Minute,
 	}
 }
 
@@ -73,7 +73,7 @@ func NewSecurityHardening(logger *zap.Logger, config *SecurityConfig) *SecurityH
 
 	sh.initializeSuspiciousPatterns()
 	sh.initializeMaliciousIPRanges()
-	
+
 	return sh
 }
 
@@ -89,7 +89,7 @@ func (sh *SecurityHardening) initializeSuspiciousPatterns() {
 		`(?i)(waitfor\s+delay|benchmark\s*\(|sleep\s*\()`,
 		`(?i)(load_file\s*\(|into\s+outfile|into\s+dumpfile)`,
 		`(?i)(\bchar\s*\(|\bascii\s*\(|\bord\s*\(|\bhex\s*\()`,
-		
+
 		// Advanced XSS patterns
 		`(?i)(<script[^>]*>|</script>|javascript:|vbscript:)`,
 		`(?i)(onload\s*=|onclick\s*=|onerror\s*=|onmouseover\s*=)`,
@@ -98,49 +98,47 @@ func (sh *SecurityHardening) initializeSuspiciousPatterns() {
 		`(?i)(document\.cookie|document\.write|window\.location)`,
 		`(?i)(alert\s*\(|confirm\s*\(|prompt\s*\()`,
 		`(?i)(<img[^>]*onerror|<svg[^>]*onload)`,
-		
 		// Command Injection patterns
 		`(?i)(\|\s*nc\s|\|\s*netcat\s|\|\s*wget\s|\|\s*curl\s)`,
 		`(?i)(\|\s*cat\s|\|\s*grep\s|\|\s*awk\s|\|\s*sed\s)`,
 		`(?i)(;\s*rm\s|;\s*mv\s|;\s*cp\s|;\s*chmod\s)`,
-		`(?i)(\$\(.*\)|\`.*\`|%\{.*\})`,
+		`(?i)(\$\(.*\)|` + "`" + `.*` + "`" + `|%\{.*\})`,
 		`(?i)(&&\s*rm|&&\s*cat|&&\s*ls|&&\s*ps)`,
-		
+
 		// Directory Traversal patterns
 		`(?i)(\.\.\/|\.\.\\|\.\./|\.\.\x5c)`,
 		`(?i)(%2e%2e%2f|%2e%2e\x5c|%252e%252e%252f)`,
 		`(?i)(\/etc\/passwd|\/etc\/shadow|\/etc\/hosts)`,
 		`(?i)(\.\.%2f|\.\.%5c|%2e%2e%5c)`,
-		
+
 		// LDAP Injection patterns
 		`(?i)(\*\)\(\||\*\)\(&|\)\(\||&\(\|)`,
 		`(?i)(\|\(.*=\*\)|\*\)\(\*|\(\|.*\=\*)`,
-		
+
 		// XXE patterns
 		`(?i)(<!ENTITY|<!DOCTYPE.*ENTITY|SYSTEM\s+\"file:)`,
 		`(?i)(<\?xml.*encoding|<!ENTITY.*%|SYSTEM\s+\"http:)`,
-		
+
 		// NoSQL Injection patterns
 		`(?i)(\$ne|\$gt|\$lt|\$regex|\$where)`,
 		`(?i)(\$or\s*:\s*\[|\$and\s*:\s*\[)`,
-		
+
 		// CSRF patterns
 		`(?i)(x-requested-with.*xmlhttprequest)`,
-		
+
 		// File Upload patterns
 		`(?i)(\.php|\.jsp|\.asp|\.aspx|\.exe|\.sh|\.bat)$`,
 		`(?i)(data:.*base64|data:text\/html)`,
-		
+
 		// Protocol violations
 		`(?i)(file:\/\/|ftp:\/\/|gopher:\/\/|dict:\/\/)`,
-		
+
 		// Encoding evasion attempts
 		`(?i)(%00|%0a|%0d|%1a|%2e%2e|%252e|%c0%af)`,
 		`(?i)(\\x00|\\x0a|\\x0d|\\x1a|\\x2e|\\x2f)`,
-		
 		// Template injection
 		`(?i)(\{\{.*\}\}|\[\[.*\]\]|<%.*%>|\$\{.*\})`,
-		
+
 		// Suspicious headers and user agents
 		`(?i)(sqlmap|havij|pangolin|netsparker|acunetix)`,
 		`(?i)(nikto|nmap|masscan|zap|burp)`,
@@ -337,10 +335,10 @@ func (sh *SecurityHardening) detectAdvancedThreats(input string) []string {
 
 	// URL decode the input for better detection
 	decoded, _ := url.QueryUnescape(input)
-	
+
 	// Check both original and decoded input
 	inputs := []string{input, decoded}
-	
+
 	for _, testInput := range inputs {
 		for _, pattern := range sh.suspiciousPatterns {
 			if pattern.MatchString(testInput) {
@@ -372,7 +370,7 @@ func (sh *SecurityHardening) hasEncodingEvasion(input string) bool {
 	// Check for multiple URL encoding layers
 	decoded1, _ := url.QueryUnescape(input)
 	decoded2, _ := url.QueryUnescape(decoded1)
-	
+
 	// If double decoding produces different results, it's suspicious
 	if decoded1 != decoded2 && decoded1 != input {
 		return true
@@ -380,9 +378,9 @@ func (sh *SecurityHardening) hasEncodingEvasion(input string) bool {
 
 	// Check for mixed encoding schemes
 	patterns := []string{
-		`%[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}`,  // Mixed URL and hex encoding
-		`%[0-9a-fA-F]{2}.*\\u[0-9a-fA-F]{4}`,  // Mixed URL and Unicode encoding
-		`\\x[0-9a-fA-F]{2}.*%[0-9a-fA-F]{2}`,  // Mixed hex and URL encoding
+		`%[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}`, // Mixed URL and hex encoding
+		`%[0-9a-fA-F]{2}.*\\u[0-9a-fA-F]{4}`, // Mixed URL and Unicode encoding
+		`\\x[0-9a-fA-F]{2}.*%[0-9a-fA-F]{2}`, // Mixed hex and URL encoding
 	}
 
 	for _, pattern := range patterns {
@@ -435,7 +433,7 @@ func (sh *SecurityHardening) generateRequestFingerprint(c *gin.Context) string {
 		c.Request.Method,
 		c.Request.URL.Path,
 		c.GetHeader("User-Agent"))
-	
+
 	return fmt.Sprintf("%x", md5.Sum([]byte(fingerprint)))
 }
 
@@ -476,7 +474,7 @@ func (sh *SecurityHardening) isRateLimited(fingerprint, clientIP, endpoint strin
 // cleanupOldFingerprints removes old fingerprint entries
 func (sh *SecurityHardening) cleanupOldFingerprints(now time.Time) {
 	cutoff := now.Add(-sh.cleanupInterval)
-	
+
 	for fingerprint, timestamp := range sh.requestFingerprints {
 		if timestamp.Before(cutoff) {
 			delete(sh.requestFingerprints, fingerprint)
@@ -491,8 +489,8 @@ func (sh *SecurityHardening) cleanupOldFingerprints(now time.Time) {
 // isCSRFVulnerable checks for CSRF vulnerabilities
 func (sh *SecurityHardening) isCSRFVulnerable(c *gin.Context) bool {
 	// Only check state-changing methods
-	if c.Request.Method != "POST" && c.Request.Method != "PUT" && 
-	   c.Request.Method != "DELETE" && c.Request.Method != "PATCH" {
+	if c.Request.Method != "POST" && c.Request.Method != "PUT" &&
+		c.Request.Method != "DELETE" && c.Request.Method != "PATCH" {
 		return false
 	}
 

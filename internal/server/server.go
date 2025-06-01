@@ -105,6 +105,18 @@ func (s *Server) Router() *gin.Engine {
 	securityConfig.EnableCSRFProtection = true
 	router.Use(validation.SecurityHardeningMiddleware(s.logger, securityConfig))
 
+	// Add enhanced security middleware for comprehensive JWT validation monitoring
+	if s.authSvc != nil {
+		securityMiddlewareConfig := auth.DefaultSecurityMiddlewareConfig()
+		securityMiddlewareConfig.EnableDetailedAuditLogging = true
+		securityMiddlewareConfig.LogSuspiciousActivity = true
+		securityMiddlewareConfig.BlockHighRiskTokens = true
+		router.Use(auth.SecurityMiddleware(s.logger, s.authSvc, securityMiddlewareConfig))
+
+		// Add comprehensive audit logging middleware
+		router.Use(auth.AuditMiddleware(s.logger))
+	}
+
 	// Keep existing basic validation middleware for legacy compatibility
 	router.Use(validation.ValidationMiddleware(s.logger))
 	router.Use(validation.RequestValidationMiddleware())
@@ -307,7 +319,7 @@ func (s *Server) writeError(c *gin.Context, err error) {
 	})
 }
 
-// authMiddleware creates a middleware for authentication
+// authMiddleware creates a middleware for authentication with enhanced JWT validation
 func (s *Server) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get token from header
@@ -323,28 +335,54 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			token = token[7:]
 		}
 
+		// Extract client IP for enhanced security auditing
+		clientIP := c.ClientIP()
+
+		// Set client IP in context for enhanced JWT validator
+		ctx := context.WithValue(c.Request.Context(), "client_ip", clientIP)
+		c.Request = c.Request.WithContext(ctx)
+
 		var userID string
 		var err error
 
-		// Try unified auth service first
+		// Try unified auth service first (enhanced validation)
 		if s.authSvc != nil {
-			claims, authErr := s.authSvc.ValidateToken(c.Request.Context(), token)
+			claims, authErr := s.authSvc.ValidateToken(ctx, token)
 			if authErr == nil {
 				userID = claims.UserID.String()
-				// Set additional context from claims
+				// Set comprehensive context from enhanced validation claims
 				c.Set("userEmail", claims.Email)
 				c.Set("userRole", claims.Role)
 				c.Set("userPermissions", claims.Permissions)
 				c.Set("sessionID", claims.SessionID.String())
+				c.Set("tokenType", claims.TokenType)
+
+				// Set security context for monitoring
+				c.Set("client_ip", clientIP)
+				c.Set("user_id", userID)
+
+				// Log successful authentication for audit trail
+				s.logger.Debug("Authentication successful",
+					zap.String("user_id", userID),
+					zap.String("client_ip", clientIP),
+					zap.String("endpoint", c.Request.URL.Path),
+					zap.String("method", c.Request.Method))
 			} else {
 				err = authErr
 			}
 		} else {
-			// Fallback to identities service
+			// Fallback to identities service (legacy validation)
 			userID, err = s.identitiesSvc.ValidateToken(token)
 		}
 
 		if err != nil {
+			// Enhanced error logging for security monitoring
+			s.logger.Warn("Authentication failed",
+				zap.String("client_ip", clientIP),
+				zap.String("endpoint", c.Request.URL.Path),
+				zap.String("method", c.Request.Method),
+				zap.Error(err))
+
 			s.writeError(c, fmt.Errorf("unauthorized: %w", err))
 			c.Abort()
 			return

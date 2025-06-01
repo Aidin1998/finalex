@@ -96,13 +96,13 @@ func DefaultXATimeoutConfig() *XATimeoutConfig {
 type XAErrorType string
 
 const (
-	XAErrorTypeTimeout     XAErrorType = "TIMEOUT"
-	XAErrorTypeDeadlock    XAErrorType = "DEADLOCK"
-	XAErrorTypeResource    XAErrorType = "RESOURCE"
-	XAErrorTypeProtocol    XAErrorType = "PROTOCOL"
-	XAErrorTypeHeuristic   XAErrorType = "HEURISTIC"
-	XAErrorTypeRecovery    XAErrorType = "RECOVERY"
-	XAErrorTypeValidation  XAErrorType = "VALIDATION"
+	XAErrorTypeTimeout    XAErrorType = "TIMEOUT"
+	XAErrorTypeDeadlock   XAErrorType = "DEADLOCK"
+	XAErrorTypeResource   XAErrorType = "RESOURCE"
+	XAErrorTypeProtocol   XAErrorType = "PROTOCOL"
+	XAErrorTypeHeuristic  XAErrorType = "HEURISTIC"
+	XAErrorTypeRecovery   XAErrorType = "RECOVERY"
+	XAErrorTypeValidation XAErrorType = "VALIDATION"
 )
 
 // EnhancedXAException provides detailed error information
@@ -119,7 +119,7 @@ type EnhancedXAException struct {
 }
 
 func (e *EnhancedXAException) Error() string {
-	return fmt.Sprintf("XA Error [%s/%s] in %s phase for transaction %s: %s", 
+	return fmt.Sprintf("XA Error [%s/%s] in %s phase for transaction %s: %s",
 		e.ErrorType, e.ErrorCode, e.Phase, e.TransactionID, e.Message)
 }
 
@@ -1047,7 +1047,7 @@ func (tm *XATransactionManager) isRetryableUnderlyingError(err error) bool {
 
 // containsError checks if error string contains specific error patterns
 func (tm *XATransactionManager) containsError(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		(len(s) > len(substr) && tm.containsIgnoreCase(s, substr)))
 }
 

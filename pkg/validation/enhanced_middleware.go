@@ -578,15 +578,14 @@ func (ev *EnhancedValidator) validateQueryParams(c *gin.Context, rule *EndpointV
 	queryParams := c.Request.URL.Query()
 
 	// If no rule specified, use basic validation only
-	if rule == nil {
-		// Apply basic security validation to all query params
+	if rule == nil { // Apply basic security validation to all query params
 		for key, values := range queryParams {
 			for _, value := range values {
-				if err := ev.baseValidator.ValidateInput(value); err != nil {
+				if ContainsSQLInjection(value) || ContainsXSS(value) {
 					errors = append(errors, ValidationError{
 						Field:   fmt.Sprintf("query.%s", key),
 						Tag:     "security",
-						Message: fmt.Sprintf("Query parameter contains potentially malicious content: %s", err.Error()),
+						Message: "Query parameter contains potentially malicious content",
 					})
 				}
 			}
@@ -635,15 +634,14 @@ func (ev *EnhancedValidator) validateQueryParams(c *gin.Context, rule *EndpointV
 // validatePathParams validates path parameters against endpoint rules
 func (ev *EnhancedValidator) validatePathParams(c *gin.Context, rule *EndpointValidationRule) []ValidationError {
 	var errors []ValidationError
-
 	// Extract path parameters using Gin's Param method
 	for _, param := range c.Params {
 		// Apply security validation
-		if err := ev.baseValidator.ValidateInput(param.Value); err != nil {
+		if ContainsSQLInjection(param.Value) || ContainsXSS(param.Value) {
 			errors = append(errors, ValidationError{
 				Field:   fmt.Sprintf("path.%s", param.Key),
 				Tag:     "security",
-				Message: fmt.Sprintf("Path parameter contains potentially malicious content: %s", err.Error()),
+				Message: "Path parameter contains potentially malicious content",
 			})
 		}
 
@@ -689,13 +687,12 @@ func (ev *EnhancedValidator) validateHeaders(c *gin.Context, rule *EndpointValid
 			})
 			continue
 		}
-
 		// Apply security validation to header values
-		if err := ev.baseValidator.ValidateInput(headerValue); err != nil {
+		if ContainsSQLInjection(headerValue) || ContainsXSS(headerValue) {
 			errors = append(errors, ValidationError{
 				Field:   fmt.Sprintf("header.%s", headerName),
 				Tag:     "security",
-				Message: fmt.Sprintf("Header contains potentially malicious content: %s", err.Error()),
+				Message: "Header contains potentially malicious content",
 			})
 		}
 
@@ -808,14 +805,12 @@ func (ev *EnhancedValidator) validateRequestBody(c *gin.Context, rule *EndpointV
 			}
 
 			// Convert value to string for validation
-			valueStr := fmt.Sprintf("%v", value)
-
-			// Apply security validation
-			if err := ev.baseValidator.ValidateInput(valueStr); err != nil {
+			valueStr := fmt.Sprintf("%v", value) // Apply security validation
+			if ContainsSQLInjection(valueStr) || ContainsXSS(valueStr) {
 				errors = append(errors, ValidationError{
 					Field:   fmt.Sprintf("body.%s", field),
 					Tag:     "security",
-					Message: fmt.Sprintf("Field contains potentially malicious content: %s", err.Error()),
+					Message: "Field contains potentially malicious content",
 				})
 				continue
 			}
@@ -1107,10 +1102,9 @@ func (ev *EnhancedValidator) validateFiatDeposit(c *gin.Context) []ValidationErr
 	if err := json.Unmarshal(body, &depositData); err != nil {
 		return errors
 	}
-
 	// Validate business logic
 	paymentMethod, _ := depositData["payment_method"].(string)
-	bankAccountID, bankAccountExists := depositData["bank_account_id"]
+	_, bankAccountExists := depositData["bank_account_id"]
 
 	// Bank transfers require bank account ID
 	if paymentMethod == "bank_transfer" && !bankAccountExists {

@@ -77,6 +77,7 @@ type Service struct {
 	issuer                    string
 	oauthProviders            map[string]*OAuthProvider
 	rateLimiter               RateLimiter
+	enhancedJWTValidator      *EnhancedJWTValidator // Enhanced JWT validation
 }
 
 // TokenClaims represents JWT token claims
@@ -209,6 +210,18 @@ func NewAuthService(
 		rateLimiter:               rateLimiter,
 	}
 
+	// Initialize enhanced JWT validator with secure defaults
+	jwtConfig := DefaultJWTValidationConfig()
+	service.enhancedJWTValidator = NewEnhancedJWTValidator(
+		logger,
+		db,
+		[]byte(jwtSecret),
+		[]byte(refreshSecret),
+		issuer,
+		jwtConfig,
+		rateLimiter,
+	)
+
 	// Auto-migrate database tables
 	if err := service.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -226,63 +239,57 @@ func (s *Service) migrate() error {
 	)
 }
 
-// ValidateToken validates a JWT token and returns claims
+// ValidateToken validates a JWT token and returns claims using enhanced security validation
 func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*TokenClaims, error) {
-	// Apply rate limiting
-	if s.rateLimiter != nil {
-		allowed, err := s.rateLimiter.Allow(ctx, "token_validation", 100, time.Minute)
-		if err != nil {
-			return nil, fmt.Errorf("rate limiter error: %w", err)
-		}
-		if !allowed {
-			return nil, fmt.Errorf("rate limit exceeded")
+	// Extract client IP for security auditing (fallback to empty if not available)
+	clientIP := ""
+	if addr := ctx.Value("client_ip"); addr != nil {
+		if ip, ok := addr.(string); ok {
+			clientIP = ip
 		}
 	}
 
-	// Remove Bearer prefix if present
-	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
-
-	// Check if token is blacklisted
-	tokenHash := hashToken(tokenString)
-	var blacklistedToken BlacklistedToken
-	if err := s.db.Where("token_hash = ? AND expires_at > ?", tokenHash, time.Now()).First(&blacklistedToken).Error; err == nil {
-		return nil, fmt.Errorf("token has been revoked")
-	}
-
-	// Parse and validate token
-	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return s.jwtSecret, nil
-	})
-
+	// Use enhanced JWT validator for comprehensive validation
+	result, err := s.enhancedJWTValidator.ValidateTokenComprehensive(ctx, tokenString, clientIP)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
+		// Log validation errors for security monitoring
+		s.logger.Warn("JWT token validation failed",
+			zap.String("client_ip", clientIP),
+			zap.Error(err),
+			zap.Int("validation_errors", len(result.ValidationErrors)),
+			zap.Int("security_flags", len(result.SecurityFlags)),
+			zap.Duration("validation_latency", result.ValidationLatency))
+
+		return nil, err
 	}
 
-	if !token.Valid {
-		return nil, fmt.Errorf("invalid token")
+	// Check if validation was successful
+	if !result.Valid || result.Claims == nil {
+		s.logger.Warn("JWT token validation unsuccessful",
+			zap.String("client_ip", clientIP),
+			zap.Bool("valid", result.Valid),
+			zap.Int("validation_errors", len(result.ValidationErrors)),
+			zap.Duration("validation_latency", result.ValidationLatency))
+
+		return nil, fmt.Errorf("token validation failed")
 	}
 
-	claims, ok := token.Claims.(*TokenClaims)
-	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
-	}
-
-	// Validate session if session ID is present
-	if claims.SessionID != uuid.Nil {
-		session, err := s.ValidateSession(ctx, claims.SessionID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid session: %w", err)
+	// Log security flags if present (for monitoring)
+	if len(result.SecurityFlags) > 0 {
+		flagTypes := make([]string, len(result.SecurityFlags))
+		for i, flag := range result.SecurityFlags {
+			flagTypes[i] = flag.Type
 		}
-		if !session.IsActive {
-			return nil, fmt.Errorf("session is inactive")
-		}
+		s.logger.Info("JWT token validation completed with security flags",
+			zap.String("user_id", result.Claims.UserID.String()),
+			zap.String("client_ip", clientIP),
+			zap.Strings("security_flags", flagTypes),
+			zap.Duration("validation_latency", result.ValidationLatency),
+			zap.Duration("token_age", result.TokenAge),
+			zap.Duration("remaining_lifetime", result.RemainingLifetime))
 	}
 
-	return claims, nil
+	return result.Claims, nil
 }
 
 // RefreshToken refreshes an access token using a refresh token
