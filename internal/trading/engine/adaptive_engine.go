@@ -2046,7 +2046,7 @@ func (ame *AdaptiveMatchingEngine) GetAsyncRiskServiceHealthStatus() map[string]
 	}
 
 	// Get detailed health status
-	healthStatus := ame.perfMonitor.getHealthStatus()
+	healthStatus := ame.perfMonitor.GetHealthStatus()
 
 	return map[string]interface{}{
 		"status":           healthStatus.Status,
@@ -2069,7 +2069,7 @@ func (ame *AdaptiveMatchingEngine) GetPerformanceMetrics() map[string]interface{
 		}
 	}
 
-	return ame.perfMonitor.generatePerformanceReport()
+	return ame.perfMonitor.GeneratePerformanceReport()
 }
 
 // RegisterPerformanceEndpoints registers performance monitoring endpoints with a router

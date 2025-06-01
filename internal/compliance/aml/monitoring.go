@@ -448,6 +448,16 @@ func (pm *PerformanceMonitor) generatePerformanceReport() map[string]interface{}
 	}
 }
 
+// GetHealthStatus returns the health status using the underlying unexported method
+func (pm *PerformanceMonitor) GetHealthStatus() *HealthStatus {
+	return pm.getHealthStatus()
+}
+
+// GeneratePerformanceReport returns a detailed performance report using the underlying unexported method
+func (pm *PerformanceMonitor) GeneratePerformanceReport() map[string]interface{} {
+	return pm.generatePerformanceReport()
+}
+
 // checkSLACompliance checks if current metrics meet SLA requirements
 func (pm *PerformanceMonitor) checkSLACompliance(metrics *PerformanceMetrics) bool {
 	// Check latency SLA (< 500ms)
