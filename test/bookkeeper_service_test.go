@@ -1,3 +1,0 @@
-package test
-
-// This file has been removed as redundant. See internal_bookkeeper_service_test.go for canonical tests.

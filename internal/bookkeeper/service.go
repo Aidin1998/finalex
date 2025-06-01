@@ -2,6 +2,7 @@ package bookkeeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +13,41 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// Enhanced error types for better error handling
+var (
+	ErrInsufficientFunds   = errors.New("insufficient funds")
+	ErrAccountNotFound     = errors.New("account not found")
+	ErrTransactionNotFound = errors.New("transaction not found")
+	ErrInvalidAmount       = errors.New("invalid amount")
+	ErrTransactionTimeout  = errors.New("transaction timeout")
+	ErrDeadlockDetected    = errors.New("deadlock detected")
+	ErrConcurrencyConflict = errors.New("concurrency conflict")
+)
+
+// TransactionOptions defines options for enhanced transaction handling
+type TransactionOptions struct {
+	Timeout             time.Duration
+	MaxRetries          int
+	RetryBackoff        time.Duration
+	RequireRowLocking   bool
+	PreValidationChecks bool
+	AuditLogging        bool
+	DeadlockDetection   bool
+}
+
+// DefaultTransactionOptions returns default transaction options
+func DefaultTransactionOptions() *TransactionOptions {
+	return &TransactionOptions{
+		Timeout:             30 * time.Second,
+		MaxRetries:          3,
+		RetryBackoff:        100 * time.Millisecond,
+		RequireRowLocking:   true,
+		PreValidationChecks: true,
+		AuditLogging:        true,
+		DeadlockDetection:   true,
+	}
+}
 
 // BookkeeperService defines bookkeeping operations and supports transaction and account lifecycle
 type BookkeeperService interface {
@@ -539,41 +575,456 @@ func (s *Service) getAccountMutex(userID, currency string) *sync.Mutex {
 	return mu
 }
 
-// Locking hierarchy and naming convention documentation
-//
-// Locking Hierarchy (broadest to narrowest):
-// 1. GlobalLock (rare, e.g., for migrations/maintenance)
-// 2. AccountLock (per user+currency, e.g., "account:{userID}:{currency}")
-// 3. BalanceLock (per account, for balance/available/locked fields)
-// 4. TransactionLock (per transaction, e.g., "txn:{transactionID}")
-//
-// Lock Types:
-// - Exclusive lock: Required for any operation that modifies balances or account state (e.g., TransferFunds, LockFunds, UnlockFunds, CreateTransaction, CompleteTransaction, FailTransaction)
-// - Read lock: For queries that do not modify state (e.g., GetAccount, GetAccounts, GetAccountTransactions)
-//
-// Lock Acquisition Order:
-// - Always acquire locks in lexicographical order of lock name (e.g., "account:alice:USD" before "account:bob:USD").
-// - For operations involving both AccountLock and TransactionLock, always acquire AccountLock(s) first, then TransactionLock(s).
-//
-// Naming Convention:
-// - AccountLock: "account:{userID}:{currency}"
-// - BalanceLock: "balance:{accountID}"
-// - TransactionLock: "txn:{transactionID}"
-// - GlobalLock: "global"
-//
-// Example (TransferFunds):
-//   fromMu := s.getAccountMutex(fromUserID, currency) // "account:{fromUserID}:{currency}"
-//   toMu := s.getAccountMutex(toUserID, currency)     // "account:{toUserID}:{currency}"
-//   // Always lock in lex order to avoid deadlocks
-//   if fromUserID < toUserID { fromMu.Lock(); toMu.Lock() } ...
-//
-// Visual Diagram:
-//   GlobalLock
-//      |
-//   AccountLock ("account:{userID}:{currency}")
-//      |
-//   BalanceLock ("balance:{accountID}")
-//      |
-//   TransactionLock ("txn:{transactionID}")
-//
-// This strategy ensures no deadlocks, high concurrency, and clear, auditable locking for all financial operations.
+// EnhancedLockFunds locks funds with SELECT FOR UPDATE and enhanced validation
+func (s *Service) EnhancedLockFunds(ctx context.Context, userID, currency string, amount float64, opts *TransactionOptions) error {
+	if opts == nil {
+		opts = DefaultTransactionOptions()
+	}
+
+	if amount <= 0 {
+		return ErrInvalidAmount
+	}
+
+	// Create timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
+	var lastErr error
+	for attempt := 0; attempt <= opts.MaxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(opts.RetryBackoff)
+		}
+
+		err := s.executeLockFundsWithRetry(timeoutCtx, userID, currency, amount, opts)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if !isRetryableError(err) {
+			break
+		}
+
+		s.logger.Warn("Retrying lock funds operation",
+			zap.String("user_id", userID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.Int("attempt", attempt+1),
+			zap.Error(err))
+	}
+
+	return fmt.Errorf("failed to lock funds after %d attempts: %w", opts.MaxRetries+1, lastErr)
+}
+
+// executeLockFundsWithRetry performs the actual lock funds operation with enhanced locking
+func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currency string, amount float64, opts *TransactionOptions) error {
+	// Start transaction with timeout
+	tx := s.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			s.logger.Error("Panic during lock funds operation",
+				zap.String("user_id", userID),
+				zap.String("currency", currency),
+				zap.Any("panic", r))
+		}
+	}()
+
+	// Pre-transaction validation
+	if opts.PreValidationChecks {
+		if err := s.validateLockFundsPreConditions(ctx, tx, userID, currency, amount); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// Acquire row-level lock with SELECT FOR UPDATE
+	var account models.Account
+	query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND currency = ?", userID, currency)
+
+	if opts.RequireRowLocking {
+		// Add NOWAIT to detect deadlocks quickly
+		query = query.Clauses(clause.Locking{Options: "NOWAIT"})
+	}
+
+	if err := query.First(&account).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrAccountNotFound
+		}
+		if isDeadlockError(err) {
+			return ErrDeadlockDetected
+		}
+		return fmt.Errorf("failed to find and lock account: %w", err)
+	}
+
+	// Verify sufficient funds with row-level lock held
+	if account.Available < amount {
+		tx.Rollback()
+		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, account.Available, amount)
+	}
+
+	// Log audit trail
+	if opts.AuditLogging {
+		s.logger.Info("Locking funds",
+			zap.String("user_id", userID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.Float64("available_before", account.Available),
+			zap.Float64("locked_before", account.Locked))
+	}
+
+	// Perform atomic balance update
+	if err := atomicBalanceUpdate(tx, &account, 0, -amount, amount); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to lock funds: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Log successful operation
+	if opts.AuditLogging {
+		s.logger.Info("Successfully locked funds",
+			zap.String("user_id", userID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.Float64("available_after", account.Available-amount),
+			zap.Float64("locked_after", account.Locked+amount))
+	}
+
+	return nil
+}
+
+// validateLockFundsPreConditions performs pre-transaction validation
+func (s *Service) validateLockFundsPreConditions(ctx context.Context, tx *gorm.DB, userID, currency string, amount float64) error {
+	// Check if account exists
+	var count int64
+	if err := tx.Model(&models.Account{}).Where("user_id = ? AND currency = ?", userID, currency).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check account existence: %w", err)
+	}
+	if count == 0 {
+		return ErrAccountNotFound
+	}
+
+	// Additional business logic validations can be added here
+	// For example: check for suspended accounts, currency limits, etc.
+
+	return nil
+}
+
+// EnhancedTransferFunds performs fund transfer with enhanced transaction handling
+func (s *Service) EnhancedTransferFunds(ctx context.Context, fromUserID, toUserID, currency string, amount float64, description string, opts *TransactionOptions) error {
+	if opts == nil {
+		opts = DefaultTransactionOptions()
+	}
+
+	if amount <= 0 {
+		return ErrInvalidAmount
+	}
+
+	// Create timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
+	var lastErr error
+	for attempt := 0; attempt <= opts.MaxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(opts.RetryBackoff)
+		}
+
+		err := s.executeTransferWithEnhancedLocking(timeoutCtx, fromUserID, toUserID, currency, amount, description, opts)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if !isRetryableError(err) {
+			break
+		}
+
+		s.logger.Warn("Retrying transfer operation",
+			zap.String("from_user_id", fromUserID),
+			zap.String("to_user_id", toUserID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.Int("attempt", attempt+1),
+			zap.Error(err))
+	}
+
+	return fmt.Errorf("failed to transfer funds after %d attempts: %w", opts.MaxRetries+1, lastErr)
+}
+
+// executeTransferWithEnhancedLocking performs the actual transfer with enhanced locking
+func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUserID, toUserID, currency string, amount float64, description string, opts *TransactionOptions) error {
+	// Get account mutexes in consistent order to avoid deadlocks
+	fromMu := s.getAccountMutex(fromUserID, currency)
+	toMu := s.getAccountMutex(toUserID, currency)
+
+	// Always lock in lexicographical order to prevent deadlocks
+	if fromUserID < toUserID {
+		fromMu.Lock()
+		toMu.Lock()
+	} else if fromUserID > toUserID {
+		toMu.Lock()
+		fromMu.Lock()
+	} else {
+		fromMu.Lock()
+	}
+	defer func() {
+		fromMu.Unlock()
+		if fromUserID != toUserID {
+			toMu.Unlock()
+		}
+	}()
+
+	// Start transaction with timeout
+	tx := s.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			s.logger.Error("Panic during transfer operation",
+				zap.String("from_user_id", fromUserID),
+				zap.String("to_user_id", toUserID),
+				zap.String("currency", currency),
+				zap.Any("panic", r))
+		}
+	}()
+
+	// Pre-transaction validation
+	if opts.PreValidationChecks {
+		if err := s.validateTransferPreConditions(ctx, tx, fromUserID, toUserID, currency, amount); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// Lock both accounts with SELECT FOR UPDATE in consistent order
+	var fromAccount, toAccount models.Account
+
+	// Lock from account first
+	fromQuery := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND currency = ?", fromUserID, currency)
+	if opts.RequireRowLocking {
+		fromQuery = fromQuery.Clauses(clause.Locking{Options: "NOWAIT"})
+	}
+
+	if err := fromQuery.First(&fromAccount).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("from account not found: %w", ErrAccountNotFound)
+		}
+		if isDeadlockError(err) {
+			return ErrDeadlockDetected
+		}
+		return fmt.Errorf("failed to find and lock from account: %w", err)
+	}
+
+	// Lock to account (or create if doesn't exist)
+	toQuery := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND currency = ?", toUserID, currency)
+	if opts.RequireRowLocking {
+		toQuery = toQuery.Clauses(clause.Locking{Options: "NOWAIT"})
+	}
+
+	err := toQuery.First(&toAccount).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Create to account within the transaction
+			toAccount = models.Account{
+				ID:        uuid.New(),
+				UserID:    uuid.MustParse(toUserID),
+				Currency:  currency,
+				Balance:   0,
+				Available: 0,
+				Locked:    0,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			if err := tx.Create(&toAccount).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to create to account: %w", err)
+			}
+		} else {
+			tx.Rollback()
+			if isDeadlockError(err) {
+				return ErrDeadlockDetected
+			}
+			return fmt.Errorf("failed to find and lock to account: %w", err)
+		}
+	}
+
+	// Verify sufficient funds with locks held
+	if fromAccount.Available < amount {
+		tx.Rollback()
+		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, fromAccount.Available, amount)
+	}
+
+	// Log audit trail
+	if opts.AuditLogging {
+		s.logger.Info("Transferring funds",
+			zap.String("from_user_id", fromUserID),
+			zap.String("to_user_id", toUserID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.Float64("from_available_before", fromAccount.Available),
+			zap.Float64("to_available_before", toAccount.Available))
+	}
+
+	// Perform atomic transfer
+	if err := atomicTransfer(tx, &fromAccount, &toAccount, amount); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Create transaction records
+	now := time.Now()
+	fromTransaction := &models.Transaction{
+		ID:          uuid.New(),
+		UserID:      uuid.MustParse(fromUserID),
+		Type:        "transfer_out",
+		Amount:      amount,
+		Currency:    currency,
+		Status:      "completed",
+		Reference:   toUserID,
+		Description: description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CompletedAt: &now,
+	}
+
+	toTransaction := &models.Transaction{
+		ID:          uuid.New(),
+		UserID:      uuid.MustParse(toUserID),
+		Type:        "transfer_in",
+		Amount:      amount,
+		Currency:    currency,
+		Status:      "completed",
+		Reference:   fromUserID,
+		Description: description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CompletedAt: &now,
+	}
+
+	if err := tx.Create(fromTransaction).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to create from transaction: %w", err)
+	}
+
+	if err := tx.Create(toTransaction).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to create to transaction: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Log successful operation
+	if opts.AuditLogging {
+		s.logger.Info("Successfully transferred funds",
+			zap.String("from_user_id", fromUserID),
+			zap.String("to_user_id", toUserID),
+			zap.String("currency", currency),
+			zap.Float64("amount", amount),
+			zap.String("from_transaction_id", fromTransaction.ID.String()),
+			zap.String("to_transaction_id", toTransaction.ID.String()))
+	}
+
+	return nil
+}
+
+// validateTransferPreConditions performs pre-transaction validation for transfers
+func (s *Service) validateTransferPreConditions(ctx context.Context, tx *gorm.DB, fromUserID, toUserID, currency string, amount float64) error {
+	// Check if from account exists
+	var count int64
+	if err := tx.Model(&models.Account{}).Where("user_id = ? AND currency = ?", fromUserID, currency).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check from account existence: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("from account not found: %w", ErrAccountNotFound)
+	}
+
+	// Additional business logic validations can be added here
+	// For example: check for suspended accounts, transfer limits, etc.
+
+	return nil
+}
+
+// isRetryableError determines if an error is retryable
+func isRetryableError(err error) bool {
+	if errors.Is(err, ErrDeadlockDetected) {
+		return true
+	}
+	if errors.Is(err, ErrConcurrencyConflict) {
+		return true
+	}
+	// Check for database-specific retryable errors
+	return isDeadlockError(err) || isConcurrencyError(err)
+}
+
+// isDeadlockError checks if the error is a deadlock error
+func isDeadlockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// PostgreSQL deadlock detection
+	return contains(errStr, "deadlock detected") ||
+		contains(errStr, "could not serialize access") ||
+		contains(errStr, "lock_timeout") ||
+		contains(errStr, "lock not available")
+}
+
+// isConcurrencyError checks if the error is a concurrency-related error
+func isConcurrencyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return contains(errStr, "concurrent update") ||
+		contains(errStr, "serialization failure") ||
+		contains(errStr, "retry transaction")
+}
+
+// contains checks if a string contains a substring (case-insensitive)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > len(substr) && containsIgnoreCase(s, substr)))
+}
+
+func containsIgnoreCase(s, substr string) bool {
+	s = toLower(s)
+	substr = toLower(substr)
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func toLower(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			result[i] = s[i] + 32
+		} else {
+			result[i] = s[i]
+		}
+	}
+	return string(result)
+}

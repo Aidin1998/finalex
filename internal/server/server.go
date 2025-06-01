@@ -90,7 +90,22 @@ func (s *Server) Router() *gin.Engine {
 	router.Use(otelgin.Middleware("pincex"))
 	router.Use(cors.Default())
 
-	// Add comprehensive input validation middleware
+	// Add enhanced input validation middleware with comprehensive security
+	enhancedValidationConfig := validation.DefaultEnhancedValidationConfig()
+	enhancedValidationConfig.EnablePerformanceLogging = true
+	enhancedValidationConfig.EnableDetailedErrorLogs = true
+	enhancedValidationConfig.StrictModeEnabled = true
+	router.Use(validation.EnhancedValidationMiddleware(s.logger, enhancedValidationConfig))
+
+	// Add advanced security hardening middleware
+	securityConfig := validation.DefaultSecurityConfig()
+	securityConfig.EnableIPBlacklisting = true
+	securityConfig.EnableAdvancedSQLInjection = true
+	securityConfig.EnableXSSProtection = true
+	securityConfig.EnableCSRFProtection = true
+	router.Use(validation.SecurityHardeningMiddleware(s.logger, securityConfig))
+
+	// Keep existing basic validation middleware for legacy compatibility
 	router.Use(validation.ValidationMiddleware(s.logger))
 	router.Use(validation.RequestValidationMiddleware())
 
