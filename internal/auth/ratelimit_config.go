@@ -109,6 +109,11 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					BurstLimit:        5,
 					Window:            time.Minute,
 				},
+				CustomLimits: map[models.UserTier]int{
+					models.TierBasic:   5,
+					models.TierPremium: 10,
+					models.TierVIP:     20,
+				},
 			},
 			"POST:/api/v1/identities/register": {
 				Name:         "register",
@@ -117,6 +122,11 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					RequestsPerMinute: 5,
 					BurstLimit:        2,
 					Window:            time.Minute,
+				},
+				CustomLimits: map[models.UserTier]int{
+					models.TierBasic:   3,
+					models.TierPremium: 5,
+					models.TierVIP:     10,
 				},
 			},
 
@@ -129,6 +139,11 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					RequestsPerMinute: 200,
 					BurstLimit:        50,
 					Window:            time.Minute,
+				},
+				CustomLimits: map[models.UserTier]int{
+					models.TierBasic:   10,
+					models.TierPremium: 100,
+					models.TierVIP:     500,
 				},
 			},
 			"GET:/api/v1/trading/orders": {
@@ -173,6 +188,11 @@ func GetDefaultRateLimitConfig() *RateLimitConfig {
 					RequestsPerMinute: 5,
 					BurstLimit:        2,
 					Window:            time.Minute,
+				},
+				CustomLimits: map[models.UserTier]int{
+					models.TierBasic:   1,
+					models.TierPremium: 5,
+					models.TierVIP:     10,
 				},
 			},
 

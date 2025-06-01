@@ -734,3 +734,44 @@ func (v *Validator) isValidCurrencyCode(code string) bool {
 	currencyRegex := regexp.MustCompile(`^[A-Z0-9]{2,5}$`)
 	return currencyRegex.MatchString(code)
 }
+
+// ValidateJSONFields validates JSON fields for structure and content
+func ValidateJSONFields(validator *Validator, data map[string]interface{}, prefix string) error {
+	for key, value := range data {
+		fieldName := fmt.Sprintf("%s.%s", prefix, key)
+
+		switch v := value.(type) {
+		case string:
+			// Validate string fields
+			if _, err := validator.ValidateAndSanitizeString(v, fieldName, 255, ""); err != nil {
+				return err
+			}
+		case float64:
+			// Check decimal precision for known numeric fields
+			if strings.HasSuffix(fieldName, "price") || strings.HasSuffix(fieldName, "quantity") || strings.Contains(fieldName, "amount") {
+				// Limit to max 8 decimal places
+				decStr := fmt.Sprintf("%v", v)
+				decimalRegex := regexp.MustCompile(`^\d+(\.\d{1,8})?$`)
+				if !decimalRegex.MatchString(decStr) {
+					return fmt.Errorf("%s has invalid decimal precision: %s", fieldName, decStr)
+				}
+			}
+		case map[string]interface{}:
+			// Recursive validation for nested objects
+			if err := ValidateJSONFields(validator, v, fieldName); err != nil {
+				return err
+			}
+		case []interface{}:
+			for i, item := range v {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					arrayFieldName := fmt.Sprintf("%s[%d]", fieldName, i)
+					if err := validateJSONFields(validator, itemMap, arrayFieldName); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
