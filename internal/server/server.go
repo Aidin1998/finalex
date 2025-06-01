@@ -29,6 +29,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// --- Enhanced error response helpers ---
+func jsonError(code, message string, details interface{}) gin.H {
+	resp := gin.H{"error": code, "message": message}
+	if details != nil {
+		resp["details"] = details
+	}
+	return resp
+}
+
 // Server represents the HTTP server
 type Server struct {
 	logger            *zap.Logger
@@ -257,10 +266,30 @@ func (m *errorMapper) mapError(err error) int {
 	}
 }
 
-// writeError writes a JSON error response with mapped status
+// writeError writes a JSON error response with mapped status and enhanced structure
+// writeError writes a JSON error response with mapped status and enhanced structure
 func (s *Server) writeError(c *gin.Context, err error) {
 	status := (&errorMapper{}).mapError(err)
-	c.JSON(status, gin.H{"error": err.Error()})
+	// Example: parse error for code/message, or use generic fallback
+	code := "internal_error"
+	msg := err.Error()
+	if strings.Contains(msg, "unauthorized") {
+		code = "unauthorized"
+		msg = "Unauthorized: valid authentication credentials are required."
+	} else if strings.Contains(msg, "not found") {
+		code = "not_found"
+		msg = "Resource not found. Please check the request parameters."
+	} else if strings.Contains(msg, "forbidden") {
+		code = "forbidden"
+		msg = "Forbidden: you do not have permission to access this resource."
+	} else if strings.Contains(msg, "invalid") {
+		code = "invalid_request"
+		// Optionally parse for more detail
+	}
+	c.JSON(status, gin.H{
+		"error":   code,
+		"message": msg,
+	})
 }
 
 // authMiddleware creates a middleware for authentication
@@ -596,9 +625,9 @@ func (s *Server) handleGetAccount(c *gin.Context) {
 // @Param			per_page	query		int						false	"Items per page"			default(20)
 // @Param			type		query		string					false	"Transaction type filter"	Enums(deposit, withdrawal, trade, fee)
 // @Success		200			{object}	map[string]interface{}	"Transaction history"
-// @Failure		401			{object}	map[string/interface{}		"Unauthorized"
-// @Failure		404			{object}	map[string]interface{}		"Account not found"
-// @Failure		500			{object}	map[string]interface{}		"Internal server error"
+// @Failure		401			{object}	map[string/interface{}	"Unauthorized"
+// @Failure		404			{object}	map[string]interface{}	"Account not found"
+// @Failure		500			{object}	map[string]interface{}	"Internal server error"
 // @Router			/accounts/{currency}/transactions [get]
 func (s *Server) handleGetAccountTransactions(c *gin.Context) {
 	// Implementation will be added in bookkeeper service
@@ -703,15 +732,16 @@ func (s *Server) handleGetOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "orders retrieved"})
 }
 
-// handleGetOrder handles getting an order
+// handleGetOrder handles getting a order
 // @Summary		Get specific order
-// @Description	Retrieve details for a specific order by ID
+// @Description	Retrieve details for a specific order
 // @Tags			Trading
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
 // @Param			id	path		string				true	"Order ID"
 // @Success		200	{object}	map[string]interface{}	"Order details"
+// @Failure		400	{object}	map[string]interface{}	"Invalid order ID"
 // @Failure		401	{object}	map[string]interface{}	"Unauthorized"
 // @Failure		404	{object}	map[string]interface{}	"Order not found"
 // @Failure		500	{object}	map[string]interface{}	"Internal server error"
@@ -1577,17 +1607,17 @@ func (s *Server) handleBatchCalculateRisk(c *gin.Context) {
 		UserIDs []string `json:"userIds" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, jsonError("invalid_request", "Invalid request: 'userIds' must be a non-empty array of user IDs.", err.Error()))
 		return
 	}
 
 	metrics, err := s.riskSvc.BatchCalculateRisk(c.Request.Context(), req.UserIDs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, jsonError("internal_error", "Failed to calculate batch risk metrics.", err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, metrics)
+	c.JSON(http.StatusOK, gin.H{"metrics": metrics})
 }
 
 // @Summary		Get Risk Dashboard

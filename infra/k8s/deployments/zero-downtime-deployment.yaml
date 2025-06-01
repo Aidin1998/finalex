@@ -1,0 +1,226 @@
+# Zero-Downtime Deployment Configuration for PinCEX
+# This configuration ensures seamless rolling updates with comprehensive health checks
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pincex-core-api
+  namespace: pincex-prod
+  labels:
+    app: pincex-core-api
+    version: v2.0.0
+    component: trading-engine
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    kubernetes.io/change-cause: "Zero-downtime deployment configuration"
+spec:
+  replicas: 6  # Ensure sufficient capacity during rolling updates
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%  # Never take down more than 25% of pods
+      maxSurge: 50%        # Allow up to 50% additional pods during update
+  selector:
+    matchLabels:
+      app: pincex-core-api
+  template:
+    metadata:
+      labels:
+        app: pincex-core-api
+        version: v2.0.0
+        component: trading-engine
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60  # Allow graceful shutdown
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: pincex-core-api
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: pincex-core
+        image: pincex/core-api:v2.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8081
+          name: grpc
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: GRACEFUL_SHUTDOWN_TIMEOUT
+          value: "45s"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "5s"
+        - name: DATABASE_MAX_CONNECTIONS
+          value: "100"
+        - name: REDIS_CLUSTER_NODES
+          valueFrom:
+            configMapKeyRef:
+              name: pincex-config
+              key: redis.cluster.nodes
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # Comprehensive health checks for zero-downtime deployments
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+          successThreshold: 2
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 3
+          timeoutSeconds: 2
+          failureThreshold: 30  # Allow up to 90 seconds for startup
+          successThreshold: 1
+        # Graceful shutdown hook
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Initiating graceful shutdown..."
+                # Stop accepting new connections
+                curl -X POST http://localhost:8080/admin/shutdown/prepare
+                # Wait for existing connections to drain
+                sleep 10
+                # Signal application to shutdown
+                kill -TERM 1
+      # Service mesh sidecar for advanced traffic management
+      - name: envoy-proxy
+        image: envoyproxy/envoy:v1.28-latest
+        ports:
+        - containerPort: 9901
+          name: envoy-admin
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: envoy-proxy-config
+      imagePullSecrets:
+      - name: pincex-registry-secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pincex-core-api-service
+  namespace: pincex-prod
+  labels:
+    app: pincex-core-api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  sessionAffinity: None
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: pincex-core-api
+
+---
+# Pod Disruption Budget to ensure availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pincex-core-api-pdb
+  namespace: pincex-prod
+spec:
+  minAvailable: 4  # Always keep at least 4 pods running
+  selector:
+    matchLabels:
+      app: pincex-core-api
+
+---
+# Horizontal Pod Autoscaler for dynamic scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pincex-core-api-hpa
+  namespace: pincex-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pincex-core-api
+  minReplicas: 6
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 120

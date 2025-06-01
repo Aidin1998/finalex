@@ -1,0 +1,807 @@
+# Advanced Monitoring and Anomaly Detection Configuration for PinCEX
+# Comprehensive monitoring stack with ML-based anomaly detection
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pincex-monitoring
+
+---
+# Prometheus Configuration with custom rules for crypto exchange
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: pincex-monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'pincex-prod'
+        environment: 'production'
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    scrape_configs:
+    - job_name: 'prometheus'
+      static_configs:
+        - targets: ['localhost:9090']
+    
+    - job_name: 'pincex-core-api'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - pincex-prod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app]
+          action: keep
+          regex: pincex-core-api
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+    
+    - job_name: 'pincex-trading-engine'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - pincex-prod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_component]
+          action: keep
+          regex: trading-engine
+    
+    - job_name: 'pincex-orderbook'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - pincex-prod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_component]
+          action: keep
+          regex: orderbook
+    
+    - job_name: 'pincex-market-data'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - pincex-prod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_component]
+          action: keep
+          regex: market-data
+    
+    - job_name: 'kubernetes-nodes'
+      kubernetes_sd_configs:
+        - role: node
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+    
+    - job_name: 'kubernetes-pods'
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+
+  # Custom alerting rules for crypto exchange
+  alerting_rules.yml: |
+    groups:
+    - name: pincex.trading.rules
+      rules:
+      - alert: TradingEngineDown
+        expr: up{job="pincex-trading-engine"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: trading-engine
+        annotations:
+          summary: "Trading engine is down"
+          description: "Trading engine {{ $labels.instance }} has been down for more than 30 seconds"
+      
+      - alert: HighOrderLatency
+        expr: histogram_quantile(0.95, rate(order_processing_duration_seconds_bucket[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          component: trading-engine
+        annotations:
+          summary: "High order processing latency"
+          description: "95th percentile order processing latency is {{ $value }}s"
+      
+      - alert: AbnormalTradingVolume
+        expr: |
+          (
+            rate(trades_total[5m]) > 
+            (avg_over_time(rate(trades_total[5m])[1h:5m]) * 3)
+          ) or (
+            rate(trades_total[5m]) < 
+            (avg_over_time(rate(trades_total[5m])[1h:5m]) * 0.3)
+          )
+        for: 5m
+        labels:
+          severity: warning
+          component: trading-engine
+        annotations:
+          summary: "Abnormal trading volume detected"
+          description: "Trading volume is {{ $value }} trades/sec, which is abnormal"
+      
+      - alert: OrderBookImbalance
+        expr: |
+          abs(
+            (orderbook_bids_total - orderbook_asks_total) / 
+            (orderbook_bids_total + orderbook_asks_total)
+          ) > 0.8
+        for: 1m
+        labels:
+          severity: warning
+          component: orderbook
+        annotations:
+          summary: "Severe order book imbalance"
+          description: "Order book imbalance ratio is {{ $value }}"
+      
+      - alert: DatabaseConnectionPoolExhaustion
+        expr: database_connections_active / database_connections_max > 0.9
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "Database connection pool is {{ $value | humanizePercentage }} full"
+      
+      - alert: MemoryUsageHigh
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Container {{ $labels.container }} memory usage is {{ $value | humanizePercentage }}"
+      
+      - alert: DiskSpaceRunningOut
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Disk space running out"
+          description: "Disk {{ $labels.device }} has less than 10% free space"
+
+    - name: pincex.anomaly.rules
+      rules:
+      - alert: AnomalousErrorRate
+        expr: |
+          (
+            rate(http_requests_total{status=~"5.."}[5m]) > 
+            (avg_over_time(rate(http_requests_total{status=~"5.."}[5m])[1h:5m]) + 
+             2 * stddev_over_time(rate(http_requests_total{status=~"5.."}[5m])[1h:5m]))
+          ) and (
+            rate(http_requests_total{status=~"5.."}[5m]) > 0.01
+          )
+        for: 2m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Anomalous error rate detected"
+          description: "Error rate {{ $value | humanizePercentage }} is significantly higher than normal"
+      
+      - alert: ResponseTimeAnomaly
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) >
+          (
+            avg_over_time(histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))[1h:5m]) +
+            2 * stddev_over_time(histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))[1h:5m])
+          )
+        for: 3m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Anomalous response time detected"
+          description: "95th percentile response time {{ $value }}s is significantly higher than normal"
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: pincex-monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.47.0
+        ports:
+        - containerPort: 9090
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus/'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=30d'
+          - '--web.enable-lifecycle'
+          - '--web.enable-admin-api'
+          - '--query.max-concurrency=50'
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/
+        - name: prometheus-storage
+          mountPath: /prometheus/
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+
+---
+# Grafana Configuration with Anomaly Detection Dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: pincex-monitoring
+data:
+  pincex-trading-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "PinCEX Trading Engine",
+        "tags": ["pincex", "trading"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Trading Volume",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(trades_total[5m])",
+                "legendFormat": "Trades/sec",
+                "refId": "A"
+              },
+              {
+                "expr": "avg_over_time(rate(trades_total[5m])[1h:5m])",
+                "legendFormat": "Average (1h)",
+                "refId": "B"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "alert": {
+              "conditions": [
+                {
+                  "query": {"params": ["A", "5m", "now"]},
+                  "reducer": {"params": [], "type": "last"},
+                  "evaluator": {"params": [100], "type": "gt"}
+                }
+              ],
+              "executionErrorState": "alerting",
+              "noDataState": "no_data",
+              "frequency": "10s",
+              "handler": 1,
+              "name": "Trading Volume Alert"
+            }
+          },
+          {
+            "id": 2,
+            "title": "Order Processing Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, rate(order_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "P50",
+                "refId": "A"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(order_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95",
+                "refId": "B"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(order_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "P99",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Error Rate Anomaly Detection",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+                "legendFormat": "Current Error Rate",
+                "refId": "A"
+              },
+              {
+                "expr": "avg_over_time(rate(http_requests_total{status=~\"5..\"}[5m])[1h:5m])",
+                "legendFormat": "Average Error Rate",
+                "refId": "B"
+              },
+              {
+                "expr": "avg_over_time(rate(http_requests_total{status=~\"5..\"}[5m])[1h:5m]) + 2 * stddev_over_time(rate(http_requests_total{status=~\"5..\"}[5m])[1h:5m])",
+                "legendFormat": "Anomaly Threshold",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Order Book Depth",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "orderbook_bids_total",
+                "legendFormat": "Bids",
+                "refId": "A"
+              },
+              {
+                "expr": "orderbook_asks_total",
+                "legendFormat": "Asks",
+                "refId": "B"
+              },
+              {
+                "expr": "abs(orderbook_bids_total - orderbook_asks_total) / (orderbook_bids_total + orderbook_asks_total)",
+                "legendFormat": "Imbalance Ratio",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 5,
+            "title": "Database Performance",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(database_queries_total[5m])",
+                "legendFormat": "Queries/sec",
+                "refId": "A"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(database_query_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95 Query Time",
+                "refId": "B"
+              },
+              {
+                "expr": "database_connections_active",
+                "legendFormat": "Active Connections",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "5s"
+      }
+    }
+
+  pincex-anomaly-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "PinCEX Anomaly Detection",
+        "tags": ["pincex", "anomaly", "ml"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Anomaly Score",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "anomaly_score",
+                "legendFormat": "Current Score",
+                "refId": "A"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+            "fieldConfig": {
+              "defaults": {
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 0.7},
+                    {"color": "red", "value": 0.9}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Trading Pattern Anomalies",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "trading_pattern_anomaly_score",
+                "legendFormat": "Pattern Anomaly",
+                "refId": "A"
+              },
+              {
+                "expr": "volume_anomaly_score",
+                "legendFormat": "Volume Anomaly",
+                "refId": "B"
+              },
+              {
+                "expr": "price_movement_anomaly_score",
+                "legendFormat": "Price Anomaly",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 18, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "System Resource Anomalies",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "cpu_usage_anomaly_score",
+                "legendFormat": "CPU Anomaly",
+                "refId": "A"
+              },
+              {
+                "expr": "memory_usage_anomaly_score",
+                "legendFormat": "Memory Anomaly",
+                "refId": "B"
+              },
+              {
+                "expr": "network_anomaly_score",
+                "legendFormat": "Network Anomaly",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Fraud Detection Alerts",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "increase(fraud_detection_alerts_total[1h])",
+                "legendFormat": "{{alert_type}}",
+                "refId": "A"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 5,
+            "title": "Market Manipulation Indicators",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "wash_trading_score",
+                "legendFormat": "Wash Trading",
+                "refId": "A"
+              },
+              {
+                "expr": "pump_dump_score",
+                "legendFormat": "Pump & Dump",
+                "refId": "B"
+              },
+              {
+                "expr": "spoofing_score",
+                "legendFormat": "Spoofing",
+                "refId": "C"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ],
+        "time": {"from": "now-6h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: pincex-monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.1.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secret
+              key: admin-password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-ml-app,grafana-anomaly-detector-app"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-storage
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+
+---
+# AlertManager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: pincex-monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: 'alerts@pincex.com'
+      smtp_auth_username: 'alerts@pincex.com'
+      smtp_auth_password: 'app_password'
+    
+    route:
+      group_by: ['alertname', 'component']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'pincex-alerts'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        continue: true
+      - match:
+          component: trading-engine
+        receiver: 'trading-alerts'
+        continue: true
+    
+    receivers:
+    - name: 'pincex-alerts'
+      email_configs:
+      - to: 'devops@pincex.com'
+        subject: '[PinCEX] {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+          {{ end }}
+      slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#pincex-alerts'
+        title: '[PinCEX] {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+    
+    - name: 'critical-alerts'
+      email_configs:
+      - to: 'oncall@pincex.com'
+        subject: '[CRITICAL] PinCEX Alert'
+        body: |
+          CRITICAL ALERT TRIGGERED
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          {{ end }}
+      pagerduty_configs:
+      - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
+        description: 'Critical PinCEX Alert'
+    
+    - name: 'trading-alerts'
+      slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#trading-alerts'
+        title: 'Trading Engine Alert'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          {{ end }}
+
+---
+# ML-based Anomaly Detection Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-detector
+  namespace: pincex-monitoring
+  labels:
+    app: anomaly-detector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anomaly-detector
+  template:
+    metadata:
+      labels:
+        app: anomaly-detector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: anomaly-detector
+        image: pincex/anomaly-detector:v1.0.0
+        ports:
+        - containerPort: 8080
+        - containerPort: 9090
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus:9090"
+        - name: MODEL_PATH
+          value: "/models/anomaly_detection_model.pkl"
+        - name: UPDATE_INTERVAL
+          value: "60"
+        - name: ANOMALY_THRESHOLD
+          value: "0.8"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: anomaly-model-storage
+
+---
+# Service definitions
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: pincex-monitoring
+  labels:
+    app: prometheus
+spec:
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: prometheus
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: pincex-monitoring
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 3000
+  selector:
+    app: grafana
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anomaly-detector
+  namespace: pincex-monitoring
+  labels:
+    app: anomaly-detector
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  selector:
+    app: anomaly-detector

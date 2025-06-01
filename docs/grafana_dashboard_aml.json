@@ -1,0 +1,25 @@
+{
+  "dashboard": {
+    "title": "AML & Compliance Monitoring",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "AML Queue Length",
+        "targets": [{"expr": "aml_queue_length"}],
+        "datasource": "Prometheus"
+      },
+      {
+        "type": "graph",
+        "title": "AML Retry Rate",
+        "targets": [{"expr": "aml_retry_rate"}],
+        "datasource": "Prometheus"
+      },
+      {
+        "type": "graph",
+        "title": "Circuit Breaker Status",
+        "targets": [{"expr": "aml_circuit_breaker_open"}],
+        "datasource": "Prometheus"
+      }
+    ]
+  }
+}

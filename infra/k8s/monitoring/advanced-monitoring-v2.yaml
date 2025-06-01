@@ -1,0 +1,630 @@
+# Advanced Monitoring and Anomaly Detection for PinCEX Zero-Downtime Deployments
+# Comprehensive observability stack with ML-powered anomaly detection
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pincex-monitoring
+  labels:
+    name: pincex-monitoring
+    tier: infrastructure
+
+---
+# Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: pincex-monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'pincex-production'
+        region: 'us-east-1'
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+
+    scrape_configs:
+      # PinCEX Application Metrics
+      - job_name: 'pincex-exchange'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - pincex-production
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'pincex_.*'
+            action: keep
+
+      # Trading Engine Metrics
+      - job_name: 'trading-engine'
+        static_configs:
+          - targets: ['trading-engine:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 5s
+
+      # Order Book Metrics
+      - job_name: 'orderbook'
+        static_configs:
+          - targets: ['orderbook-service:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 5s
+
+      # ML Model Metrics
+      - job_name: 'ml-models'
+        static_configs:
+          - targets: ['ml-service:8080']
+        metrics_path: '/ml/metrics'
+        scrape_interval: 30s
+
+      # Infrastructure Metrics
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Node Exporter
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # Custom Business Metrics
+      - job_name: 'business-metrics'
+        static_configs:
+          - targets: ['business-metrics:8080']
+        scrape_interval: 60s
+
+  alerting_rules.yml: |
+    groups:
+    - name: pincex-deployment-alerts
+      rules:
+      # Deployment Anomaly Detection
+      - alert: DeploymentAnomalyDetected
+        expr: |
+          (
+            rate(http_requests_total{job="pincex-exchange"}[5m]) > 
+            (avg_over_time(rate(http_requests_total{job="pincex-exchange"}[5m])[1h:5m]) * 1.5)
+          ) or
+          (
+            rate(http_requests_total{job="pincex-exchange"}[5m]) < 
+            (avg_over_time(rate(http_requests_total{job="pincex-exchange"}[5m])[1h:5m]) * 0.5)
+          )
+        for: 2m
+        labels:
+          severity: warning
+          team: devops
+          component: deployment
+        annotations:
+          summary: "Anomalous request rate detected during deployment"
+          description: "Request rate has deviated significantly from baseline: {{ $value }}"
+
+      - alert: DeploymentLatencySpike
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="pincex-exchange"}[5m])) > 0.5
+        for: 1m
+        labels:
+          severity: critical
+          team: devops
+          component: deployment
+        annotations:
+          summary: "High latency detected during deployment"
+          description: "95th percentile latency is {{ $value }}s"
+
+      - alert: DeploymentErrorRateHigh
+        expr: |
+          rate(http_requests_total{job="pincex-exchange",status=~"5.."}[5m]) / 
+          rate(http_requests_total{job="pincex-exchange"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+          component: deployment
+        annotations:
+          summary: "High error rate during deployment"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+    - name: pincex-trading-alerts
+      rules:
+      # Trading Engine Anomalies
+      - alert: TradingVolumeAnomaly
+        expr: |
+          abs(
+            rate(trading_volume_total[5m]) - 
+            avg_over_time(rate(trading_volume_total[5m])[4h:5m])
+          ) / avg_over_time(rate(trading_volume_total[5m])[4h:5m]) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          team: trading
+          component: volume-analysis
+        annotations:
+          summary: "Trading volume anomaly detected"
+          description: "Volume deviation: {{ $value | humanizePercentage }}"
+
+      - alert: OrderBookImbalance
+        expr: |
+          abs(orderbook_bid_total - orderbook_ask_total) / 
+          (orderbook_bid_total + orderbook_ask_total) > 0.8
+        for: 3m
+        labels:
+          severity: warning
+          team: trading
+          component: orderbook
+        annotations:
+          summary: "Severe order book imbalance detected"
+          description: "Imbalance ratio: {{ $value | humanizePercentage }}"
+
+    - name: pincex-ml-model-alerts
+      rules:
+      # ML Model Performance
+      - alert: MLModelAccuracyDrop
+        expr: |
+          ml_model_accuracy < 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: ml-ops
+          component: model-performance
+        annotations:
+          summary: "ML model accuracy below threshold"
+          description: "Model {{ $labels.model_name }} accuracy: {{ $value }}"
+
+      - alert: MLModelLatencyHigh
+        expr: |
+          ml_model_inference_duration_seconds > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: ml-ops
+          component: model-latency
+        annotations:
+          summary: "ML model inference latency high"
+          description: "Model {{ $labels.model_name }} latency: {{ $value }}s"
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: pincex-monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus/'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=15d'
+          - '--web.enable-lifecycle'
+          - '--storage.tsdb.no-lockfile'
+          - '--storage.tsdb.wal-compression'
+        ports:
+        - containerPort: 9090
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 1000m
+          limits:
+            memory: 4Gi
+            cpu: 2000m
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/
+        - name: prometheus-storage
+          mountPath: /prometheus/
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+
+---
+# Grafana Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: pincex-monitoring
+data:
+  grafana.ini: |
+    [analytics]
+    check_for_updates = true
+
+    [grafana_net]
+    url = https://grafana.net
+
+    [log]
+    mode = console
+
+    [paths]
+    data = /var/lib/grafana/data
+    logs = /var/log/grafana
+    plugins = /var/lib/grafana/plugins
+    provisioning = /etc/grafana/provisioning
+
+    [auth.anonymous]
+    enabled = false
+
+    [security]
+    admin_user = admin
+    admin_password = $__env{GF_SECURITY_ADMIN_PASSWORD}
+
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+    - name: Alertmanager
+      type: alertmanager
+      access: proxy
+      url: http://alertmanager:9093
+
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: 'pincex-dashboards'
+      orgId: 1
+      folder: 'PinCEX'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards
+
+  deployment-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "PinCEX Zero-Downtime Deployment Dashboard",
+        "tags": ["pincex", "deployment", "monitoring"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Deployment Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"pincex-exchange\"}",
+                "legendFormat": "{{instance}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{job=\"pincex-exchange\"}[5m])",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Response Time (95th percentile)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"pincex-exchange\"}[5m]))",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{job=\"pincex-exchange\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"pincex-exchange\"}[5m])",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Trading Volume",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(trading_volume_total[5m])",
+                "legendFormat": "Volume per second"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Active Connections",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "active_connections",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: pincex-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secret
+              key: admin-password
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 200m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        volumeMounts:
+        - name: grafana-config
+          mountPath: /etc/grafana/
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+      volumes:
+      - name: grafana-config
+        configMap:
+          name: grafana-config
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-storage
+
+---
+# AlertManager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: pincex-monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: 'alerts@pincex.com'
+
+    route:
+      group_by: ['alertname', 'severity']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'pincex-alerts'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+      - match:
+          team: devops
+        receiver: 'devops-alerts'
+      - match:
+          team: trading
+        receiver: 'trading-alerts'
+      - match:
+          team: ml-ops
+        receiver: 'ml-ops-alerts'
+
+    receivers:
+    - name: 'pincex-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts'
+        title: 'PinCEX Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+    - name: 'critical-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#critical-alerts'
+        title: 'CRITICAL: PinCEX Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+      email_configs:
+      - to: 'oncall@pincex.com'
+        subject: 'CRITICAL: PinCEX Alert'
+        body: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+    - name: 'devops-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#devops'
+        title: 'DevOps Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+    - name: 'trading-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#trading'
+        title: 'Trading Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+    - name: 'ml-ops-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#ml-ops'
+        title: 'ML-Ops Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+---
+# Anomaly Detection Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-detector
+  namespace: pincex-monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anomaly-detector
+  template:
+    metadata:
+      labels:
+        app: anomaly-detector
+    spec:
+      containers:
+      - name: anomaly-detector
+        image: pincex/anomaly-detector:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus:9090"
+        - name: ALERTMANAGER_URL
+          value: "http://alertmanager:9093"
+        - name: ML_MODEL_PATH
+          value: "/opt/models/anomaly-detection"
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 500m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+        volumeMounts:
+        - name: anomaly-models
+          mountPath: /opt/models
+      volumes:
+      - name: anomaly-models
+        persistentVolumeClaim:
+          claimName: anomaly-models-storage
+
+---
+# Service Monitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pincex-exchange-monitor
+  namespace: pincex-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: pincex-exchange
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+
+---
+# Custom Resource for ML-based Anomaly Detection
+apiVersion: monitoring.pincex.com/v1
+kind: AnomalyDetectionRule
+metadata:
+  name: deployment-anomaly-detection
+  namespace: pincex-monitoring
+spec:
+  model: "lstm-timeseries"
+  metrics:
+    - name: "request_rate"
+      query: "rate(http_requests_total{job='pincex-exchange'}[5m])"
+      threshold: 2.0  # standard deviations
+    - name: "error_rate"
+      query: "rate(http_requests_total{job='pincex-exchange',status=~'5..'}[5m]) / rate(http_requests_total{job='pincex-exchange'}[5m])"
+      threshold: 3.0
+    - name: "response_time"
+      query: "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job='pincex-exchange'}[5m]))"
+      threshold: 2.5
+  training:
+    interval: "24h"
+    lookback: "7d"
+  detection:
+    interval: "30s"
+    sensitivity: "medium"

@@ -1,0 +1,25 @@
+{
+  "dashboard": {
+    "title": "WebSocket & Real-Time Metrics",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Active WebSocket Connections",
+        "targets": [{"expr": "ws_active_connections"}],
+        "datasource": "Prometheus"
+      },
+      {
+        "type": "graph",
+        "title": "Shard Utilization",
+        "targets": [{"expr": "ws_shard_utilization"}],
+        "datasource": "Prometheus"
+      },
+      {
+        "type": "graph",
+        "title": "Message Throughput",
+        "targets": [{"expr": "ws_message_throughput"}],
+        "datasource": "Prometheus"
+      }
+    ]
+  }
+}
