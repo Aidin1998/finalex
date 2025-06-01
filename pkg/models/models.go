@@ -412,3 +412,14 @@ type KYCSubmissionRequest struct {
 	DocumentNumber string `json:"document_number" example:"123456789"`
 	Country        string `json:"country" example:"US"`
 }
+
+// FiatWithdrawRequest represents a fiat withdrawal request
+// swagger:model
+// @name FiatWithdrawRequest
+// @description Request payload for fiat withdrawal
+// @example {"amount": 100.0, "currency": "USD", "bank_account": "US1234567890"}
+type FiatWithdrawRequest struct {
+	Amount      float64 `json:"amount" example:"100.0"`
+	Currency    string  `json:"currency" example:"USD"`
+	BankAccount string  `json:"bank_account" example:"US1234567890"`
+}

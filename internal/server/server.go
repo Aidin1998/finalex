@@ -557,7 +557,7 @@ func (s *Server) handleKYCStatus(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
-// @Success		200	{array}		docs.Account		"List of user accounts"
+// @Success		200	{array}	models.Account	"List of user accounts"
 // @Failure		401	{object}	map[string]interface{}	"Unauthorized"
 // @Failure		500	{object}	map[string]interface{}	"Internal server error"
 // @Router			/accounts [get]
@@ -574,7 +574,7 @@ func (s *Server) handleGetAccounts(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			currency	path		string				true	"Currency symbol (e.g., BTC, ETH)"
-// @Success		200			{object}	docs.Account		"Account details"
+// @Success		200			{object}	models.Account		"Account details"
 // @Failure		401			{object}	map[string]interface{}	"Unauthorized"
 // @Failure		404			{object}	map[string]interface{}	"Account not found"
 // @Failure		500			{object}	map[string]interface{}	"Internal server error"
@@ -595,8 +595,8 @@ func (s *Server) handleGetAccount(c *gin.Context) {
 // @Param			page		query		int						false	"Page number for pagination"	default(1)
 // @Param			per_page	query		int						false	"Items per page"			default(20)
 // @Param			type		query		string					false	"Transaction type filter"	Enums(deposit, withdrawal, trade, fee)
-// @Success		200			{object}	docs.TransactionHistory	"Transaction history"
-// @Failure		401			{object}	map[string]interface{}		"Unauthorized"
+// @Success		200			{object}	map[string]interface{}	"Transaction history"
+// @Failure		401			{object}	map[string/interface{}		"Unauthorized"
 // @Failure		404			{object}	map[string]interface{}		"Account not found"
 // @Failure		500			{object}	map[string]interface{}		"Internal server error"
 // @Router			/accounts/{currency}/transactions [get]
@@ -613,7 +613,7 @@ func (s *Server) handleGetAccountTransactions(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			status	query		string					false	"Filter by pair status"	Enums(active, inactive, maintenance)
-// @Success		200		{array}		docs.TradingPair		"List of trading pairs"
+// @Success		200		{array}		models.TradingPair		"List of trading pairs"
 // @Failure		401		{object}	map[string]interface{}		"Unauthorized"
 // @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/trading/pairs [get]
@@ -630,7 +630,7 @@ func (s *Server) handleGetTradingPairs(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			symbol	path		string				true	"Trading pair symbol (e.g., BTCUSD, ETHBTC)"
-// @Success		200		{object}	docs.TradingPair	"Trading pair details"
+// @Success		200		{object}	models.TradingPair	"Trading pair details"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
 // @Failure		404		{object}	map[string]interface{}	"Trading pair not found"
 // @Failure		500		{object}	map[string]interface{}	"Internal server error"
@@ -646,12 +646,12 @@ func (s *Server) handleGetTradingPair(c *gin.Context) {
 // @Tags         Orders
 // @Accept       json
 // @Produce      json
-// @Param        request body      docs.PlaceOrderRequest true "Order placement payload"
-// @Success      201     {object}  docs.Order "Order placed successfully"
-// @Failure      400     {object}  docs.ErrorResponse "Invalid request"
-// @Failure      401     {object}  docs.ErrorResponse "Unauthorized"
-// @Failure      429     {object}  docs.ErrorResponse "Rate limit exceeded"
-// @Failure      500     {object}  docs.ErrorResponse "Internal server error"
+// @Param        request body      map[string]interface{} true "Order placement payload"
+// @Success      201     {object}  models.Order "Order placed successfully"
+// @Failure      400     {object}  map[string]interface{} "Invalid request"
+// @Failure      401     {object}  map[string]interface{} "Unauthorized"
+// @Failure      429     {object}  map[string]interface{} "Rate limit exceeded"
+// @Failure      500     {object}  map[string]interface{} "Internal server error"
 // @Router       /trading/orders [post]
 // @Security     BearerAuth
 func (s *Server) handlePlaceOrder(c *gin.Context) {
@@ -693,7 +693,7 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 // @Param			type		query		string					false	"Filter by order type"		Enums(market, limit, stop, stop_limit)
 // @Param			page		query		int						false	"Page number for pagination"		default(1)
 // @Param			per_page	query		int						false	"Items per page"				default(20)
-// @Success		200			{object}	docs.OrderListResponse	"List of user orders"
+// @Success		200			{object}	map[string]interface{}	"List of user orders"
 // @Failure		400			{object}	map[string]interface{}	"Invalid query parameters"
 // @Failure		401			{object}	map[string]interface{}	"Unauthorized"
 // @Failure		500			{object}	map[string]interface{}	"Internal server error"
@@ -711,7 +711,7 @@ func (s *Server) handleGetOrders(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			id	path		string				true	"Order ID"
-// @Success		200	{object}	docs.OrderResponse	"Order details"
+// @Success		200	{object}	map[string]interface{}	"Order details"
 // @Failure		401	{object}	map[string]interface{}	"Unauthorized"
 // @Failure		404	{object}	map[string]interface{}	"Order not found"
 // @Failure		500	{object}	map[string]interface{}	"Internal server error"
@@ -729,12 +729,12 @@ func (s *Server) handleGetOrder(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			id	path		string				true	"Order ID to cancel"
-// @Success		200	{object}	docs.OrderResponse	"Order cancelled successfully"
-// @Failure		400	{object}	docs.ErrorResponse	"Invalid order ID"
-// @Failure		401	{object}	docs.ErrorResponse	"Unauthorized"
-// @Failure		404	{object}	docs.ErrorResponse	"Order not found"
-// @Failure		409	{object}	docs.ErrorResponse	"Order cannot be cancelled"
-// @Failure		500	{object}	docs.ErrorResponse	"Internal server error"
+// @Success		200	{object}	map[string]interface{}	"Order cancelled successfully"
+// @Failure		400	{object}	map[string]interface{}	"Invalid order ID"
+// @Failure		401	{object}	map[string]interface{}	"Unauthorized"
+// @Failure		404	{object}	map[string]interface{}	"Order not found"
+// @Failure		409	{object}	map[string]interface{}	"Order cannot be cancelled"
+// @Failure		500	{object}	map[string]interface{}	"Internal server error"
 // @Router			/trading/orders/{id} [delete]
 func (s *Server) handleCancelOrder(c *gin.Context) {
 	// Implementation will be added in trading service
@@ -750,11 +750,11 @@ func (s *Server) handleCancelOrder(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			symbol	path		string				true	"Trading pair symbol (e.g., BTCUSD, ETHBTC)"
 // @Param			depth	query		int					false	"Order book depth (number of price levels)"	default(20)
-// @Success		200		{object}	docs.OrderBook		"Order book data"
-// @Failure		400		{object}	docs.ErrorResponse	"Invalid symbol or parameters"
-// @Failure		401		{object}	docs.ErrorResponse	"Unauthorized"
-// @Failure		404		{object}	docs.ErrorResponse	"Trading pair not found"
-// @Failure		500		{object}	docs.ErrorResponse	"Internal server error"
+// @Success		200		{object}	map[string]interface{}	"Order book data"
+// @Failure		400		{object}	map[string]interface{}	"Invalid symbol or parameters"
+// @Failure		401		{object}	map[string]interface{}	"Unauthorized"
+// @Failure		404		{object}	map[string]interface{}	"Trading pair not found"
+// @Failure		500		{object}	map[string]interface{}	"Internal server error"
 // @Router			/trading/orderbook/{symbol} [get]
 func (s *Server) handleGetOrderBook(c *gin.Context) {
 	// Implementation will be added in trading service
@@ -768,9 +768,9 @@ func (s *Server) handleGetOrderBook(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Param			symbols	query		[]string				false	"Filter by specific symbols (comma-separated)"
-// @Success		200		{array}		docs.MarketPrice		"List of market prices"
-// @Failure		400		{object}	docs.ErrorResponse		"Invalid query parameters"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Success		200		{array}		models.MarketPrice		"List of market prices"
+// @Failure		400		{object}	map[string]interface{}		"Invalid query parameters"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/market/prices [get]
 func (s *Server) handleGetMarketPrices(c *gin.Context) {
 	// Implementation will be added in marketfeeds service
@@ -784,10 +784,10 @@ func (s *Server) handleGetMarketPrices(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Param			symbol	path		string				true	"Trading pair symbol (e.g., BTCUSD, ETHBTC)"
-// @Success		200		{object}	docs.MarketPrice	"Market price data"
-// @Failure		400		{object}	docs.ErrorResponse	"Invalid symbol"
-// @Failure		404		{object}	docs.ErrorResponse	"Trading pair not found"
-// @Failure		500		{object}	docs.ErrorResponse	"Internal server error"
+// @Success		200		{object}	models.MarketPrice	"Market price data"
+// @Failure		400		{object}	map[string]interface{}	"Invalid symbol"
+// @Failure		404		{object}	map[string]interface{}	"Trading pair not found"
+// @Failure		500		{object}	map[string]interface{}	"Internal server error"
 // @Router			/market/prices/{symbol} [get]
 func (s *Server) handleGetMarketPrice(c *gin.Context) {
 	// Implementation will be added in marketfeeds service
@@ -805,10 +805,10 @@ func (s *Server) handleGetMarketPrice(c *gin.Context) {
 // @Param			start_time	query		string					false	"Start time (RFC3339 format)"
 // @Param			end_time	query		string					false	"End time (RFC3339 format)"
 // @Param			limit		query		int						false	"Number of candles to return"	default(500)
-// @Success		200			{array}		docs.Candle				"Candlestick data"
-// @Failure		400			{object}	docs.ErrorResponse		"Invalid parameters"
-// @Failure		404			{object}	docs.ErrorResponse		"Trading pair not found"
-// @Failure		500			{object}	docs.ErrorResponse		"Internal server error"
+// @Success		200			{array}		models.Candle				"Candlestick data"
+// @Failure		400			{object}	map[string]interface{}		"Invalid parameters"
+// @Failure		404			{object}	map[string]interface{}		"Trading pair not found"
+// @Failure		500			{object}	map[string]interface{}		"Internal server error"
 // @Router			/market/candles/{symbol} [get]
 func (s *Server) handleGetCandles(c *gin.Context) {
 	// Implementation will be added in marketfeeds service
@@ -822,8 +822,8 @@ func (s *Server) handleGetCandles(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
-// @Param			request	body		docs.FiatDepositRequest		true	"Deposit details"
-// @Success		201		{object}	docs.FiatTransactionResponse	"Deposit initiated successfully"
+// @Param			request	body		map[string]interface{}		true	"Deposit details"
+// @Success		201		{object}	map[string]interface{}	"Deposit initiated successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
 // @Failure		403		{object}	map[string]interface{}	"Insufficient permissions or KYC required"
@@ -841,8 +841,8 @@ func (s *Server) handleFiatDeposit(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
-// @Param			request	body		docs.FiatWithdrawRequest		true	"Withdrawal details"
-// @Success		201		{object}	docs.FiatTransactionResponse	"Withdrawal initiated successfully"
+// @Param			request	body		map[string]interface{}		true	"Withdrawal details"
+// @Success		201		{object}	map[string]interface{}	"Withdrawal initiated successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
 // @Failure		403		{object}	map[string]interface{}	"Insufficient permissions or balance"
@@ -901,7 +901,7 @@ func (s *Server) handleGetFiatWithdrawals(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Param			request	body		docs.CreateTradingPairRequest	true	"Trading pair configuration"
-// @Success		201		{object}	docs.TradingPair				"Trading pair created successfully"
+// @Success		201		{object}	models.TradingPair				"Trading pair created successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
 // @Failure		403		{object}	map[string]interface{}	"Admin access required"
@@ -922,7 +922,7 @@ func (s *Server) handleCreateTradingPair(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			symbol	path		string							true	"Trading pair symbol"
 // @Param			request	body		docs.UpdateTradingPairRequest	true	"Updated trading pair configuration"
-// @Success		200		{object}	docs.TradingPair				"Trading pair updated successfully"
+// @Success		200		{object}	models.TradingPair				"Trading pair updated successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
 // @Failure		403		{object}	map[string]interface{}	"Admin access required"
@@ -1015,9 +1015,9 @@ func (s *Server) handleWebSocketMarketData(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200	{object}	docs.RateLimitConfigResponse	"Rate limit configuration retrieved successfully"
-// @Failure		401	{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403	{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		503	{object}	docs.ErrorResponse				"Rate limiting service unavailable"
+// @Failure		401	{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403	{object}	map[string]interface{}				"Admin access required"
+// @Failure		503	{object}	map[string]interface{}				"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/config [get]
 func (s *Server) handleGetRateLimitConfig(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1037,10 +1037,10 @@ func (s *Server) handleGetRateLimitConfig(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			config	body		docs.RateLimitConfigRequest		true	"Rate limit configuration"
 // @Success		200		{object}	docs.StandardResponse			"Configuration updated successfully"
-// @Failure		400		{object}	docs.ErrorResponse				"Invalid configuration format"
-// @Failure		401		{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		503		{object}	docs.ErrorResponse				"Rate limiting service unavailable"
+// @Failure		400		{object}	map[string]interface{}				"Invalid configuration format"
+// @Failure		401		{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}				"Admin access required"
+// @Failure		503		{object}	map[string]interface{}				"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/config [put]
 func (s *Server) handleUpdateRateLimitConfig(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1066,10 +1066,10 @@ func (s *Server) handleUpdateRateLimitConfig(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			mode	body		docs.EmergencyModeRequest		true	"Emergency mode status"
 // @Success		200		{object}	docs.StandardResponse			"Emergency mode updated successfully"
-// @Failure		400		{object}	docs.ErrorResponse				"Invalid request format"
-// @Failure		401		{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		503		{object}	docs.ErrorResponse				"Rate limiting service unavailable"
+// @Failure		400		{object}	map[string]interface{}				"Invalid request format"
+// @Failure		401		{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}				"Admin access required"
+// @Failure		503		{object}	map[string]interface{}				"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/emergency-mode [post]
 func (s *Server) handleSetEmergencyMode(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1099,10 +1099,10 @@ func (s *Server) handleSetEmergencyMode(c *gin.Context) {
 // @Param			tier	path		string						true	"User tier"	Enums(basic, premium, vip)
 // @Param			limits	body		docs.TierLimitsRequest		true	"Tier limits configuration"
 // @Success		200		{object}	docs.StandardResponse		"Tier limits updated successfully"
-// @Failure		400		{object}	docs.ErrorResponse			"Invalid tier or limits format"
-// @Failure		401		{object}	docs.ErrorResponse			"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse			"Admin access required"
-// @Failure		503		{object}	docs.ErrorResponse			"Rate limiting service unavailable"
+// @Failure		400		{object}	map[string]interface{}			"Invalid tier or limits format"
+// @Failure		401		{object}	map[string]interface{}			"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}			"Admin access required"
+// @Failure		503		{object}	map[string]interface{}			"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/tiers/{tier} [put]
 func (s *Server) handleUpdateTierLimits(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1144,10 +1144,10 @@ func (s *Server) handleUpdateTierLimits(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			config	body		docs.EndpointConfigRequest		true	"Endpoint configuration"
 // @Success		200		{object}	docs.StandardResponse			"Endpoint configuration updated successfully"
-// @Failure		400		{object}	docs.ErrorResponse				"Invalid endpoint or configuration format"
-// @Failure		401		{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		503		{object}	docs.ErrorResponse				"Rate limiting service unavailable"
+// @Failure		400		{object}	map[string]interface{}				"Invalid endpoint or configuration format"
+// @Failure		401		{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}				"Admin access required"
+// @Failure		503		{object}	map[string]interface{}				"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/endpoints [put]
 func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1181,11 +1181,11 @@ func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			userID	path		string						true	"User ID"
 // @Success		200		{object}	docs.UserRateLimitResponse	"User rate limit status retrieved successfully"
-// @Failure		400		{object}	docs.ErrorResponse			"Invalid user ID"
-// @Failure		401		{object}	docs.ErrorResponse			"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse			"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse			"Failed to retrieve user status"
-// @Failure		503		{object}	docs.ErrorResponse			"Rate limiting service unavailable"
+// @Failure		400		{object}	map[string]interface{}			"Invalid user ID"
+// @Failure		401		{object}	map[string]interface{}			"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}			"Admin access required"
+// @Failure		500		{object}	map[string]interface{}			"Failed to retrieve user status"
+// @Failure		503		{object}	map[string]interface{}			"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/users/{userID}/status [get]
 func (s *Server) handleGetUserRateLimitStatus(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1215,11 +1215,11 @@ func (s *Server) handleGetUserRateLimitStatus(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			ip	path		string					true	"IP address"
 // @Success		200	{object}	docs.IPRateLimitResponse	"IP rate limit status retrieved successfully"
-// @Failure		400	{object}	docs.ErrorResponse		"Invalid IP address"
-// @Failure		401	{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403	{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500	{object}	docs.ErrorResponse		"Failed to retrieve IP status"
-// @Failure		503	{object}	docs.ErrorResponse		"Rate limiting service unavailable"
+// @Failure		400	{object}	map[string]interface{}		"Invalid IP address"
+// @Failure		401	{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403	{object}	map[string]interface{}		"Admin access required"
+// @Failure		500	{object}	map[string]interface{}		"Failed to retrieve IP status"
+// @Failure		503	{object}	map[string]interface{}		"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/ips/{ip}/status [get]
 func (s *Server) handleGetIPRateLimitStatus(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1250,11 +1250,11 @@ func (s *Server) handleGetIPRateLimitStatus(c *gin.Context) {
 // @Param			userID		path		string					true	"User ID"
 // @Param			rateType	path		string					true	"Rate type"	Enums(api_calls, orders, trades, withdrawals, login_attempts)
 // @Success		200			{object}	docs.StandardResponse	"User rate limit reset successfully"
-// @Failure		400			{object}	docs.ErrorResponse		"Invalid user ID or rate type"
-// @Failure		401			{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403			{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500			{object}	docs.ErrorResponse		"Failed to reset user rate limit"
-// @Failure		503			{object}	docs.ErrorResponse		"Rate limiting service unavailable"
+// @Failure		400			{object}	map[string]interface{}		"Invalid user ID or rate type"
+// @Failure		401			{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403			{object}	map[string]interface{}		"Admin access required"
+// @Failure		500			{object}	map[string]interface{}		"Failed to reset user rate limit"
+// @Failure		503			{object}	map[string]interface{}		"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/users/{userID}/reset/{rateType} [post]
 func (s *Server) handleResetUserRateLimit(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1287,11 +1287,11 @@ func (s *Server) handleResetUserRateLimit(c *gin.Context) {
 // @Param			ip			path		string					true	"IP address"
 // @Param			endpoint	path		string					true	"Endpoint name"
 // @Success		200			{object}	docs.StandardResponse	"IP rate limit reset successfully"
-// @Failure		400			{object}	docs.ErrorResponse		"Invalid IP address or endpoint"
-// @Failure		401			{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403			{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500			{object}	docs.ErrorResponse		"Failed to reset IP rate limit"
-// @Failure		503			{object}	docs.ErrorResponse		"Rate limiting service unavailable"
+// @Failure		400			{object}	map[string]interface{}		"Invalid IP address or endpoint"
+// @Failure		401			{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403			{object}	map[string]interface{}		"Admin access required"
+// @Failure		500			{object}	map[string]interface{}		"Failed to reset IP rate limit"
+// @Failure		503			{object}	map[string]interface{}		"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/ips/{ip}/reset/{endpoint} [post]
 func (s *Server) handleResetIPRateLimit(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1322,10 +1322,10 @@ func (s *Server) handleResetIPRateLimit(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200	{object}	docs.StandardResponse	"Rate limit data cleanup completed successfully"
-// @Failure		401	{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403	{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500	{object}	docs.ErrorResponse		"Failed to cleanup rate limit data"
-// @Failure		503	{object}	docs.ErrorResponse		"Rate limiting service unavailable"
+// @Failure		401	{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403	{object}	map[string]interface{}		"Admin access required"
+// @Failure		500	{object}	map[string]interface{}		"Failed to cleanup rate limit data"
+// @Failure		503	{object}	map[string]interface{}		"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/cleanup [post]
 func (s *Server) handleCleanupRateLimitData(c *gin.Context) {
 	if s.tieredRateLimiter == nil {
@@ -1351,9 +1351,9 @@ func (s *Server) handleCleanupRateLimitData(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200	{object}	docs.RiskLimitsResponse	"Risk limits configuration"
-// @Failure		401	{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403	{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500	{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401	{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403	{object}	map[string]interface{}		"Admin access required"
+// @Failure		500	{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/limits [get]
 func (s *Server) handleGetRiskLimits(c *gin.Context) {
 	limits, err := s.riskSvc.GetLimits(c.Request.Context())
@@ -1447,10 +1447,10 @@ func (s *Server) handleUpdateRiskLimit(c *gin.Context) {
 // @Param			type	path		string					true	"Limit type"		Enums(user, market, global)
 // @Param			id		path		string					true	"Limit identifier"
 // @Success		200		{object}	docs.SuccessResponse	"Risk limit deleted successfully"
-// @Failure		401		{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		404		{object}	docs.ErrorResponse		"Risk limit not found"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401		{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}		"Admin access required"
+// @Failure		404		{object}	map[string]interface{}		"Risk limit not found"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/limits/{type}/{id} [delete]
 func (s *Server) handleDeleteRiskLimit(c *gin.Context) {
 	limitType := c.Param("type")
@@ -1469,9 +1469,9 @@ func (s *Server) handleDeleteRiskLimit(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200	{object}	docs.RiskExemptionsResponse	"List of risk exemptions"
-// @Failure		401	{object}	docs.ErrorResponse			"Unauthorized"
-// @Failure		403	{object}	docs.ErrorResponse			"Admin access required"
-// @Failure		500	{object}	docs.ErrorResponse			"Internal server error"
+// @Failure		401	{object}	map[string]interface{}			"Unauthorized"
+// @Failure		403	{object}	map[string]interface{}			"Admin access required"
+// @Failure		500	{object}	map[string]interface{}			"Internal server error"
 // @Router			/admin/risk/exemptions [get]
 func (s *Server) handleGetRiskExemptions(c *gin.Context) {
 	ex, err := s.riskSvc.GetExemptions(c.Request.Context())
@@ -1488,7 +1488,7 @@ func (s *Server) handleGetRiskExemptions(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
-// @Param			request	body		docs.CreateRiskExemptionRequest	true	"Risk exemption configuration"
+// @Param			request	body									docs.CreateRiskExemptionRequest	true	"Risk exemption configuration"
 // @Success		201		{object}	docs.SuccessResponse			"Risk exemption created successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"
@@ -1518,10 +1518,10 @@ func (s *Server) handleCreateRiskExemption(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			userID	path		string					true	"User ID"
 // @Success		200		{object}	docs.SuccessResponse	"Risk exemption deleted successfully"
-// @Failure		401		{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		404		{object}	docs.ErrorResponse		"Risk exemption not found"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401		{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}		"Admin access required"
+// @Failure		404		{object}	map[string]interface{}		"Risk exemption not found"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/exemptions/{userID} [delete]
 func (s *Server) handleDeleteRiskExemption(c *gin.Context) {
 	userID := c.Param("userID")
@@ -1542,10 +1542,10 @@ func (s *Server) handleDeleteRiskExemption(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			userID	path		string					true	"User ID"
 // @Success		200		{object}	docs.RiskMetrics		"User risk metrics"
-// @Failure		401		{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		404		{object}	docs.ErrorResponse		"User not found"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401		{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}		"Admin access required"
+// @Failure		404		{object}	map[string]interface{}		"User not found"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/users/{userID}/metrics [get]
 func (s *Server) handleGetUserRiskMetrics(c *gin.Context) {
 	userID := c.Param("userID")
@@ -1567,10 +1567,10 @@ func (s *Server) handleGetUserRiskMetrics(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			request	body		docs.BatchCalculateRiskRequest	true	"User IDs for batch calculation"
 // @Success		200		{object}	docs.BatchRiskMetricsResponse	"Batch risk metrics"
-// @Failure		400		{object}	docs.ErrorResponse				"Invalid request data"
-// @Failure		401		{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse				"Internal server error"
+// @Failure		400		{object}	map[string]interface{}				"Invalid request data"
+// @Failure		401		{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}				"Admin access required"
+// @Failure		500		{object}	map[string]interface{}				"Internal server error"
 // @Router			/admin/risk/calculate/batch [post]
 func (s *Server) handleBatchCalculateRisk(c *gin.Context) {
 	var req struct {
@@ -1597,9 +1597,9 @@ func (s *Server) handleBatchCalculateRisk(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200		{object}	docs.DashboardMetrics	"Risk dashboard metrics"
-// @Failure		401		{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401		{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}		"Admin access required"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/dashboard [get]
 func (s *Server) handleGetRiskDashboard(c *gin.Context) {
 	metrics, err := s.riskSvc.GetDashboardMetrics(c.Request.Context())
@@ -1654,9 +1654,9 @@ func (s *Server) handleUpdateMarketData(c *gin.Context) {
 // @Produce		json
 // @Security		BearerAuth
 // @Success		200		{array}		docs.ComplianceAlert	"List of active compliance alerts"
-// @Failure		401		{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401		{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}		"Admin access required"
+// @Failure		500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/compliance/alerts [get]
 func (s *Server) handleGetComplianceAlerts(c *gin.Context) {
 	alerts, err := s.riskSvc.GetActiveComplianceAlerts(c.Request.Context())
@@ -1744,9 +1744,9 @@ func (s *Server) handleAddComplianceRule(c *gin.Context) {
 // @Param			offset	query		int		false	"Number of transactions to skip"			default(0)
 // @Success		200		{object}	docs.ComplianceTransactionsResponse	"Compliance transactions retrieved successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid query parameters"
-// @Failure		401		{object}	docs.ErrorResponse					"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse					"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse					"Internal server error"
+// @Failure		401		{object}	map[string]interface{}					"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}					"Admin access required"
+// @Failure		500		{object}	map[string]interface{}					"Internal server error"
 // @Router			/admin/risk/compliance/transactions [get]
 func (s *Server) handleGetComplianceTransactions(c *gin.Context) {
 	// Parse query parameters for filtering
@@ -1773,9 +1773,9 @@ func (s *Server) handleGetComplianceTransactions(c *gin.Context) {
 // @Param			request	body		docs.GenerateReportRequest	true	"Report generation parameters"
 // @Success		200		{object}	docs.GenerateReportResponse	"Report generated successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request parameters"
-// @Failure		401		{object}	docs.ErrorResponse			"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse			"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse			"Internal server error"
+// @Failure		401		{object}	map[string]interface{}			"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}			"Admin access required"
+// @Failure		500		{object}	map[string]interface{}			"Internal server error"
 // @Router			/admin/risk/reports/generate [post]
 func (s *Server) handleGenerateRiskReport(c *gin.Context) {
 	var req struct {
@@ -1808,10 +1808,10 @@ func (s *Server) handleGenerateRiskReport(c *gin.Context) {
 // @Security		BearerAuth
 // @Param			reportID	path		string					true	"Report ID"
 // @Success		200			{object}	docs.RiskReportResponse	"Report retrieved successfully"
-// @Failure		401			{object}	docs.ErrorResponse		"Unauthorized"
-// @Failure		403			{object}	docs.ErrorResponse		"Admin access required"
-// @Failure		404			{object}	docs.ErrorResponse		"Report not found"
-// @Failure		500			{object}	docs.ErrorResponse		"Internal server error"
+// @Failure		401			{object}	map[string]interface{}		"Unauthorized"
+// @Failure		403			{object}	map[string]interface{}		"Admin access required"
+// @Failure		404			{object}	map[string]interface{}		"Report not found"
+// @Failure		500			{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/reports/{reportID} [get]
 func (s *Server) handleGetRiskReport(c *gin.Context) {
 	reportID := c.Param("reportID")
@@ -1836,9 +1836,9 @@ func (s *Server) handleGetRiskReport(c *gin.Context) {
 // @Param			offset	query		int		false	"Number of reports to skip"				default(0)
 // @Success		200		{object}	docs.RiskReportsListResponse	"Reports list retrieved successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid query parameters"
-// @Failure		401		{object}	docs.ErrorResponse				"Unauthorized"
-// @Failure		403		{object}	docs.ErrorResponse				"Admin access required"
-// @Failure		500		{object}	docs.ErrorResponse				"Internal server error"
+// @Failure		401		{object}	map[string]interface{}				"Unauthorized"
+// @Failure		403		{object}	map[string]interface{}				"Admin access required"
+// @Failure		500		{object}	map[string]interface{}				"Internal server error"
 // @Router			/admin/risk/reports [get]
 func (s *Server) handleListRiskReports(c *gin.Context) {
 	// This would list reports from storage with pagination
