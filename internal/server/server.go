@@ -365,7 +365,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 // @Tags			Authentication
 // @Accept			json
 // @Produce		json
-// @Param			request	body		models.RegisterRequest	true	"Registration details"
+// @Param			request	body	models.RegisterRequest	true	"Registration details"
 // @Success		201		{object}	models.User				"User registered successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		409		{object}	map[string]interface{}	"User already exists"
@@ -382,7 +382,7 @@ func (s *Server) handleRegister(c *gin.Context) {
 // @Tags			Authentication
 // @Accept			json
 // @Produce		json
-// @Param			request	body		models.LoginRequest		true	"Login credentials"
+// @Param			request	body	models.LoginRequest		true	"Login credentials"
 // @Success		200		{object}	models.LoginResponse	"Login successful"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Invalid credentials"
@@ -416,7 +416,7 @@ func (s *Server) handleLogout(c *gin.Context) {
 // @Tags			Authentication
 // @Accept			json
 // @Produce		json
-// @Param			request	body		map[string]interface{}	true	"Refresh token"
+// @Param			request	body		models.RefreshTokenRequest	true	"Refresh token"
 // @Success		200		{object}	models.LoginResponse	"Token refreshed successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Invalid refresh token"
@@ -646,7 +646,7 @@ func (s *Server) handleGetTradingPair(c *gin.Context) {
 // @Tags         Orders
 // @Accept       json
 // @Produce      json
-// @Param        request body      map[string]interface{} true "Order placement payload"
+// @Param         request body     models.OrderPlacementRequest true "Order placement payload"
 // @Success      201     {object}  models.Order "Order placed successfully"
 // @Failure      400     {object}  map[string]interface{} "Invalid request"
 // @Failure      401     {object}  map[string]interface{} "Unauthorized"
@@ -806,8 +806,8 @@ func (s *Server) handleGetMarketPrice(c *gin.Context) {
 // @Param			end_time	query		string					false	"End time (RFC3339 format)"
 // @Param			limit		query		int						false	"Number of candles to return"	default(500)
 // @Success		200			{array}		models.Candle				"Candlestick data"
-// @Failure		400			{object}	map[string]interface{}		"Invalid parameters"
-// @Failure		404			{object}	map[string]interface{}		"Trading pair not found"
+// @Failure 400 {object} models.APIErrorResponse "Invalid parameters"
+// @Failure 404 {object} models.APIErrorResponse "Trading pair not found"
 // @Failure		500			{object}	map[string]interface{}		"Internal server error"
 // @Router			/market/candles/{symbol} [get]
 func (s *Server) handleGetCandles(c *gin.Context) {
@@ -822,7 +822,7 @@ func (s *Server) handleGetCandles(c *gin.Context) {
 // @Accept			json
 // @Produce		json
 // @Security		BearerAuth
-// @Param			request	body		map[string]interface{}		true	"Deposit details"
+// @Param			request	body		models.FiatDepositRequest	true	"Deposit details"
 // @Success		201		{object}	map[string]interface{}	"Deposit initiated successfully"
 // @Failure		400		{object}	map[string]interface{}	"Invalid request data"
 // @Failure		401		{object}	map[string]interface{}	"Unauthorized"

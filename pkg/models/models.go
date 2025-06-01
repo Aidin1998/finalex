@@ -423,3 +423,23 @@ type FiatWithdrawRequest struct {
 	Currency    string  `json:"currency" example:"USD"`
 	BankAccount string  `json:"bank_account" example:"US1234567890"`
 }
+
+// FiatDepositRequest represents a fiat deposit request
+// swagger:model
+// @name FiatDepositRequest
+// @description Request payload for fiat deposit
+// @example {"amount": 100.0, "currency": "USD", "bank_account": "US1234567890"}
+type FiatDepositRequest struct {
+	Amount      float64 `json:"amount" example:"100.0"`
+	Currency    string  `json:"currency" example:"USD"`
+	BankAccount string  `json:"bank_account" example:"US1234567890"`
+}
+
+// RefreshTokenRequest represents a refresh token request
+// swagger:model
+// @name RefreshTokenRequest
+// @description Request payload for refreshing JWT tokens
+// @example {"refresh_token": "abc123refresh"}
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" example:"abc123refresh"`
+}

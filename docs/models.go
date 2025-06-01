@@ -15,6 +15,24 @@ type HealthResponse struct {
 	Uptime    string    `json:"uptime" example:"24h30m15s"`
 }
 
+// OrderPlacementRequest represents a request to place a new order
+// swagger:model
+type OrderPlacementRequest struct {
+	Symbol      string  `json:"symbol" example:"BTCUSD"`
+	Side        string  `json:"side" example:"buy" enums:"buy,sell"`
+	Type        string  `json:"type" example:"limit" enums:"limit,market"`
+	Price       float64 `json:"price,omitempty" example:"30000.0"`
+	Quantity    float64 `json:"quantity" example:"0.5"`
+	TimeInForce string  `json:"time_in_force,omitempty" example:"GTC" enums:"GTC,IOC,FOK"`
+}
+
+// APIErrorResponse represents a generic error response
+// swagger:model
+type APIErrorResponse struct {
+	Error   string `json:"error" example:"Invalid parameters"`
+	Message string `json:"message,omitempty" example:"A detailed error message"`
+}
+
 // ErrorResponse represents a standard error response
 type ErrorResponse struct {
 	Error     string    `json:"error" example:"Invalid request"`
