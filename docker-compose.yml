@@ -1,25 +1,286 @@
 version: '3.8'
+
+# Production-ready Docker Compose configuration
+# Security: Uses secrets, secure networks, and hardened containers
+# Updated: June 1, 2025
+
 services:
-  db:
-    image: postgres:15
+  # PostgreSQL Database with Security Hardening
+  postgres-primary:
+    image: postgres:15-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-      POSTGRES_DB: pincex
+      POSTGRES_USER: pincex_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: pincex_prod
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      # Security hardening
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/ssl:/var/lib/postgresql/ssl:ro
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks:
+      - database_network
     ports:
-      - "5432:5432"
-  redis:
-    image: redis:7
+      - "127.0.0.1:5432:5432"  # Bind to localhost only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pincex_app -d pincex_prod"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Redis Cache with Security and Clustering
+  redis-primary:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass $(cat /run/secrets/redis_password)
+      --appendonly yes
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --maxmemory 1gb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+      --databases 16
+      --stop-writes-on-bgsave-error yes
+      --rdbcompression yes
+      --rdbchecksum yes
+      --slave-serve-stale-data yes
+      --slave-read-only yes
+      --repl-diskless-sync no
+      --repl-diskless-sync-delay 5
+      --repl-ping-slave-period 10
+      --repl-timeout 60
+      --repl-disable-tcp-nodelay no
+      --repl-backlog-size 1mb
+      --repl-backlog-ttl 3600
+      --slave-priority 100
+      --min-slaves-to-write 1
+      --min-slaves-max-lag 10
+      --lua-time-limit 5000
+      --slowlog-log-slower-than 10000
+      --slowlog-max-len 128
+      --latency-monitor-threshold 100
+      --notify-keyspace-events Ex
+      --hash-max-ziplist-entries 512
+      --hash-max-ziplist-value 64
+      --list-max-ziplist-size -2
+      --list-compress-depth 0
+      --set-max-intset-entries 512
+      --zset-max-ziplist-entries 128
+      --zset-max-ziplist-value 64
+      --hll-sparse-max-bytes 3000
+      --stream-node-max-bytes 4096
+      --stream-node-max-entries 100
+      --activerehashing yes
+      --client-output-buffer-limit normal 0 0 0
+      --client-output-buffer-limit replica 256mb 64mb 60
+      --client-output-buffer-limit pubsub 32mb 8mb 60
+      --hz 10
+      --dynamic-hz yes
+      --aof-rewrite-incremental-fsync yes
+      --rdb-save-incremental-fsync yes
+      --lfu-log-factor 10
+      --lfu-decay-time 1
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - cache_network
     ports:
-      - "6379:6379"
-  api:
-    build: .
+      - "127.0.0.1:6379:6379"  # Bind to localhost only
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$(cat /run/secrets/redis_password)", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Main Application with Security Hardening
+  pincex-api:
+    build: 
+      context: .
+      dockerfile: Dockerfile.production
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-latest}
+        BUILD_SHA: ${BUILD_SHA:-unknown}
+    restart: unless-stopped
     depends_on:
-      - db
-      - redis
+      postgres-primary:
+        condition: service_healthy
+      redis-primary:
+        condition: service_healthy
+    env_file:
+      - .env.production
     environment:
-      PORT: 8080
-      DB_URL: postgres://user:pass@db:5432/pincex?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      # Override with Docker-specific values
+      PINCEX_DATABASE_DSN: postgres://pincex_app:$(cat /run/secrets/postgres_password)@postgres-primary:5432/pincex_prod?sslmode=require
+      REDIS_ADDRESS: redis-primary:6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+    secrets:
+      - postgres_password
+      - redis_password
+      - jwt_secret
+      - jwt_refresh_secret
+      - encryption_key
+    volumes:
+      - app_logs:/var/log/pincex
+      - kyc_documents:/var/lib/pincex/kyc-documents
+      - ssl_certs:/etc/ssl/certs:ro
+      - ssl_private:/etc/ssl/private:ro
+    networks:
+      - api_network
+      - database_network
+      - cache_network
     ports:
-      - "8080:8080"
+      - "8080:8080"   # HTTP
+      - "8443:8443"   # HTTPS
+      - "9090:9090"   # Metrics (Prometheus)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # For binding to ports < 1024 if needed
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+
+# Production Secrets Management
+secrets:
+  postgres_password:
+    external: true
+    name: pincex_postgres_password_v1
+  redis_password:
+    external: true
+    name: pincex_redis_password_v1
+  jwt_secret:
+    external: true
+    name: pincex_jwt_secret_v1
+  jwt_refresh_secret:
+    external: true
+    name: pincex_jwt_refresh_secret_v1
+  encryption_key:
+    external: true
+    name: pincex_encryption_key_v1
+
+# Persistent Volumes
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/pincex/postgres
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/pincex/redis
+  app_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/log/pincex
+  kyc_documents:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/pincex/kyc-documents
+  ssl_certs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc/ssl/certs
+  ssl_private:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc/ssl/private
+
+# Secure Network Isolation
+networks:
+  api_network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+  database_network:
+    driver: bridge
+    internal: true  # No external access
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/24
+          gateway: 172.21.0.1
+  cache_network:
+    driver: bridge
+    internal: true  # No external access
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.22.0.0/24
+          gateway: 172.22.0.1

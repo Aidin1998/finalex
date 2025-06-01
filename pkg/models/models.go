@@ -391,3 +391,24 @@ type RateLimitInfo struct {
 	ResetAt   time.Time     `json:"reset_at"`
 	Window    time.Duration `json:"window"`
 }
+
+// UpdateUserRequest represents a request to update user profile fields
+// swagger:model
+// @name UpdateUserRequest
+// @description Request payload for updating user profile
+// @example {"first_name": "John", "last_name": "Doe"}
+type UpdateUserRequest struct {
+	FirstName string `json:"first_name" example:"John"`
+	LastName  string `json:"last_name" example:"Doe"`
+}
+
+// KYCSubmissionRequest represents a request to submit KYC documents
+// swagger:model
+// @name KYCSubmissionRequest
+// @description Request payload for submitting KYC documents
+// @example {"document_type": "passport", "document_number": "123456789", "country": "US"}
+type KYCSubmissionRequest struct {
+	DocumentType   string `json:"document_type" example:"passport"`
+	DocumentNumber string `json:"document_number" example:"123456789"`
+	Country        string `json:"country" example:"US"`
+}

@@ -1,60 +1,86 @@
-# Risk Management System Configuration
-# This file contains configuration parameters for the comprehensive risk management system
+# =====================================================
+# PINCEX RISK MANAGEMENT - PRODUCTION CONFIGURATION
+# =====================================================
+# 
+# Security-hardened risk management configuration
+# Compliant with regulatory requirements
+# Updated: June 1, 2025
+# =====================================================
 
 # Position Limits Configuration
 position_limits:
-  # Default position limits per user (in USD)
-  default_user_limit: 100000
+  # Production position limits per user (in USD)
+  default_user_limit: 50000           # Reduced for risk management
   
-  # Default position limits per market (in USD)
-  default_market_limit: 1000000
+  # Production position limits per market (in USD)
+  default_market_limit: 5000000       # Conservative limit
   
   # Global position limit across all markets (in USD)
-  global_limit: 10000000
+  global_limit: 50000000              # System-wide limit
   
   # VIP user limits (multiplier of default limits)
-  vip_multiplier: 10
+  vip_multiplier: 5                   # Reduced multiplier
   
   # Institutional user limits (multiplier of default limits)
-  institutional_multiplier: 100
+  institutional_multiplier: 20        # Conservative institutional limits
+  
+  # Dynamic limit adjustment
+  enable_dynamic_limits: true
+  volatility_adjustment_factor: 0.5   # Reduce limits during high volatility
+  liquidity_adjustment_factor: 0.7    # Reduce limits during low liquidity
 
 # Risk Calculation Configuration
 risk_calculation:
   # Value at Risk (VaR) configuration
-  var_confidence: 0.95        # 95% confidence interval
-  var_time_horizon: 1         # 1 day horizon
+  var_confidence: 0.99                # 99% confidence interval (stricter)
+  var_time_horizon: 1                 # 1 day horizon
   
   # Performance requirements
-  calculation_timeout: 500ms  # Sub-second requirement
-  batch_size: 100            # Maximum users per batch calculation
-  update_interval: 1s        # Real-time update frequency
+  calculation_timeout: 250ms          # Tighter timeout for production
+  batch_size: 50                      # Smaller batches for better performance
+  update_interval: 500ms              # More frequent updates
   
   # Market data configuration
-  price_staleness_threshold: 30s    # Consider prices stale after 30 seconds
-  volatility_lookback_period: 30d   # 30-day volatility calculation
-  correlation_update_frequency: 1h  # Update correlations hourly
+  price_staleness_threshold: 10s      # Stricter price freshness requirement
+  volatility_lookback_period: 30d     # 30-day volatility calculation
+  correlation_update_frequency: 30m   # More frequent correlation updates
+  
+  # Risk model validation
+  model_validation_enabled: true
+  backtesting_period: 252             # 1 year of trading days
+  model_recalibration_frequency: 7d   # Weekly recalibration
 
 # Compliance Configuration
 compliance:
   # Anti-Money Laundering (AML) settings
   aml:
     enabled: true
-    daily_volume_threshold: 50000     # USD threshold for enhanced monitoring
-    structuring_threshold: 10000      # USD threshold for structuring detection
-    velocity_threshold: 10            # Max transactions per time window
+    daily_volume_threshold: 25000     # Lowered threshold for enhanced monitoring
+    structuring_threshold: 5000       # Lower threshold for structuring detection
+    velocity_threshold: 5             # Stricter velocity controls
     velocity_time_window: 300s        # 5-minute window for velocity checks
+    
+    # Enhanced monitoring
+    enhanced_monitoring_threshold: 10000
+    enhanced_monitoring_period: 90d
+    suspicious_pattern_detection: true
     
   # Know Your Transaction (KYT) settings
   kyt:
     enabled: true
-    high_risk_jurisdictions: ["OFAC", "FATF_GREY", "HIGH_RISK"]
-    blocked_addresses: []             # List of blocked crypto addresses
+    high_risk_jurisdictions: ["OFAC", "FATF_GREY", "HIGH_RISK", "IRAN", "NORTH_KOREA", "SYRIA"]
+    blocked_addresses: []             # Populated from external feeds
+    address_screening_enabled: true
+    transaction_monitoring_enabled: true
     
   # Pattern detection
   patterns:
-    round_amount_threshold: 0.9       # Threshold for round amount detection
-    time_clustering_threshold: 60s    # Time clustering detection window
-    amount_clustering_threshold: 0.1  # Amount clustering sensitivity
+    round_amount_threshold: 0.95      # Stricter round amount detection
+    time_clustering_threshold: 30s    # Tighter time clustering detection
+    amount_clustering_threshold: 0.05 # More sensitive amount clustering
+    layering_detection_enabled: true
+    structuring_detection_enabled: true
+    smurfing_detection_enabled: true
 
 # Dashboard Configuration
 dashboard:

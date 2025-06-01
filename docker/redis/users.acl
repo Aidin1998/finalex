@@ -1,0 +1,124 @@
+# =====================================================
+# Redis ACL (Access Control List) Configuration
+# =====================================================
+# 
+# Production-ready user access control for Redis
+# Updated: June 1, 2025
+# =====================================================
+
+# ===================
+# DEFAULT USER (DISABLED)
+# ===================
+
+# Disable the default user for security
+user default off
+
+# ===================
+# APPLICATION USERS
+# ===================
+
+# Main application user (read/write access to specific patterns)
+user pincex_app on >$(cat /run/secrets/redis_app_password) ~cache:* ~session:* ~rate_limit:* ~market:* ~trading:* ~user:* +@all -@dangerous -flushdb -flushall -config -debug -eval -script
+
+# Read-only user for analytics and monitoring
+user pincex_read on >$(cat /run/secrets/redis_read_password) ~cache:* ~session:* ~market:* ~trading:* ~user:* +@read +info +ping +client
+
+# Session management user (limited to session operations)
+user pincex_session on >$(cat /run/secrets/redis_session_password) ~session:* +@read +@write +@string +@hash +expire +ttl +del +exists +ping
+
+# Rate limiting user (limited to rate limit operations)
+user pincex_ratelimit on >$(cat /run/secrets/redis_ratelimit_password) ~rate_limit:* +@read +@write +@string +@sorted_set +@list +expire +ttl +del +exists +ping +incr +decr
+
+# Cache management user
+user pincex_cache on >$(cat /run/secrets/redis_cache_password) ~cache:* +@read +@write +@string +@hash +@list +expire +ttl +del +exists +ping
+
+# ===================
+# ADMINISTRATIVE USERS
+# ===================
+
+# Monitoring user (for Prometheus, health checks, etc.)
+user pincex_monitor on >$(cat /run/secrets/redis_monitor_password) ~* +info +ping +client +config|get +latency +memory +slowlog +@read
+
+# Backup user (for data export/backup operations)
+user pincex_backup on >$(cat /run/secrets/redis_backup_password) ~* +@read +info +ping +lastsave +bgsave +@stream
+
+# Administrative user (full access but limited dangerous commands)
+user pincex_admin on >$(cat /run/secrets/redis_admin_password) ~* +@all -flushdb -flushall -shutdown -debug -eval -script
+
+# ===================
+# EMERGENCY USER
+# ===================
+
+# Emergency user for critical operations (manual intervention only)
+user pincex_emergency off >$(cat /run/secrets/redis_emergency_password) ~* +@all
+
+# ===================
+# KEY PATTERNS AND PERMISSIONS
+# ===================
+
+# Key Pattern Examples:
+# ~cache:*           - All cache keys
+# ~session:*         - All session keys  
+# ~rate_limit:*      - All rate limit keys
+# ~market:*          - Market data keys
+# ~trading:*         - Trading-related keys
+# ~user:*            - User-specific keys
+# ~temp:*            - Temporary keys
+# ~analytics:*       - Analytics keys
+# ~notifications:*   - Notification keys
+
+# Command Categories:
+# +@all              - All commands
+# +@read             - Read-only commands
+# +@write            - Write commands
+# +@string           - String operations
+# +@hash             - Hash operations
+# +@list             - List operations
+# +@set              - Set operations
+# +@sorted_set       - Sorted set operations
+# +@stream           - Stream operations
+# +@pubsub           - Pub/Sub commands
+# +@transaction      - Transaction commands
+# +@connection       - Connection commands
+# +@server           - Server commands
+# +@scripting        - Scripting commands
+# +@hyperloglog      - HyperLogLog commands
+# +@bitmap           - Bitmap operations
+# +@geo              - Geo commands
+# -@dangerous        - Exclude dangerous commands
+
+# ===================
+# SECURITY NOTES
+# ===================
+
+# 1. All passwords should be generated securely and stored in secrets management
+# 2. Key patterns should be as restrictive as possible for each user
+# 3. Regularly rotate passwords (recommended: every 90 days)
+# 4. Monitor user activity and access patterns
+# 5. Use different users for different application components
+# 6. Never use the default user in production
+# 7. Emergency user should only be enabled when needed
+# 8. Review and audit ACL configurations regularly
+
+# ===================
+# COMMAND RESTRICTIONS
+# ===================
+
+# Dangerous commands that are blocked:
+# - FLUSHDB: Deletes all keys in current database
+# - FLUSHALL: Deletes all keys in all databases
+# - CONFIG: Server configuration access
+# - DEBUG: Debugging commands
+# - EVAL/SCRIPT: Lua scripting (potential security risk)
+# - SHUTDOWN: Server shutdown
+
+# ===================
+# MONITORING PATTERNS
+# ===================
+
+# Monitor for:
+# - Failed authentication attempts
+# - Unusual key access patterns
+# - Commands executed by each user
+# - Connection patterns and sources
+# - Performance impact of user operations

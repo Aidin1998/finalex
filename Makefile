@@ -53,3 +53,9 @@ build-linux-bookkeeper:
 
 build-linux: build-linux-identities build-linux-accounts
 
+# Swagger documentation target
+SWAG ?= swag
+.PHONY: docs
+docs:
+	$(SWAG) init -g cmd/pincex/main.go -o docs
+

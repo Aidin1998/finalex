@@ -1,0 +1,152 @@
+# =====================================================
+# PINCEX TRADING PLATFORM - PRODUCTION DOCKERFILE
+# =====================================================
+# 
+# Multi-stage build with security hardening
+# Based on distroless images for minimal attack surface
+# Updated: June 1, 2025
+# =====================================================
+
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+# Security: Run as non-root user during build
+RUN adduser -D -s /bin/sh -u 1001 appuser
+
+# Security: Install only necessary packages and clean up
+RUN apk add --no-cache \
+    ca-certificates \
+    git \
+    tzdata \
+    && update-ca-certificates
+
+# Set working directory
+WORKDIR /build
+
+# Copy Go modules first for better caching
+COPY go.mod go.sum ./
+COPY common/go.mod common/go.sum ./common/
+
+# Download dependencies
+RUN go mod download && go mod verify
+
+# Copy source code
+COPY . .
+
+# Build arguments for versioning
+ARG BUILD_VERSION=unknown
+ARG BUILD_SHA=unknown
+ARG BUILD_TIME=""
+
+# Security: Build with security flags and optimizations
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64
+
+# Build the application with security and optimization flags
+RUN go build \
+    -a \
+    -installsuffix cgo \
+    -ldflags="-w -s -X main.version=${BUILD_VERSION} -X main.buildSHA=${BUILD_SHA} -X main.buildTime=${BUILD_TIME} -extldflags '-static'" \
+    -tags "osusergo netgo static_build" \
+    -o pincex \
+    ./cmd/pincex
+
+# Verify the binary
+RUN chmod +x pincex && \
+    ./pincex --version || true
+
+# =====================================================
+# Production stage - Distroless for security
+# =====================================================
+FROM gcr.io/distroless/static-debian11:nonroot AS production
+
+# Metadata
+LABEL maintainer="Pincex Security Team <security@pincex.com>" \
+      version="${BUILD_VERSION}" \
+      description="Pincex Crypto Trading Platform - Production Build" \
+      org.opencontainers.image.title="Pincex Trading Platform" \
+      org.opencontainers.image.description="Secure cryptocurrency trading platform" \
+      org.opencontainers.image.vendor="Pincex" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.revision="${BUILD_SHA}" \
+      org.opencontainers.image.source="https://github.com/pincex/pincex_unified" \
+      org.opencontainers.image.documentation="https://docs.pincex.com" \
+      org.opencontainers.image.licenses="Proprietary"
+
+# Security: Use non-root user (distroless nonroot user)
+USER 65532:65532
+
+# Copy CA certificates from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy the binary
+COPY --from=builder /build/pincex /usr/local/bin/pincex
+
+# Create necessary directories for runtime
+# Note: These will be created by volume mounts in production
+# but we define them here for documentation
+
+# Application configuration
+ENV PORT=8080 \
+    TLS_PORT=8443 \
+    HEALTH_PORT=8081 \
+    METRICS_PORT=9090 \
+    GIN_MODE=release \
+    LOG_LEVEL=info \
+    LOG_FORMAT=json
+
+# Security: Expose only necessary ports
+EXPOSE 8080 8081 8443 9090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/pincex", "healthcheck"]
+
+# Entry point
+ENTRYPOINT ["/usr/local/bin/pincex"]
+CMD ["server"]
+
+# =====================================================
+# Alternative debug stage (for development only)
+# =====================================================
+FROM golang:1.21-alpine AS debug
+
+# Security warning for debug builds
+RUN echo "WARNING: This is a debug build and should NOT be used in production!" > /tmp/debug_warning
+
+# Install debugging tools
+RUN apk add --no-cache \
+    ca-certificates \
+    curl \
+    netcat-openbsd \
+    htop \
+    strace \
+    tcpdump \
+    && update-ca-certificates
+
+# Create app user
+RUN adduser -D -s /bin/sh -u 1001 appuser
+
+WORKDIR /app
+
+# Copy everything for debugging
+COPY . .
+
+# Build with debug symbols
+RUN go build -gcflags="all=-N -l" -o pincex ./cmd/pincex
+
+# Switch to app user
+USER appuser
+
+# Development environment variables
+ENV GIN_MODE=debug \
+    LOG_LEVEL=debug \
+    LOG_FORMAT=text
+
+EXPOSE 8080 8081 8443 9090 40000
+
+ENTRYPOINT ["./pincex"]
+CMD ["server"]

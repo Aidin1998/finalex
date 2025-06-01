@@ -1,6 +1,20 @@
 //go:build !admin
 // +build !admin
 
+// @title PinCEX Unified API
+// @version 1.0.0
+// @description Comprehensive Swagger documentation for the PinCEX Unified Exchange API.
+// @contact.name API Support
+// @contact.url http://example.com/support
+// @contact.email support@example.com
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+// @host localhost:8080
+// @BasePath /api/v1
+// @schemes http https
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 package main
 
 import (
@@ -14,6 +28,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	_ "github.com/Aidin1998/pincex_unified/docs" // Swagger docs
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
