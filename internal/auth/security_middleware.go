@@ -10,28 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// SecurityMiddlewareConfig defines configuration for security middleware
-type SecurityMiddlewareConfig struct {
-	// Security flag monitoring
-	BlockHighRiskTokens       bool `json:"block_high_risk_tokens"`
-	LogSecurityFlags          bool `json:"log_security_flags"`
-	AlertOnElevatedPrivileges bool `json:"alert_on_elevated_privileges"`
-
-	// Session security
-	RequireActiveSession  bool          `json:"require_active_session"`
-	SessionTimeoutWarning time.Duration `json:"session_timeout_warning"`
-
-	// Rate limiting enhancements
-	EnableUserBasedRateLimit bool          `json:"enable_user_based_rate_limit"`
-	UserRateLimit            int           `json:"user_rate_limit"`
-	UserRateWindow           time.Duration `json:"user_rate_window"`
-
-	// Audit and monitoring
-	EnableDetailedAuditLogging bool `json:"enable_detailed_audit_logging"`
-	LogSuccessfulAccess        bool `json:"log_successful_access"`
-	LogSuspiciousActivity      bool `json:"log_suspicious_activity"`
-}
-
 // DefaultSecurityMiddlewareConfig returns secure default configuration
 func DefaultSecurityMiddlewareConfig() *SecurityMiddlewareConfig {
 	return &SecurityMiddlewareConfig{

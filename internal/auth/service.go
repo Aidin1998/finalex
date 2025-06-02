@@ -78,6 +78,10 @@ type Service struct {
 	oauthProviders            map[string]*OAuthProvider
 	rateLimiter               RateLimiter
 	enhancedJWTValidator      *EnhancedJWTValidator // Enhanced JWT validation
+
+	// Enhanced security components
+	hybridHasher    *HybridHasher
+	securityManager *EndpointSecurityManager
 }
 
 // TokenClaims represents JWT token claims
@@ -99,18 +103,19 @@ type TokenPair struct {
 	TokenType    string    `json:"token_type"`
 }
 
-// APIKey represents an API key
+// APIKey represents an API key with enhanced security
 type APIKey struct {
-	ID          uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid"`
-	UserID      uuid.UUID  `json:"user_id" gorm:"type:uuid;index"`
-	Name        string     `json:"name"`
-	KeyHash     string     `json:"-" gorm:"column:key_hash"`
-	Permissions []string   `json:"permissions" gorm:"type:text;serializer:json"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	IsActive    bool       `json:"is_active" gorm:"default:true"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uuid.UUID         `json:"id" gorm:"primaryKey;type:uuid"`
+	UserID      uuid.UUID         `json:"user_id" gorm:"type:uuid;index"`
+	Name        string            `json:"name"`
+	KeyHash     string            `json:"-" gorm:"column:key_hash"`
+	HashData    *HashedCredential `json:"-" gorm:"type:text;serializer:json;column:hash_data"` // Enhanced hash metadata
+	Permissions []string          `json:"permissions" gorm:"type:text;serializer:json"`
+	LastUsedAt  *time.Time        `json:"last_used_at"`
+	ExpiresAt   *time.Time        `json:"expires_at"`
+	IsActive    bool              `json:"is_active" gorm:"default:true"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // APIKeyClaims represents API key claims
@@ -179,7 +184,7 @@ type BlacklistedToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// NewAuthService creates a new authentication service
+// NewAuthService creates a new authentication service with enhanced security
 func NewAuthService(
 	logger *zap.Logger,
 	db *gorm.DB,
@@ -198,6 +203,12 @@ func NewAuthService(
 		return nil, fmt.Errorf("refresh secret cannot be empty")
 	}
 
+	// Initialize endpoint security manager
+	securityManager := NewEndpointSecurityManager()
+
+	// Initialize hybrid hasher with security manager
+	hybridHasher := NewHybridHasher(securityManager)
+
 	service := &Service{
 		logger:                    logger,
 		db:                        db,
@@ -208,6 +219,8 @@ func NewAuthService(
 		issuer:                    issuer,
 		oauthProviders:            make(map[string]*OAuthProvider),
 		rateLimiter:               rateLimiter,
+		hybridHasher:              hybridHasher,
+		securityManager:           securityManager,
 	}
 
 	// Initialize enhanced JWT validator with secure defaults
@@ -221,10 +234,15 @@ func NewAuthService(
 		jwtConfig,
 		rateLimiter,
 	)
-
 	// Auto-migrate database tables
 	if err := service.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	// Run security-specific migrations
+	migrationRunner := migrations.NewMigrationRunner(db, logger)
+	if err := migrationRunner.RunMigrations(); err != nil {
+		return nil, fmt.Errorf("failed to run security migrations: %w", err)
 	}
 
 	return service, nil

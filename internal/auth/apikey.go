@@ -72,16 +72,32 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate API secret: %w", err)
 	}
-
 	// Create the full API key (key:secret)
 	fullAPIKey := fmt.Sprintf("%s:%s", apiKeyString, apiSecret)
-	keyHash := hashAPIKey(fullAPIKey)
+
+	// Use hybrid hashing for new API keys with default medium security level
+	var hashData *HashedCredential
+	var keyHash string
+
+	if s.hybridHasher != nil {
+		// Use bcrypt as default for new API keys (good balance of security and performance)
+		hashData, err = s.hybridHasher.Hash(fullAPIKey, HashBcrypt)
+		if err != nil {
+			s.logger.Error("Failed to create hybrid hash, falling back to SHA256", zap.Error(err))
+			keyHash = hashAPIKey(fullAPIKey)
+		}
+	} else {
+		// Fallback to legacy SHA256 hashing
+		keyHash = hashAPIKey(fullAPIKey)
+	}
+
 	// Create API key record
 	apiKey := &APIKey{
 		ID:          keyID,
 		UserID:      userID,
 		Name:        cleanName, // Use sanitized name
 		KeyHash:     keyHash,
+		HashData:    hashData, // Store hybrid hash metadata
 		Permissions: permissions,
 		ExpiresAt:   expiresAt,
 		IsActive:    true,
@@ -106,6 +122,11 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID uuid.UUID, name strin
 
 // ValidateAPIKey validates an API key and returns claims
 func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*APIKeyClaims, error) {
+	return s.ValidateAPIKeyForEndpoint(ctx, apiKey, "")
+}
+
+// ValidateAPIKeyForEndpoint validates an API key with endpoint-aware security
+func (s *Service) ValidateAPIKeyForEndpoint(ctx context.Context, apiKey, endpoint string) (*APIKeyClaims, error) {
 	// Apply rate limiting
 	if s.rateLimiter != nil {
 		allowed, err := s.rateLimiter.Allow(ctx, "api_key_validation", 1000, time.Minute)
@@ -117,13 +138,27 @@ func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*APIKeyCla
 		}
 	}
 
-	// Hash the provided API key
-	keyHash := hashAPIKey(apiKey)
+	// Get endpoint security classification for algorithm selection
+	var useHybridHashing bool
+	if endpoint != "" && s.securityManager != nil {
+		classification := s.securityManager.GetEndpointClassification(endpoint)
+		// Use hybrid hashing for non-critical endpoints
+		useHybridHashing = classification.SecurityLevel != SecurityLevelCritical
+	}
 
-	// Find the API key in database
 	var dbKey APIKey
-	err := s.db.Where("key_hash = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)",
-		keyHash, true, time.Now()).First(&dbKey).Error
+	var err error
+
+	if useHybridHashing && s.hybridHasher != nil {
+		// Use endpoint-aware hashing for validation
+		err = s.validateAPIKeyWithHybridHashing(ctx, apiKey, endpoint, &dbKey)
+	} else {
+		// Fallback to legacy SHA256 hashing
+		keyHash := hashAPIKey(apiKey)
+		err = s.db.Where("key_hash = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)",
+			keyHash, true, time.Now()).First(&dbKey).Error
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired API key")
 	}
@@ -136,6 +171,37 @@ func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*APIKeyCla
 		UserID:      dbKey.UserID,
 		Permissions: dbKey.Permissions,
 	}, nil
+}
+
+// validateAPIKeyWithHybridHashing validates API key using hybrid hashing based on hash metadata
+func (s *Service) validateAPIKeyWithHybridHashing(ctx context.Context, apiKey, endpoint string, dbKey *APIKey) error {
+	// First try to find a record with hash metadata (new format)
+	var keysWithHashData []APIKey
+	err := s.db.Where("hash_data IS NOT NULL AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)",
+		true, time.Now()).Find(&keysWithHashData).Error
+	if err != nil {
+		return err
+	}
+
+	// Check each key with hybrid hashing
+	for _, key := range keysWithHashData {
+		if key.HashData != nil {
+			valid, err := s.hybridHasher.Verify(apiKey, key.HashData)
+			if err != nil {
+				s.logger.Debug("Error verifying hybrid hash", zap.Error(err))
+				continue
+			}
+			if valid {
+				*dbKey = key
+				return nil
+			}
+		}
+	}
+
+	// Fallback to legacy SHA256 for backward compatibility
+	keyHash := hashAPIKey(apiKey)
+	return s.db.Where("key_hash = ? AND is_active = ? AND (expires_at IS NULL OR expires_at > ?)",
+		keyHash, true, time.Now()).First(dbKey).Error
 }
 
 // RevokeAPIKey revokes an API key
