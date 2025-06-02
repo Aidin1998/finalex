@@ -457,17 +457,13 @@ function Import-ConfigurationFile {
     try {
         $extension = [System.IO.Path]::GetExtension($FilePath).ToLower()
         
-        switch ($extension) {
-            ".json" {
-                $config = Get-Content $FilePath | ConvertFrom-Json -AsHashtable
-            }
-            ".yaml" -or ".yml" {
-                $config = Get-Content $FilePath | ConvertFrom-Yaml
-            }
-            default {
-                Write-Error "Unsupported file format: $extension"
-                return $false
-            }
+        if ($extension -eq ".json") {
+            $config = Get-Content $FilePath | ConvertFrom-Json -AsHashtable
+        } elseif ($extension -eq ".yaml" -or $extension -eq ".yml") {
+            $config = Get-Content $FilePath | ConvertFrom-Yaml
+        } else {
+            Write-Error "Unsupported file format: $extension"
+            return $false
         }
         
         # Apply configuration

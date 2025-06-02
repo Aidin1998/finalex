@@ -8,6 +8,7 @@ import (
 	"time"
 
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
+	"github.com/Aidin1998/pincex_unified/internal/audit"
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
@@ -50,6 +51,8 @@ type Server struct {
 	wsHub             *ws.Hub
 	tieredRateLimiter *auth.TieredRateLimiter
 	riskSvc           aml.RiskService
+	auditSvc          *audit.AuditService
+	auditHandlers     *audit.Handlers
 }
 
 // NewServer creates a new HTTP server
@@ -64,6 +67,8 @@ func NewServer(
 	wsHub *ws.Hub,
 	tieredRateLimiter *auth.TieredRateLimiter,
 	riskSvc aml.RiskService,
+	auditSvc *audit.AuditService,
+	auditHandlers *audit.Handlers,
 ) *Server {
 	return &Server{
 		logger:            logger,
@@ -76,6 +81,8 @@ func NewServer(
 		wsHub:             wsHub,
 		tieredRateLimiter: tieredRateLimiter,
 		riskSvc:           riskSvc,
+		auditSvc:          auditSvc,
+		auditHandlers:     auditHandlers,
 	}
 }
 
@@ -115,6 +122,11 @@ func (s *Server) Router() *gin.Engine {
 
 		// Add comprehensive audit logging middleware
 		router.Use(auth.AuditMiddleware(s.logger))
+	}
+
+	// Add enterprise audit middleware for administrative actions
+	if s.auditSvc != nil {
+		router.Use(audit.AuditMiddleware(s.auditSvc, s.logger))
 	}
 
 	// Keep existing basic validation middleware for legacy compatibility
@@ -262,6 +274,11 @@ func (s *Server) Router() *gin.Engine {
 					rateLimit.DELETE("/users/:userID/:rateType", s.handleResetUserRateLimit)
 					rateLimit.DELETE("/ips/:ip/:endpoint", s.handleResetIPRateLimit)
 					rateLimit.POST("/cleanup", s.handleCleanupRateLimitData)
+				}
+
+				// Audit logging management endpoints
+				if s.auditHandlers != nil {
+					s.auditHandlers.RegisterRoutes(admin)
 				}
 			}
 		}

@@ -1,0 +1,252 @@
+# PinCEX Audit Logging Configuration
+# Enterprise-grade audit logging for administrative actions
+
+audit:
+  # Core Service Configuration
+  service:
+    enabled: true
+    async_logging: true
+    batch_processing: true
+    tamper_proof_storage: true
+    enable_forensic_capability: true
+    compliance_mode: true
+    
+  # Database Configuration
+  database:
+    table_prefix: "audit_"
+    enable_partitioning: true
+    partition_interval: "monthly"
+    auto_create_partitions: true
+    connection_pool_size: 10
+    connection_timeout: "30s"
+    
+  # Batch Processing Configuration
+  batch:
+    size: 100
+    flush_interval: "30s"
+    max_queue_size: 10000
+    worker_count: 2
+    retry_attempts: 3
+    retry_delay: "5s"
+    
+  # Encryption Configuration
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    key_rotation_enabled: true
+    key_rotation_interval: "90d"
+    require_encryption_for_sensitive: true
+    master_key_env: "AUDIT_ENCRYPTION_KEY"
+    
+  # Detail Level Configuration
+  detail_level: "standard" # minimal, standard, verbose, forensic
+  
+  # Event Categories to Audit
+  categories:
+    user_management: true
+    financial_transactions: true
+    risk_management: true
+    compliance_actions: true
+    system_administration: true
+    security_events: true
+    api_access: true
+    data_access: true
+    
+  # Specific Events Configuration
+  events:
+    # User Management Events
+    user_created: true
+    user_updated: true
+    user_deleted: true
+    user_suspended: true
+    user_activated: true
+    password_changed: true
+    mfa_enabled: true
+    mfa_disabled: true
+    kyc_status_changed: true
+    
+    # Financial Transaction Events
+    deposit_processed: true
+    withdrawal_processed: true
+    trade_executed: true
+    order_placed: true
+    order_cancelled: true
+    balance_adjustment: true
+    fee_adjustment: true
+    
+    # Risk Management Events
+    risk_limit_set: true
+    risk_limit_updated: true
+    risk_exemption_granted: true
+    compliance_alert_triggered: true
+    aml_flag_set: true
+    transaction_blocked: true
+    
+    # System Administration Events
+    system_config_changed: true
+    rate_limit_updated: true
+    emergency_mode_activated: true
+    trading_pair_created: true
+    trading_pair_updated: true
+    maintenance_mode_set: true
+    
+  # Risk Scoring Configuration
+  risk_scoring:
+    enabled: true
+    thresholds:
+      low: 30
+      medium: 60
+      high: 80
+      critical: 95
+    factors:
+      failed_attempts_weight: 20
+      privilege_escalation_weight: 30
+      bulk_operations_weight: 25
+      unusual_access_weight: 15
+      compliance_violation_weight: 35
+      
+  # Compliance Configuration
+  compliance:
+    modes:
+      sox: true
+      pci_dss: true
+      gdpr: true
+      soc2: true
+      iso27001: true
+    retention_policies:
+      default_days: 2555  # 7 years
+      compliance_days: 3650  # 10 years for compliance events
+      high_risk_days: 7300  # 20 years for high-risk events
+      minimum_days: 365  # Minimum 1 year retention
+    auto_cleanup: true
+    cleanup_schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM
+    
+  # Forensic Analysis Configuration
+  forensic:
+    enabled: true
+    pattern_detection: true
+    suspicious_patterns:
+      rapid_failures:
+        enabled: true
+        threshold: 5
+        timeframe: "5m"
+      privilege_escalation:
+        enabled: true
+        detect_role_changes: true
+        detect_permission_changes: true
+      bulk_operations:
+        enabled: true
+        threshold: 10
+        timeframe: "10m"
+      unusual_access:
+        enabled: true
+        detect_new_locations: true
+        detect_unusual_times: true
+        detect_new_devices: true
+    timeline_analysis: true
+    correlation_analysis: true
+    
+  # Alerting Configuration
+  alerting:
+    enabled: true
+    real_time_alerts: true
+    alert_channels:
+      - "security-alerts"
+      - "audit-log"
+    high_risk_threshold: 80
+    critical_risk_threshold: 95
+    integrity_violation_alerts: true
+    compliance_violation_alerts: true
+    
+  # Data Retention and Archival
+  retention:
+    auto_archive: true
+    archive_after_days: 365
+    archive_storage: "s3://pincex-audit-archive"
+    compression_enabled: true
+    encryption_in_archive: true
+    
+  # Performance Configuration
+  performance:
+    enable_metrics: true
+    metrics_interval: "60s"
+    slow_query_threshold: "1s"
+    memory_limit: "512MB"
+    enable_profiling: false
+    
+  # Security Configuration
+  security:
+    hash_algorithm: "SHA256"
+    integrity_verification: true
+    chain_validation: true
+    digital_signatures: false  # Enable for highest security
+    access_control:
+      read_permissions: ["audit:read", "admin:audit"]
+      write_permissions: ["audit:write", "admin:audit"]
+      admin_permissions: ["audit:admin", "admin:system"]
+      
+  # Export Configuration
+  export:
+    formats: ["json", "csv", "xml"]
+    max_export_size: 100000  # Maximum events per export
+    compression: true
+    include_metadata: true
+    sanitize_sensitive_data: true
+    
+  # Integration Configuration
+  integrations:
+    siem:
+      enabled: false
+      endpoint: ""
+      format: "json"
+      auth_type: "api_key"
+    log_forwarding:
+      enabled: false
+      destinations: []
+    webhook:
+      enabled: false
+      endpoints: []
+      
+  # Development and Testing
+  development:
+    mock_mode: false
+    debug_logging: false
+    test_data_retention: "24h"
+    enable_test_endpoints: false
+
+# Environment-specific overrides
+environments:
+  production:
+    audit:
+      detail_level: "standard"
+      development:
+        debug_logging: false
+        enable_test_endpoints: false
+      alerting:
+        real_time_alerts: true
+      security:
+        digital_signatures: true
+        
+  staging:
+    audit:
+      detail_level: "verbose"
+      retention:
+        default_days: 90
+        compliance_days: 180
+      development:
+        debug_logging: true
+        enable_test_endpoints: true
+        
+  development:
+    audit:
+      detail_level: "forensic"
+      retention:
+        default_days: 30
+        compliance_days: 60
+      development:
+        debug_logging: true
+        enable_test_endpoints: true
+        mock_mode: false
+      batch:
+        size: 10
+        flush_interval: "5s"

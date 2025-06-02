@@ -605,117 +605,190 @@ POST /admin/risk/compliance/rules
 
 ## WebSocket API
 
-### Connection Endpoint
+### Overview
+The PinCEX WebSocket API provides a persistent, bi-directional channel for real-time market data and private user events. It follows JSON message structures and supports both public (market data) and private (account-specific) channels.
+
+**Base Endpoint**
 ```
 wss://api.pincex.com/ws/marketdata
 ```
 
-### Authentication for Private Channels
-```json
-{
-  "type": "auth",
-  "token": "your_jwt_token"
-}
-```
+### Connection Lifecycle
+- **Connect**: Open a WebSocket connection to the base endpoint.
+- **Heartbeat**: The server sends periodic `ping` messages. Clients must respond with a `pong` to keep the connection alive:
+  ```json
+  { "type": "pong" }
+  ```
+- **Reconnect**: On disconnect or error, implement exponential backoff (e.g., 1s, 2s, 5s) and resume subscriptions.
+- **Rate Limits**: Limit subscription changes to 10 messages per 30 seconds per connection.
 
-### Subscribe to Market Data
+### Authentication (Private Channels)
+After connecting, authenticate to access private channels:
+```json
+{ "type": "auth", "token": "<JWT_TOKEN>" }
+```
+**Responses**:
+- Success:
+  ```json
+  { "type": "auth_response", "success": true }
+  ```
+- Failure:
+  ```json
+  { "type": "auth_response", "success": false, "error": "Invalid token" }
+  ```
+
+### Subscription Management
+**Subscribe** to one or more channels:
 ```json
 {
   "type": "subscribe",
   "channels": [
-    {
-      "name": "ticker",
-      "symbols": ["BTC/USD", "ETH/USD"]
-    },
-    {
-      "name": "orderbook",
-      "symbols": ["BTC/USD"],
-      "depth": 50
-    },
-    {
-      "name": "trades",
-      "symbols": ["BTC/USD"]
-    }
+    { "name": "ticker",    "symbols": ["BTC/USD", "ETH/USD"] },
+    { "name": "orderbook", "symbols": ["BTC/USD"], "depth": 50 },
+    { "name": "trades",    "symbols": ["BTC/USD"] }
   ]
 }
 ```
-
-### Subscribe to Private Data
+**Unsubscribe**:
 ```json
 {
-  "type": "subscribe",
-  "channels": [
-    {
-      "name": "orders",
-      "symbols": ["BTC/USD", "ETH/USD"]
-    },
-    {
-      "name": "balances"
-    }
-  ]
+  "type": "unsubscribe",
+  "channels": [ { "name": "ticker", "symbols": ["BTC/USD"] } ]
 }
 ```
-
-### Message Types
-
-#### Ticker Updates
+**Acknowledge**:
 ```json
-{
-  "type": "ticker",
-  "symbol": "BTC/USD",
-  "data": {
-    "price": "50000.00",
-    "change_24h": "2.5",
-    "volume_24h": "1000000.00",
-    "timestamp": "2025-01-15T10:30:00Z"
+{ "type": "subscribe_response", "success": true }
+```
+
+### Message Formats
+#### Heartbeat
+- **Server Ping**:
+  ```json
+  { "type": "ping" }
+  ```
+- **Client Pong**:
+  ```json
+  { "type": "pong" }
+  ```
+
+#### Public Events
+- **Ticker Update**:
+  ```json
+  {
+    "type": "ticker",
+    "symbol": "BTC/USD",
+    "data": {
+      "price":      "50000.00",
+      "change_24h": "2.5",
+      "volume_24h": "1000000.00",
+      "timestamp":  "2025-01-15T10:30:00Z"
+    }
   }
-}
-```
+  ```
 
-#### Order Book Updates
-```json
-{
-  "type": "orderbook",
-  "symbol": "BTC/USD",
-  "data": {
-    "sequence": 123456789,
-    "changes": [
-      ["buy", "49995.50", "0.12345678"],
-      ["sell", "50005.00", "0.00000000"]
+- **Order Book Snapshot**:
+  ```json
+  {
+    "type":   "orderbook_snapshot",
+    "symbol": "BTC/USD",
+    "data": {
+      "bids": [["49995.50","0.123"]],
+      "asks": [["50005.00","0.456"]],
+      "timestamp": "2025-01-15T10:30:00Z"
+    }
+  }
+  ```
+
+- **Order Book Update**:
+  ```json
+  {
+    "type":   "orderbook_update",
+    "symbol": "BTC/USD",
+    "data": {
+      "changes": [["buy","49995.50","0.123"]],
+      "timestamp": "2025-01-15T10:31:00Z"
+    }
+  }
+  ```
+
+- **Trade Update**:
+  ```json
+  {
+    "type":   "trade",
+    "symbol": "BTC/USD",
+    "data": {
+      "trade_id": "trd_abcdef123456",
+      "price":    "50000.00",
+      "quantity": "0.01000000",
+      "side":     "buy",
+      "timestamp":"2025-01-15T10:30:00Z"
+    }
+  }
+  ```
+
+#### Private Events (Require Auth)
+- **Order Update**:
+  ```json
+  {
+    "type": "order_update",
+    "data": {
+      "order_id":          "ord_1234567890abcdef",
+      "status":            "filled",
+      "filled_quantity":   "0.01000000",
+      "remaining_quantity":"0.00000000",
+      "timestamp":         "2025-01-15T10:30:00Z"
+    }
+  }
+  ```
+
+- **Balance Update**:
+  ```json
+  {
+    "type": "balance_update",
+    "data": [
+      { "currency": "BTC", "available": "0.5", "reserved": "0.1" }
     ],
     "timestamp": "2025-01-15T10:30:00Z"
   }
-}
+  ```
+
+#### Error Messages
+```json
+{ "type": "error", "code": 4001, "message": "Subscription limit exceeded" }
 ```
 
-#### Trade Updates
-```json
-{
-  "type": "trade",
-  "symbol": "BTC/USD",
-  "data": {
-    "trade_id": "trd_abcdef123456",
-    "price": "50000.00",
-    "quantity": "0.01000000",
-    "side": "buy",
-    "timestamp": "2025-01-15T10:30:00Z"
-  }
-}
+### Client Integration Examples
+#### JavaScript (Node.js)
+```javascript
+const WebSocket = require('ws');
+const ws = new WebSocket('wss://api.pincex.com/ws/marketdata');
+ws.on('open', () => {
+  ws.send(JSON.stringify({ type: 'auth', token: 'YOUR_TOKEN' }));
+  ws.send(JSON.stringify({ type: 'subscribe', channels: [{ name: 'ticker', symbols: ['BTC/USD'] }] }));
+});
+ws.on('message', (msg) => console.log(JSON.parse(msg)));
+ws.on('ping', () => ws.pong());
 ```
 
-#### Order Updates (Private)
-```json
-{
-  "type": "order_update",
-  "data": {
-    "order_id": "ord_1234567890abcdef",
-    "status": "filled",
-    "filled_quantity": "0.01000000",
-    "remaining_quantity": "0.00000000",
-    "timestamp": "2025-01-15T10:30:00Z"
-  }
-}
+#### Python
+```python
+import asyncio, websockets, json
+async def run():
+    uri = 'wss://api.pincex.com/ws/marketdata'
+    async with websockets.connect(uri) as ws:
+        await ws.send(json.dumps({"type":"auth","token":"YOUR_TOKEN"}))
+        await ws.send(json.dumps({"type":"subscribe","channels":[{"name":"ticker","symbols":["BTC/USD"]}]}))
+        async for message in ws:
+            print(json.loads(message))
+asyncio.run(run())
 ```
+
+### Troubleshooting & Best Practices
+- Verify network/firewall allows WebSocket traffic.
+- Ensure JWT token is valid and not expired.
+- Respect subscription rate limits to avoid errors.
+- Implement automatic reconnection and re-subscription on disconnect.
 
 ## Response Formats
 
