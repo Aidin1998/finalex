@@ -77,8 +77,8 @@ type SecurityContext struct {
 	Metadata         map[string]interface{}  `json:"metadata"`
 }
 
-// SecurityMetrics contains security-related metrics
-type SecurityMetrics struct {
+// EnhancedSecurityMetrics contains enhanced security-related metrics
+type EnhancedSecurityMetrics struct {
 	TotalRequests          int64   `json:"total_requests"`
 	BlockedRequests        int64   `json:"blocked_requests"`
 	ChallengedRequests     int64   `json:"challenged_requests"`
@@ -313,14 +313,14 @@ func (esm *EnhancedSecurityMiddleware) performSecurityChecks(ctx context.Context
 // performDDoSCheck executes DDoS protection checks
 func (esm *EnhancedSecurityMiddleware) performDDoSCheck(ctx context.Context, secCtx *SecurityContext) *CheckResult {
 	reqCtx := &RequestContext{
-		Method:      secCtx.Method,
-		Path:        secCtx.Endpoint,
-		Headers:     make(map[string]string),
-		UserAgent:   secCtx.UserAgent,
-		RemoteAddr:  secCtx.IP,
-		RealIP:      secCtx.IP,
-		Timestamp:   secCtx.Timestamp,
-		PayloadSize: 0, // Would be extracted from actual request
+		Method:    secCtx.Method,
+		Path:      secCtx.Endpoint,
+		Headers:   make(map[string]string),
+		UserAgent: secCtx.UserAgent,
+		IP:        secCtx.IP,
+		Timestamp: secCtx.Timestamp,
+		UserID:    secCtx.UserID,
+		SessionID: secCtx.SessionID,
 	}
 
 	protectionResult, err := esm.ddosProtection.CheckRequest(ctx, reqCtx)

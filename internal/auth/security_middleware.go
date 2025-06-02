@@ -10,9 +10,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// DefaultSecurityMiddlewareConfig returns secure default configuration
-func DefaultSecurityMiddlewareConfig() *SecurityMiddlewareConfig {
-	return &SecurityMiddlewareConfig{
+// LegacySecurityMiddlewareConfig represents the legacy security middleware configuration
+type LegacySecurityMiddlewareConfig struct {
+	BlockHighRiskTokens        bool          `json:"block_high_risk_tokens"`
+	LogSecurityFlags           bool          `json:"log_security_flags"`
+	AlertOnElevatedPrivileges  bool          `json:"alert_on_elevated_privileges"`
+	RequireActiveSession       bool          `json:"require_active_session"`
+	SessionTimeoutWarning      time.Duration `json:"session_timeout_warning"`
+	EnableUserBasedRateLimit   bool          `json:"enable_user_based_rate_limit"`
+	UserRateLimit              int           `json:"user_rate_limit"`
+	UserRateWindow             time.Duration `json:"user_rate_window"`
+	EnableDetailedAuditLogging bool          `json:"enable_detailed_audit_logging"`
+	LogSuccessfulAccess        bool          `json:"log_successful_access"`
+	LogSuspiciousActivity      bool          `json:"log_suspicious_activity"`
+}
+
+// DefaultLegacySecurityMiddlewareConfig returns secure default configuration
+func DefaultLegacySecurityMiddlewareConfig() *LegacySecurityMiddlewareConfig {
+	return &LegacySecurityMiddlewareConfig{
 		BlockHighRiskTokens:        true,
 		LogSecurityFlags:           true,
 		AlertOnElevatedPrivileges:  true,
@@ -27,10 +42,10 @@ func DefaultSecurityMiddlewareConfig() *SecurityMiddlewareConfig {
 	}
 }
 
-// SecurityMiddleware creates enhanced security middleware that works with JWT validation
-func SecurityMiddleware(logger *zap.Logger, authService AuthService, config *SecurityMiddlewareConfig) gin.HandlerFunc {
+// LegacySecurityMiddleware creates enhanced security middleware that works with JWT validation
+func LegacySecurityMiddleware(logger *zap.Logger, authService AuthService, config *LegacySecurityMiddlewareConfig) gin.HandlerFunc {
 	if config == nil {
-		config = DefaultSecurityMiddlewareConfig()
+		config = DefaultLegacySecurityMiddlewareConfig()
 	}
 
 	return func(c *gin.Context) {

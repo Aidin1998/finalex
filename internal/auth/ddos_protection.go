@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -28,40 +28,6 @@ type DDoSProtectionManager struct {
 	suspiciousIPs sync.Map // IP -> SuspiciousIPInfo
 	activeAttacks sync.Map // AttackID -> AttackInfo
 	ruleCache     sync.Map // RuleKey -> CompiledRule
-}
-
-// DDoSConfig defines DDoS protection configuration
-type DDoSConfig struct {
-	// Rate limiting thresholds
-	GlobalRateLimit   int           `json:"global_rate_limit"`
-	IPRateLimit       int           `json:"ip_rate_limit"`
-	EndpointRateLimit int           `json:"endpoint_rate_limit"`
-	BurstAllowance    int           `json:"burst_allowance"`
-	WindowDuration    time.Duration `json:"window_duration"`
-
-	// Attack detection
-	SuspiciousThreshold     int  `json:"suspicious_threshold"`
-	AttackThreshold         int  `json:"attack_threshold"`
-	AdaptiveEnabled         bool `json:"adaptive_enabled"`
-	PatternDetectionEnabled bool `json:"pattern_detection_enabled"`
-
-	// Response actions
-	AutoBlockEnabled bool          `json:"auto_block_enabled"`
-	BlockDuration    time.Duration `json:"block_duration"`
-	ChallengeEnabled bool          `json:"challenge_enabled"`
-	TarPitEnabled    bool          `json:"tar_pit_enabled"`
-	TarPitDelay      time.Duration `json:"tar_pit_delay"`
-
-	// Geolocation restrictions
-	GeoBlockingEnabled bool     `json:"geo_blocking_enabled"`
-	AllowedCountries   []string `json:"allowed_countries"`
-	BlockedCountries   []string `json:"blocked_countries"`
-	HighRiskCountries  []string `json:"high_risk_countries"`
-
-	// Reputation-based filtering
-	ReputationEnabled   bool    `json:"reputation_enabled"`
-	MinReputationScore  float64 `json:"min_reputation_score"`
-	ReputationDecayRate float64 `json:"reputation_decay_rate"`
 }
 
 // AttackPatternDetector identifies attack patterns
@@ -184,13 +150,11 @@ type SuspiciousIPInfo struct {
 
 // SuspiciousEvent represents a suspicious activity
 type SuspiciousEvent struct {
-	Timestamp   time.Time         `json:"timestamp"`
-	EventType   string            `json:"event_type"`
-	Severity    AttackSeverity    `json:"severity"`
-	Description string            `json:"description"`
-	Endpoint    string            `json:"endpoint"`
-	UserAgent   string            `json:"user_agent"`
-	Headers     map[string]string `json:"headers"`
+	EventType   string                 `json:"event_type"`
+	Timestamp   time.Time              `json:"timestamp"`
+	Severity    AttackSeverity         `json:"severity"`
+	Description string                 `json:"description"`
+	Metadata    map[string]interface{} `json:"metadata"`
 }
 
 // IPStatus represents the current status of an IP
@@ -203,27 +167,55 @@ const (
 	IPStatusWhitelisted
 )
 
+// RequestContext contains request information for analysis
+type RequestContext struct {
+	Method    string            `json:"method"`
+	Path      string            `json:"path"`
+	Headers   map[string]string `json:"headers"`
+	UserAgent string            `json:"user_agent"`
+	IP        string            `json:"ip"`
+	Timestamp time.Time         `json:"timestamp"`
+	UserID    string            `json:"user_id,omitempty"`
+	SessionID string            `json:"session_id,omitempty"`
+}
+
+// ProtectionResult contains the result of DDoS protection analysis
+type ProtectionResult struct {
+	Action         ResponseAction         `json:"action"`
+	Allowed        bool                   `json:"allowed"`
+	Reason         string                 `json:"reason"`
+	Severity       AttackSeverity         `json:"severity"`
+	RateLimitInfo  map[string]interface{} `json:"rate_limit_info"`
+	Challenge      *ChallengeRequest      `json:"challenge,omitempty"`
+	TarPitDuration time.Duration          `json:"tar_pit_duration,omitempty"`
+	BlockDuration  time.Duration          `json:"block_duration,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata"`
+	AnalysisTime   time.Duration          `json:"analysis_time"`
+	ThresholdInfo  map[string]interface{} `json:"threshold_info"`
+}
+
+// ChallengeRequest represents a challenge to be presented to the client
+type ChallengeRequest struct {
+	Type       string                 `json:"type"`
+	Token      string                 `json:"token"`
+	ExpiresAt  time.Time              `json:"expires_at"`
+	Difficulty int                    `json:"difficulty"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
 // NewDDoSProtectionManager creates a new DDoS protection manager
 func NewDDoSProtectionManager(redis *redis.Client, logger *zap.Logger, securityManager *EndpointSecurityManager) *DDoSProtectionManager {
+	// Use default config if none provided
 	config := &DDoSConfig{
-		GlobalRateLimit:         10000,
-		IPRateLimit:             100,
-		EndpointRateLimit:       1000,
-		BurstAllowance:          50,
-		WindowDuration:          time.Minute,
-		SuspiciousThreshold:     20,
-		AttackThreshold:         50,
-		AdaptiveEnabled:         true,
-		PatternDetectionEnabled: true,
-		AutoBlockEnabled:        true,
-		BlockDuration:           time.Hour,
-		ChallengeEnabled:        true,
-		TarPitEnabled:           true,
-		TarPitDelay:             time.Second * 5,
-		GeoBlockingEnabled:      false,
-		ReputationEnabled:       true,
-		MinReputationScore:      0.3,
-		ReputationDecayRate:     0.1,
+		SuspiciousRequestThreshold: 1000,
+		AttackRequestThreshold:     5000,
+		DetectionWindow:            time.Minute,
+		EnableChallengeResponse:    true,
+		EnableTarPit:               true,
+		TarPitDelay:                5 * time.Second,
+		BlockDuration:              time.Hour,
+		EnablePatternDetection:     true,
+		PatternSimilarityThreshold: 0.8,
 	}
 
 	manager := &DDoSProtectionManager{
@@ -233,200 +225,177 @@ func NewDDoSProtectionManager(redis *redis.Client, logger *zap.Logger, securityM
 		config:              config,
 		attackPatterns:      NewAttackPatternDetector(),
 		adaptiveThresholds:  NewAdaptiveThresholdManager(),
-		ipReputationService: NewIPReputationService(redis, logger),
-		geoIPService:        NewGeoIPService(),
+		ipReputationService: nil, // Will be set by caller
+		geoIPService:        nil, // Will be set by caller
 	}
 
-	// Initialize default attack patterns
 	manager.initializeAttackPatterns()
-
 	return manager
 }
 
-// CheckRequest evaluates a request for DDoS patterns and applies protection
+// SetIPReputationService sets the IP reputation service
+func (dm *DDoSProtectionManager) SetIPReputationService(service *IPReputationService) {
+	dm.ipReputationService = service
+}
+
+// SetGeoIPService sets the GeoIP service
+func (dm *DDoSProtectionManager) SetGeoIPService(service *GeoIPService) {
+	dm.geoIPService = service
+}
+
+// CheckRequest analyzes a request for DDoS patterns and returns protection action
 func (dm *DDoSProtectionManager) CheckRequest(ctx context.Context, req *RequestContext) (*ProtectionResult, error) {
+	startTime := time.Now()
+
 	result := &ProtectionResult{
-		Allowed:  true,
-		Action:   ActionLog,
-		Reason:   "clean_request",
-		Metadata: make(map[string]interface{}),
+		Action:        ActionLog,
+		Allowed:       true,
+		Reason:        "clean",
+		Severity:      SeverityLow,
+		RateLimitInfo: make(map[string]interface{}),
+		Metadata:      make(map[string]interface{}),
+		ThresholdInfo: make(map[string]interface{}),
 	}
 
-	// Extract IP address
 	ip := dm.extractIPAddress(req)
 	if ip == "" {
-		result.Allowed = false
 		result.Action = ActionBlock
+		result.Allowed = false
 		result.Reason = "invalid_ip"
+		result.AnalysisTime = time.Since(startTime)
 		return result, nil
 	}
 
-	// Check if IP is whitelisted
+	// Check IP whitelist
 	if dm.isWhitelisted(ip) {
-		result.Metadata["whitelisted"] = true
+		result.Reason = "whitelisted"
+		result.AnalysisTime = time.Since(startTime)
 		return result, nil
 	}
 
 	// Check if IP is already blocked
 	if blocked, reason := dm.isBlocked(ctx, ip); blocked {
-		result.Allowed = false
 		result.Action = ActionBlock
+		result.Allowed = false
 		result.Reason = reason
 		result.Metadata["blocked_until"] = dm.getBlockExpiry(ctx, ip)
+		result.AnalysisTime = time.Since(startTime)
 		return result, nil
 	}
 
-	// Geographic restrictions
-	if dm.config.GeoBlockingEnabled {
+	// Geographic restrictions check
+	if dm.geoIPService != nil {
 		if blocked, reason := dm.checkGeographicRestrictions(ip); blocked {
-			result.Allowed = false
-			result.Action = ActionBlock
-			result.Reason = reason
 			dm.blockIP(ctx, ip, dm.config.BlockDuration, reason)
+			result.Action = ActionBlock
+			result.Allowed = false
+			result.Reason = reason
+			result.AnalysisTime = time.Since(startTime)
 			return result, nil
 		}
 	}
 
 	// IP reputation check
-	if dm.config.ReputationEnabled {
+	if dm.ipReputationService != nil {
 		reputation := dm.ipReputationService.GetReputationScore(ctx, ip)
-		if reputation < dm.config.MinReputationScore {
-			result.Allowed = false
-			result.Action = ActionBlock
-			result.Reason = "low_reputation"
-			result.Metadata["reputation_score"] = reputation
+		result.Metadata["reputation_score"] = reputation
+
+		// Using a fixed threshold since MinReputationScore is not in config
+		if reputation < 0.3 {
 			dm.blockIP(ctx, ip, dm.config.BlockDuration, "low_reputation")
+			result.Action = ActionBlock
+			result.Allowed = false
+			result.Reason = "low_reputation"
+			result.AnalysisTime = time.Since(startTime)
 			return result, nil
 		}
-		result.Metadata["reputation_score"] = reputation
 	}
 
-	// Rate limiting checks
+	// Rate limiting check
 	if exceeded, action := dm.checkRateLimits(ctx, req, ip); exceeded {
-		result.Allowed = false
 		result.Action = action
+		result.Allowed = action == ActionLog
 		result.Reason = "rate_limit_exceeded"
-
-		// Record suspicious activity
 		dm.recordSuspiciousActivity(ip, req, "rate_limit_exceeded")
-
-		return result, nil
 	}
 
 	// Attack pattern detection
-	if dm.config.PatternDetectionEnabled {
+	if dm.config.EnablePatternDetection {
 		if detected, pattern := dm.detectAttackPatterns(ctx, req, ip); detected {
-			result.Action = pattern.ResponseAction
 			if pattern.Severity >= SeverityHigh {
-				result.Allowed = false
 				dm.blockIP(ctx, ip, dm.config.BlockDuration, fmt.Sprintf("attack_pattern_%s", pattern.Name))
+				result.Action = ActionBlock
+				result.Allowed = false
+				result.Reason = fmt.Sprintf("attack_pattern_%s", pattern.Name)
+			} else {
+				result.Action = ActionRateLimit
+				result.Allowed = false
+				result.Reason = fmt.Sprintf("suspicious_pattern_%s", pattern.Name)
 			}
-			result.Reason = fmt.Sprintf("attack_pattern_%s", pattern.Name)
-			result.Metadata["attack_pattern"] = pattern.Name
-			result.Metadata["attack_severity"] = pattern.Severity
-
 			dm.recordSuspiciousActivity(ip, req, fmt.Sprintf("attack_pattern_%s", pattern.Name))
+			result.Severity = pattern.Severity
 		}
 	}
 
 	// Update IP tracking
 	dm.updateIPTracking(ip, req)
 
+	result.AnalysisTime = time.Since(startTime)
 	return result, nil
 }
 
-// RequestContext contains request information for analysis
-type RequestContext struct {
-	Method      string            `json:"method"`
-	Path        string            `json:"path"`
-	Headers     map[string]string `json:"headers"`
-	UserAgent   string            `json:"user_agent"`
-	Referer     string            `json:"referer"`
-	RemoteAddr  string            `json:"remote_addr"`
-	RealIP      string            `json:"real_ip"`
-	Timestamp   time.Time         `json:"timestamp"`
-	PayloadSize int64             `json:"payload_size"`
-}
-
-// ProtectionResult contains the result of DDoS protection analysis
-type ProtectionResult struct {
-	Allowed   bool                   `json:"allowed"`
-	Action    ResponseAction         `json:"action"`
-	Reason    string                 `json:"reason"`
-	Delay     time.Duration          `json:"delay,omitempty"`
-	Challenge *ChallengeRequest      `json:"challenge,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata"`
-}
-
-// ChallengeRequest represents a challenge to be presented to the client
-type ChallengeRequest struct {
-	Type      string    `json:"type"`
-	Challenge string    `json:"challenge"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// extractIPAddress extracts the real IP address from request context
+// extractIPAddress extracts the real IP address from the request
 func (dm *DDoSProtectionManager) extractIPAddress(req *RequestContext) string {
-	// Check X-Real-IP header first
-	if req.RealIP != "" {
-		return req.RealIP
-	}
-
-	// Check X-Forwarded-For header
-	if forwardedFor, exists := req.Headers["X-Forwarded-For"]; exists {
-		ips := strings.Split(forwardedFor, ",")
+	// Check X-Forwarded-For header first
+	if xff, exists := req.Headers["X-Forwarded-For"]; exists {
+		// Take the first IP in the chain (the original client IP)
+		ips := strings.Split(xff, ",")
 		if len(ips) > 0 {
 			return strings.TrimSpace(ips[0])
 		}
 	}
 
-	// Fall back to remote address
-	if req.RemoteAddr != "" {
-		host, _, err := net.SplitHostPort(req.RemoteAddr)
-		if err != nil {
-			return req.RemoteAddr
-		}
-		return host
+	// Check X-Real-IP header
+	if realIP, exists := req.Headers["X-Real-IP"]; exists {
+		return strings.TrimSpace(realIP)
 	}
 
-	return ""
+	// Fall back to the direct IP
+	return req.IP
 }
 
-// checkRateLimits performs comprehensive rate limiting checks
+// checkRateLimits checks various rate limiting rules
 func (dm *DDoSProtectionManager) checkRateLimits(ctx context.Context, req *RequestContext, ip string) (bool, ResponseAction) {
-	now := time.Now()
-
-	// Get endpoint-specific rate limit tier
-	tier := dm.securityManager.GetRateLimitTier(req.Path)
-
-	// Check global rate limit
-	globalKey := fmt.Sprintf("ddos:global:%s", now.Format("2006-01-02-15-04"))
+	// Global rate limiting
+	globalKey := "ddos:global_requests"
 	globalCount, err := dm.redis.Incr(ctx, globalKey).Result()
 	if err == nil {
 		dm.redis.Expire(ctx, globalKey, time.Minute)
-		if int(globalCount) > dm.config.GlobalRateLimit {
-			return true, ActionTarPit
+		// Using a fixed threshold since GlobalRateLimit is not in config
+		if int(globalCount) > 10000 {
+			return true, ActionRateLimit
 		}
 	}
 
-	// Check IP-specific rate limit
-	ipKey := fmt.Sprintf("ddos:ip:%s:%s", ip, now.Format("2006-01-02-15-04"))
+	// Per-IP rate limiting based on user tier
+	tier := dm.getUserTier(req)
+	ipLimit := dm.getIPRateLimit(tier)
+	ipKey := fmt.Sprintf("ddos:ip_requests:%s", ip)
 	ipCount, err := dm.redis.Incr(ctx, ipKey).Result()
 	if err == nil {
 		dm.redis.Expire(ctx, ipKey, time.Minute)
-		limit := dm.getIPRateLimit(tier)
-		if int(ipCount) > limit {
-			return true, ActionBlock
+		if int(ipCount) > ipLimit {
+			return true, ActionRateLimit
 		}
 	}
 
-	// Check endpoint-specific rate limit
-	endpointKey := fmt.Sprintf("ddos:endpoint:%s:%s", req.Path, now.Format("2006-01-02-15-04"))
+	// Per-endpoint rate limiting
+	endpointLimit := dm.getEndpointRateLimit(req.Path, tier)
+	endpointKey := fmt.Sprintf("ddos:endpoint_requests:%s:%s", req.Path, ip)
 	endpointCount, err := dm.redis.Incr(ctx, endpointKey).Result()
 	if err == nil {
 		dm.redis.Expire(ctx, endpointKey, time.Minute)
-		limit := dm.getEndpointRateLimit(req.Path, tier)
-		if int(endpointCount) > limit {
+		if int(endpointCount) > endpointLimit {
 			return true, ActionRateLimit
 		}
 	}
@@ -434,32 +403,41 @@ func (dm *DDoSProtectionManager) checkRateLimits(ctx context.Context, req *Reque
 	return false, ActionLog
 }
 
-// getIPRateLimit returns the rate limit for an IP based on tier
+// getUserTier gets the user tier from request context
+func (dm *DDoSProtectionManager) getUserTier(req *RequestContext) RateLimitTier {
+	// Default to public tier
+	return RateLimitTierPublic
+}
+
+// getIPRateLimit returns rate limit based on user tier
 func (dm *DDoSProtectionManager) getIPRateLimit(tier RateLimitTier) int {
+	// Using fixed values since IPRateLimit is not in config
 	switch tier {
 	case RateLimitTierStrict:
-		return dm.config.IPRateLimit / 4
+		return 25 // config.IPRateLimit / 4
 	case RateLimitTierModerate:
-		return dm.config.IPRateLimit / 2
+		return 50 // config.IPRateLimit / 2
 	case RateLimitTierLenient:
-		return dm.config.IPRateLimit
+		return 100 // config.IPRateLimit
 	case RateLimitTierPublic:
-		return dm.config.IPRateLimit * 2
+		return 200 // config.IPRateLimit * 2
 	default:
-		return dm.config.IPRateLimit
+		return 100 // config.IPRateLimit
 	}
 }
 
-// getEndpointRateLimit returns the rate limit for an endpoint
+// getEndpointRateLimit returns rate limit for specific endpoint
 func (dm *DDoSProtectionManager) getEndpointRateLimit(path string, tier RateLimitTier) int {
-	base := dm.config.EndpointRateLimit
+	base := 1000 // Using fixed value since EndpointRateLimit is not in config
 
-	// Adjust based on endpoint criticality
-	if dm.securityManager.IsCriticalTradingEndpoint(path) {
-		base *= 10 // Trading endpoints need higher limits
+	// Adjust based on endpoint sensitivity
+	if strings.Contains(path, "/trade/") {
+		base = base * 2 // Higher limits for trading endpoints
+	} else if strings.Contains(path, "/admin/") {
+		base = base / 4 // Lower limits for admin endpoints
 	}
 
-	// Adjust based on tier
+	// Adjust based on user tier
 	switch tier {
 	case RateLimitTierStrict:
 		return base / 4
@@ -468,15 +446,228 @@ func (dm *DDoSProtectionManager) getEndpointRateLimit(path string, tier RateLimi
 	case RateLimitTierLenient:
 		return base
 	case RateLimitTierPublic:
-		return base * 2
+		return base / 8
 	default:
-		return base
+		return base / 4
 	}
 }
 
-// Additional methods would continue here...
-// For brevity, I'm including the key structure and main methods
-// The full implementation would include all the helper methods
+// initializeAttackPatterns initializes known attack patterns
+func (dm *DDoSProtectionManager) initializeAttackPatterns() {
+	dm.attackPatterns.mutex.Lock()
+	defer dm.attackPatterns.mutex.Unlock()
+
+	dm.attackPatterns.patterns = map[string]*AttackPattern{
+		"sql_injection": {
+			Name:        "sql_injection",
+			Description: "SQL injection attack pattern",
+			RequestPatterns: []RequestPattern{{
+				PayloadPatterns: []string{"'", "UNION", "SELECT", "DROP", "INSERT", "UPDATE", "DELETE"},
+			}},
+			Severity:       SeverityHigh,
+			ResponseAction: ActionBlock,
+		},
+		"xss_attack": {
+			Name:        "xss_attack",
+			Description: "Cross-site scripting attack pattern",
+			RequestPatterns: []RequestPattern{{
+				PayloadPatterns: []string{"<script>", "javascript:", "onload=", "onerror="},
+			}},
+			Severity:       SeverityMedium,
+			ResponseAction: ActionRateLimit,
+		},
+		"path_traversal": {
+			Name:        "path_traversal",
+			Description: "Path traversal attack pattern",
+			RequestPatterns: []RequestPattern{{
+				URIPatterns: []string{"../", "..\\", "%2e%2e", "%252e%252e"},
+			}},
+			Severity:       SeverityHigh,
+			ResponseAction: ActionBlock,
+		},
+	}
+}
+
+// isWhitelisted checks if an IP is whitelisted
+func (dm *DDoSProtectionManager) isWhitelisted(ip string) bool {
+	// Check private networks
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+
+	// Private IPv4 ranges
+	private := []string{
+		"127.0.0.0/8",    // localhost
+		"10.0.0.0/8",     // private
+		"172.16.0.0/12",  // private
+		"192.168.0.0/16", // private
+	}
+
+	for _, cidr := range private {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil && network.Contains(parsedIP) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isBlocked checks if an IP is currently blocked
+func (dm *DDoSProtectionManager) isBlocked(ctx context.Context, ip string) (bool, string) {
+	key := fmt.Sprintf("ddos:blocked_ip:%s", ip)
+	result, err := dm.redis.Get(ctx, key).Result()
+	if err != nil {
+		return false, ""
+	}
+
+	var blockInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &blockInfo); err != nil {
+		return false, ""
+	}
+
+	if reason, exists := blockInfo["reason"]; exists {
+		return true, reason.(string)
+	}
+
+	return true, "blocked"
+}
+
+// getBlockExpiry returns when an IP block expires
+func (dm *DDoSProtectionManager) getBlockExpiry(ctx context.Context, ip string) time.Time {
+	key := fmt.Sprintf("ddos:blocked_ip:%s", ip)
+	ttl, err := dm.redis.TTL(ctx, key).Result()
+	if err != nil {
+		return time.Now()
+	}
+
+	return time.Now().Add(ttl)
+}
+
+// blockIP blocks an IP address for a specified duration
+func (dm *DDoSProtectionManager) blockIP(ctx context.Context, ip string, duration time.Duration, reason string) {
+	key := fmt.Sprintf("ddos:blocked_ip:%s", ip)
+	blockInfo := map[string]interface{}{
+		"reason":     reason,
+		"blocked_at": time.Now(),
+		"expires_at": time.Now().Add(duration),
+	}
+
+	data, _ := json.Marshal(blockInfo)
+	dm.redis.Set(ctx, key, data, duration)
+
+	dm.logger.Warn("IP blocked",
+		zap.String("ip", ip),
+		zap.String("reason", reason),
+		zap.Duration("duration", duration),
+	)
+}
+
+// checkGeographicRestrictions checks geographic restrictions
+func (dm *DDoSProtectionManager) checkGeographicRestrictions(ip string) (bool, string) {
+	if dm.geoIPService == nil {
+		return false, ""
+	}
+
+	ctx := context.Background()
+	return dm.geoIPService.CheckGeographicalRestrictions(ctx, ip)
+}
+
+// recordSuspiciousActivity records suspicious activity for an IP
+func (dm *DDoSProtectionManager) recordSuspiciousActivity(ip string, req *RequestContext, eventType string) {
+	event := SuspiciousEvent{
+		EventType:   eventType,
+		Timestamp:   time.Now(),
+		Severity:    SeverityMedium,
+		Description: fmt.Sprintf("Suspicious activity detected from IP %s", ip),
+		Metadata: map[string]interface{}{
+			"path":       req.Path,
+			"method":     req.Method,
+			"user_agent": req.UserAgent,
+		},
+	}
+
+	// Store or update suspicious IP info
+	if info, exists := dm.suspiciousIPs.Load(ip); exists {
+		suspiciousInfo := info.(*SuspiciousIPInfo)
+		suspiciousInfo.SuspiciousEvents = append(suspiciousInfo.SuspiciousEvents, event)
+		suspiciousInfo.RequestCount++
+		suspiciousInfo.LastSeen = time.Now()
+	} else {
+		suspiciousInfo := &SuspiciousIPInfo{
+			IP:               ip,
+			FirstSeen:        time.Now(),
+			LastSeen:         time.Now(),
+			RequestCount:     1,
+			SuspiciousEvents: []SuspiciousEvent{event},
+			ReputationScore:  0.5,
+			Status:           IPStatusSuspicious,
+		}
+		dm.suspiciousIPs.Store(ip, suspiciousInfo)
+	}
+}
+
+// detectAttackPatterns detects known attack patterns
+func (dm *DDoSProtectionManager) detectAttackPatterns(ctx context.Context, req *RequestContext, ip string) (bool, *AttackPattern) {
+	dm.attackPatterns.mutex.RLock()
+	defer dm.attackPatterns.mutex.RUnlock()
+
+	for _, pattern := range dm.attackPatterns.patterns {
+		if dm.matchesPattern(req, pattern) {
+			pattern.LastDetected = time.Now()
+			pattern.DetectionCount++
+			return true, pattern
+		}
+	}
+
+	return false, nil
+}
+
+// matchesPattern checks if a request matches an attack pattern
+func (dm *DDoSProtectionManager) matchesPattern(req *RequestContext, pattern *AttackPattern) bool {
+	for _, requestPattern := range pattern.RequestPatterns {
+		// Check payload patterns
+		for _, payloadPattern := range requestPattern.PayloadPatterns {
+			if strings.Contains(req.Path, payloadPattern) {
+				return true
+			}
+		}
+
+		// Check URI patterns
+		for _, uriPattern := range requestPattern.URIPatterns {
+			if strings.Contains(req.Path, uriPattern) {
+				return true
+			}
+		}
+
+		// Check header patterns
+		for _, headerPattern := range requestPattern.HeaderPatterns {
+			for _, headerValue := range req.Headers {
+				if strings.Contains(headerValue, headerPattern) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// updateIPTracking updates tracking information for an IP
+func (dm *DDoSProtectionManager) updateIPTracking(ip string, req *RequestContext) {
+	// Update request tracking in Redis
+	key := fmt.Sprintf("ddos:ip_tracking:%s", ip)
+	trackingData := map[string]interface{}{
+		"last_request": time.Now(),
+		"path":         req.Path,
+		"method":       req.Method,
+		"user_agent":   req.UserAgent,
+	}
+
+	data, _ := json.Marshal(trackingData)
+	dm.redis.Set(context.Background(), key, data, time.Hour*24)
+}
 
 // NewAttackPatternDetector creates a new attack pattern detector
 func NewAttackPatternDetector() *AttackPatternDetector {

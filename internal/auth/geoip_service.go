@@ -20,21 +20,6 @@ type GeoIPService struct {
 	cache       sync.Map // IP -> *CachedGeoInfo
 }
 
-// GeoIPConfig defines geo IP service configuration
-type GeoIPConfig struct {
-	Enabled               bool          `json:"enabled"`
-	CacheExpiration       time.Duration `json:"cache_expiration"`
-	DatabasePath          string        `json:"database_path"`
-	UpdateInterval        time.Duration `json:"update_interval"`
-	CountryRestrictions   bool          `json:"country_restrictions"`
-	AllowedCountries      []string      `json:"allowed_countries"`
-	BlockedCountries      []string      `json:"blocked_countries"`
-	HighRiskCountries     []string      `json:"high_risk_countries"`
-	VPNDetectionEnabled   bool          `json:"vpn_detection_enabled"`
-	TorDetectionEnabled   bool          `json:"tor_detection_enabled"`
-	ProxyDetectionEnabled bool          `json:"proxy_detection_enabled"`
-}
-
 // GeoDatabase represents a geographical IP database
 type GeoDatabase struct {
 	ipRanges    []*IPRange
@@ -141,17 +126,15 @@ type CachedGeoInfo struct {
 // NewGeoIPService creates a new GeoIP service
 func NewGeoIPService() *GeoIPService {
 	config := &GeoIPConfig{
-		Enabled:               true,
-		CacheExpiration:       time.Hour * 24, // 24 hours
-		DatabasePath:          "/data/geoip",
-		UpdateInterval:        time.Hour * 24, // Daily updates
-		CountryRestrictions:   false,
-		AllowedCountries:      []string{},
-		BlockedCountries:      []string{},
-		HighRiskCountries:     []string{"CN", "RU", "IR", "KP", "SY"},
-		VPNDetectionEnabled:   true,
-		TorDetectionEnabled:   true,
-		ProxyDetectionEnabled: true,
+		DatabasePath:           "/data/geoip",
+		DatabaseUpdateInterval: time.Hour * 24, // Daily updates
+		AllowedCountries:       []string{},
+		BlockedCountries:       []string{},
+		HighRiskCountries:      []string{"CN", "RU", "IR", "KP", "SY"},
+		EnableVPNDetection:     true,
+		EnableTorDetection:     true,
+		EnableProxyDetection:   true,
+		VPNBlockScore:          8.0,
 	}
 
 	service := &GeoIPService{
@@ -173,14 +156,6 @@ func (gis *GeoIPService) SetLogger(logger *zap.Logger) {
 
 // GetGeoInfo retrieves geographical information for an IP address
 func (gis *GeoIPService) GetGeoInfo(ctx context.Context, ip string) (*GeoInfo, error) {
-	if !gis.config.Enabled {
-		return &GeoInfo{
-			Country:     "Unknown",
-			CountryCode: "XX",
-			ThreatLevel: "medium",
-		}, nil
-	}
-
 	// Check cache first
 	if cached, ok := gis.cache.Load(ip); ok {
 		cachedInfo := cached.(*CachedGeoInfo)
@@ -202,12 +177,11 @@ func (gis *GeoIPService) GetGeoInfo(ctx context.Context, ip string) (*GeoInfo, e
 
 	// Enhance with additional threat intelligence
 	gis.enhanceGeoInfo(geoInfo, parsedIP)
-
 	// Cache the result
 	cachedInfo := &CachedGeoInfo{
 		GeoInfo:   geoInfo,
 		CachedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(gis.config.CacheExpiration),
+		ExpiresAt: time.Now().Add(24 * time.Hour), // Default 24 hour cache
 	}
 	gis.cache.Store(ip, cachedInfo)
 
@@ -263,16 +237,16 @@ func (gis *GeoIPService) lookupIP(ip net.IP) *GeoInfo {
 // enhanceGeoInfo adds additional threat intelligence to geo information
 func (gis *GeoIPService) enhanceGeoInfo(geoInfo *GeoInfo, ip net.IP) {
 	// Check for VPN/Proxy services
-	if gis.config.VPNDetectionEnabled {
+	if gis.config.EnableVPNDetection {
 		geoInfo.IsVPN = gis.isVPN(ip)
 	}
 
-	if gis.config.ProxyDetectionEnabled {
+	if gis.config.EnableProxyDetection {
 		geoInfo.IsProxy = gis.isProxy(ip)
 	}
 
 	// Check for Tor exit nodes
-	if gis.config.TorDetectionEnabled {
+	if gis.config.EnableTorDetection {
 		geoInfo.IsTor = gis.isTorExitNode(ip)
 	}
 
@@ -336,8 +310,8 @@ func (gis *GeoIPService) isTorExitNode(ip net.IP) bool {
 }
 
 // CheckGeographicalRestrictions checks if an IP is geographically restricted
-func (gis *GeoIPService) CheckGeographicalRestrictions(ctx context.Context, ip string) (bool, string) {
-	if !gis.config.CountryRestrictions {
+func (gis *GeoIPService) CheckGeographicalRestrictions(ctx context.Context, ip string) (bool, string) { // Check if any country restrictions are configured
+	if len(gis.config.AllowedCountries) == 0 && len(gis.config.BlockedCountries) == 0 {
 		return false, ""
 	}
 
