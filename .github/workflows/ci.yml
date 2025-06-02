@@ -64,3 +64,74 @@ jobs:
         context: .
         push: true
         tags: aidin1998/pincex:latest
+
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    - name: Run unit tests with coverage
+      run: |
+        go test -covermode=count -coverprofile=coverage.out ./internal/auth/... ./internal/database/... ./internal/trading/...
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total: | awk '{print substr($3,1,length($3)-1)}')
+        echo "Total coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 90.0" | bc -l) )); then
+          echo "Coverage threshold not met"
+          exit 1
+        fi
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    services:
+      docker:
+        image: docker:20.10.16
+        options: --privileged
+        ports:
+          - 2375:2375
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    - name: Start services
+      run: docker-compose -f docker-compose.yml up -d
+    - name: Run integration tests
+      run: go test -v ./test/integration/...
+
+  contract:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run contract tests
+      run: go test -v ./test/contracts/...
+
+  chaos-testing:
+    name: Chaos Engineering
+    runs-on: ubuntu-latest
+    needs: integration
+    services:
+      docker:
+        image: docker:20.10.16
+        options: --privileged
+        ports:
+          - 2375:2375
+    steps:
+    - uses: actions/checkout@v3
+    - name: Start services
+      run: docker-compose -f docker-compose.yml up -d
+    - name: Run chaos monkey
+      run: bash scripts/chaos_monkey.sh
+    - name: Post-chaos health check
+      run: bash scripts/health_check.sh
