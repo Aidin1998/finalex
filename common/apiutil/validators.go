@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Aidin1998/pincex_unified/common/errors"
 	"github.com/go-playground/validator"
-	"github.com/litebittech/cex/common/errors"
 )
 
 func NewValidator() *Validator {

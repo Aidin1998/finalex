@@ -1,8 +1,8 @@
 package dbutil
 
 import (
+	"github.com/Aidin1998/pincex_unified/common/errors"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/litebittech/cex/common/errors"
 	"gorm.io/gorm"
 )
 

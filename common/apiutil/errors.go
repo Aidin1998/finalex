@@ -3,8 +3,8 @@ package apiutil
 import (
 	"net/http"
 
+	"github.com/Aidin1998/pincex_unified/common/errors"
 	"github.com/labstack/echo/v4"
-	"github.com/litebittech/cex/common/errors"
 )
 
 // RFC7807ErrorHandler returns an Echo error handler that formats errors according to RFC 7807

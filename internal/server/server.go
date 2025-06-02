@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/common/apiutil"
+	//	"github.com/Aidin1998/pincex_unified/common/apiutil"
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/audit"
 	"github.com/Aidin1998/pincex_unified/internal/auth"
@@ -99,7 +99,7 @@ func (s *Server) Router() *gin.Engine {
 	router.Use(cors.Default())
 
 	// Add RFC 7807 compliant error handling middleware
-	router.Use(apiutil.RFC7807ErrorMiddleware())
+	// router.Use(apiutil.RFC7807ErrorMiddleware())
 
 	// Add enhanced input validation middleware with comprehensive security
 	enhancedValidationConfig := validation.DefaultEnhancedValidationConfig()
@@ -322,15 +322,15 @@ func (s *Server) writeError(c *gin.Context, err error) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "unauthorized"):
-		apiutil.UnauthorizedResponse(c, "Authentication required", instance)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "message": "Authentication required", "instance": instance})
 	case strings.Contains(msg, "forbidden"):
-		apiutil.ForbiddenResponse(c, "Insufficient permissions", instance)
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": "Insufficient permissions", "instance": instance})
 	case strings.Contains(msg, "not found"):
-		apiutil.NotFoundResponse(c, "Resource not found", instance)
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": "Resource not found", "instance": instance})
 	case strings.Contains(msg, "invalid"):
-		apiutil.BadRequestResponse(c, "Invalid request parameters", instance)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "message": "Invalid request parameters", "instance": instance})
 	default:
-		apiutil.InternalServerErrorResponse(c, "Internal server error", instance)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_server_error", "message": "Internal server error", "instance": instance})
 	}
 }
 

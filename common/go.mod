@@ -1,4 +1,4 @@
-module github.com/litebittech/cex/common
+module github.com/Aidin1998/pincex_unified/common
 
 go 1.24.2
 

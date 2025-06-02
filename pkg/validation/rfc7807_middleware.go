@@ -88,8 +88,12 @@ func validateQueryParamsRFC7807(validator *Validator, c *gin.Context) []errors.V
 
 	for param, values := range c.Request.URL.Query() {
 		for _, value := range values {
-			if err := validateStringValue(param, value); err != nil {
-				validationErrors = append(validationErrors, *err)
+			if err := validateStringValueRFC7807(validator, param, value); err != nil {
+				validationErrors = append(validationErrors, errors.ValidationError{
+					Field:   param,
+					Message: err.Error(),
+					Code:    "INVALID_QUERY_PARAM",
+				})
 			}
 		}
 	}
@@ -103,8 +107,12 @@ func validatePathParamsRFC7807(validator *Validator, c *gin.Context) []errors.Va
 
 	// Get all path parameters
 	for _, param := range c.Params {
-		if err := validateStringValue(param.Key, param.Value); err != nil {
-			validationErrors = append(validationErrors, *err)
+		if err := validateStringValueRFC7807(validator, param.Key, param.Value); err != nil {
+			validationErrors = append(validationErrors, errors.ValidationError{
+				Field:   param.Key,
+				Message: err.Error(),
+				Code:    "INVALID_PATH_PARAM",
+			})
 		}
 	}
 
@@ -176,32 +184,20 @@ func validateRequestBodyRFC7807(validator *Validator, c *gin.Context) []errors.V
 	return validationErrors
 }
 
-// validateStringValue validates a string value for security issues
-func validateStringValue(field, value string) *errors.ValidationError {
+// validateStringValueRFC7807 validates a string value for security issues
+func validateStringValueRFC7807(validator *Validator, field, value string) error {
 	if len(value) > MaxStringLength {
-		return &errors.ValidationError{
-			Field:   field,
-			Message: fmt.Sprintf("String too long (max %d characters)", MaxStringLength),
-			Code:    "STRING_TOO_LONG",
-		}
+		return fmt.Errorf("string too long (max %d characters)", MaxStringLength)
 	}
 
 	// Check for SQL injection patterns
 	if sqlInjectionPattern.MatchString(value) {
-		return &errors.ValidationError{
-			Field:   field,
-			Message: "Potentially malicious SQL pattern detected",
-			Code:    "SQL_INJECTION_DETECTED",
-		}
+		return fmt.Errorf("potentially malicious SQL pattern detected")
 	}
 
 	// Check for XSS patterns
 	if xssPattern.MatchString(value) {
-		return &errors.ValidationError{
-			Field:   field,
-			Message: "Potentially malicious script content detected",
-			Code:    "XSS_DETECTED",
-		}
+		return fmt.Errorf("potentially malicious script content detected")
 	}
 
 	return nil
@@ -259,14 +255,18 @@ func validateJSONValue(fieldPath string, value interface{}) []errors.ValidationE
 
 	switch v := value.(type) {
 	case string:
-		if err := validateStringValue(fieldPath, v); err != nil {
-			validationErrors = append(validationErrors, *err)
+		if err := validateStringValueRFC7807(nil, fieldPath, v); err != nil {
+			validationErrors = append(validationErrors, errors.ValidationError{
+				Field:   fieldPath,
+				Message: err.Error(),
+				Code:    "INVALID_STRING_VALUE",
+			})
 		}
 	case float64:
 		if v > MaxNumericValue || v < -MaxNumericValue {
 			validationErrors = append(validationErrors, errors.ValidationError{
 				Field:   fieldPath,
-				Message: fmt.Sprintf("Numeric value out of range (±%g)", MaxNumericValue),
+				Message: fmt.Sprintf("Numeric value out of range (±%d)", MaxNumericValue),
 				Code:    "NUMERIC_OUT_OF_RANGE",
 			})
 		}

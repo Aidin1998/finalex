@@ -29,6 +29,32 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading/risk"
 )
 
+// Import types from marketmaker package for TradingAPI implementation
+type MarketData struct {
+	Price          float64
+	Volume         float64
+	Timestamp      time.Time
+	BidBookDepth   []PriceLevel
+	AskBookDepth   []PriceLevel
+	OrderImbalance float64
+	Vwap           float64
+}
+
+type PriceLevel struct {
+	Price  float64
+	Volume float64
+}
+
+type PositionRisk struct {
+	Symbol        string
+	Position      float64
+	MarketValue   float64
+	DeltaExposure float64
+	GammaExposure float64
+	VegaExposure  float64
+	ThetaExposure float64
+}
+
 // TradingService defines trading operations for dependency injection
 type TradingService interface {
 	Start() error
@@ -696,4 +722,123 @@ func (s *Service) ListOrders(userID string, filter *models.OrderFilter) ([]*mode
 // RiskConfig returns the risk config for admin API access
 func (s *Service) RiskConfig() *risk.RiskConfig {
 	return s.riskConfig
+}
+
+// --- TradingAPI Implementation for Market Maker ---
+
+// GetInventory returns current inventory (position) for a trading pair
+func (s *Service) GetInventory(pair string) (float64, error) {
+	// Simple implementation using account balances
+	// Parse pair to get base currency (e.g., BTC/USD -> BTC)
+	parts := strings.Split(pair, "/")
+	if len(parts) != 2 {
+		return 0.0, fmt.Errorf("invalid pair format: %s", pair)
+	}
+	baseCurrency := parts[0]
+
+	// Get account balance for base currency as inventory proxy
+	ctx := context.Background()
+	account, err := s.bookkeeperSvc.GetAccount(ctx, "market_maker", baseCurrency)
+	if err != nil {
+		// If account doesn't exist, inventory is 0
+		return 0.0, nil
+	}
+
+	return account.Balance, nil
+}
+
+// GetAccountBalance returns total account balance (simplified to USD equivalent)
+func (s *Service) GetAccountBalance() (float64, error) {
+	// For market maker, we need total portfolio value
+	ctx := context.Background()
+	accounts, err := s.bookkeeperSvc.GetAccounts(ctx, "market_maker")
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get accounts: %w", err)
+	}
+
+	var totalBalance float64
+	for _, account := range accounts {
+		// Convert all balances to USD equivalent (simplified)
+		if account.Currency == "USD" || account.Currency == "USDT" {
+			totalBalance += account.Balance
+		} else {
+			// For other currencies, we'd need to convert to USD at current market rate
+			// For now, use balance as-is (placeholder)
+			totalBalance += account.Balance
+		}
+	}
+
+	return totalBalance, nil
+}
+
+// GetOpenOrders returns all open orders for a trading pair
+func (s *Service) GetOpenOrders(pair string) ([]*models.Order, error) {
+	orders, _, err := s.GetOrders("", pair, "open", "100", "0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get open orders: %w", err)
+	}
+	return orders, nil
+}
+
+// GetRecentTrades returns recent trades for a trading pair
+func (s *Service) GetRecentTrades(pair string, limit int) ([]*models.Trade, error) {
+	// This is a simplified implementation - in production you'd query the trade repository
+	// For now, return an empty slice as placeholder
+	var trades []*models.Trade
+
+	// TODO: Implement actual trade retrieval from database
+	// This would involve querying the trades table filtered by pair and ordered by timestamp
+
+	return trades, nil
+}
+
+// convertToPriceLevels converts order book levels to PriceLevel slice
+func convertToPriceLevels(levels []models.OrderBookLevel) []PriceLevel {
+	result := make([]PriceLevel, len(levels))
+	for i, level := range levels {
+		result[i] = PriceLevel{
+			Price:  level.Price,
+			Volume: level.Volume,
+		}
+	}
+	return result
+}
+
+// GetMarketData returns enhanced market data for sophisticated strategies
+func (s *Service) GetMarketData(pair string) (*MarketData, error) {
+	// Get order book for depth analysis
+	orderBook, err := s.GetOrderBook(pair, 10)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get order book: %w", err)
+	}
+
+	// Calculate order imbalance
+	var bidVolume, askVolume float64
+	for _, level := range orderBook.Bids {
+		bidVolume += level.Volume
+	}
+	for _, level := range orderBook.Asks {
+		askVolume += level.Volume
+	}
+
+	var imbalance float64
+	if bidVolume+askVolume > 0 {
+		imbalance = (bidVolume - askVolume) / (bidVolume + askVolume)
+	}
+
+	// Calculate mid price
+	var midPrice float64
+	if len(orderBook.Bids) > 0 && len(orderBook.Asks) > 0 {
+		midPrice = (orderBook.Asks[0].Price + orderBook.Bids[0].Price) / 2
+	}
+
+	return &MarketData{
+		Price:          midPrice,
+		Volume:         bidVolume + askVolume,
+		Timestamp:      time.Now(),
+		BidBookDepth:   convertToPriceLevels(orderBook.Bids),
+		AskBookDepth:   convertToPriceLevels(orderBook.Asks),
+		OrderImbalance: imbalance,
+		Vwap:           midPrice, // Simplified - would need actual VWAP calculation
+	}, nil
 }

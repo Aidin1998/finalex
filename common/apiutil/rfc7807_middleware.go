@@ -3,8 +3,8 @@ package apiutil
 import (
 	"net/http"
 
+	"github.com/Aidin1998/pincex_unified/common/errors"
 	"github.com/gin-gonic/gin"
-	"github.com/litebittech/cex/common/errors"
 )
 
 // RFC7807ErrorMiddleware creates a middleware that handles errors in RFC 7807 format
