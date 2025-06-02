@@ -266,6 +266,8 @@ func main() {
 		wsHub,
 		tieredRateLimiter,
 		aml.NewRiskService(),
+		nil, // audit service (disabled)
+		nil, // audit handlers (disabled)
 	)
 
 	// Initialize transaction API

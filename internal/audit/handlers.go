@@ -5,18 +5,19 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // Handlers provides HTTP handlers for audit log operations
 type Handlers struct {
 	logger         *zap.Logger
-	auditService   *Service
-	forensicEngine *ForensicEngine
+	auditService   *AuditService
+	forensicEngine *ForensicService
 }
 
 // NewHandlers creates a new audit handlers instance
-func NewHandlers(logger *zap.Logger, auditService *Service, forensicEngine *ForensicEngine) *Handlers {
+func NewHandlers(logger *zap.Logger, auditService *AuditService, forensicEngine *ForensicService) *Handlers {
 	return &Handlers{
 		logger:         logger,
 		auditService:   auditService,
@@ -26,52 +27,24 @@ func NewHandlers(logger *zap.Logger, auditService *Service, forensicEngine *Fore
 
 // SearchRequest represents the audit log search request
 type SearchRequest struct {
-	UserID       string    `json:"user_id,omitempty"`
-	ActionType   string    `json:"action_type,omitempty"`
-	Resource     string    `json:"resource,omitempty"`
-	IPAddress    string    `json:"ip_address,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	StartTime    time.Time `json:"start_time,omitempty"`
-	EndTime      time.Time `json:"end_time,omitempty"`
-	MinRiskScore int       `json:"min_risk_score,omitempty"`
-	MaxRiskScore int       `json:"max_risk_score,omitempty"`
-	Compliance   []string  `json:"compliance,omitempty"`
-	Limit        int       `json:"limit,omitempty"`
-	Offset       int       `json:"offset,omitempty"`
+	UserID     string    `json:"user_id,omitempty"`
+	ActionType string    `json:"action_type,omitempty"`
+	Resource   string    `json:"resource,omitempty"`
+	IPAddress  string    `json:"ip_address,omitempty"`
+	StartTime  time.Time `json:"start_time,omitempty"`
+	EndTime    time.Time `json:"end_time,omitempty"`
+	Limit      int       `json:"limit,omitempty"`
+	Offset     int       `json:"offset,omitempty"`
 }
 
-// SearchResponse represents the audit log search response
-type SearchResponse struct {
-	Events     []AuditEvent `json:"events"`
-	Total      int64        `json:"total"`
-	Page       int          `json:"page"`
-	PageSize   int          `json:"page_size"`
-	TotalPages int          `json:"total_pages"`
-}
-
-// @Summary Search audit logs
-// @Description Search audit logs with various filters
-// @Tags audit
-// @Accept json
-// @Produce json
-// @Param request body SearchRequest true "Search criteria"
-// @Success 200 {object} SearchResponse
-// @Failure 400 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 500 {object} gin.H
-// @Router /admin/audit/search [post]
+// SearchAuditLogs handles searching audit logs
 func (h *Handlers) SearchAuditLogs(c *gin.Context) {
 	var req SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"message": "Invalid search request format",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
 		return
 	}
 
-	// Set default values
 	if req.Limit <= 0 || req.Limit > 1000 {
 		req.Limit = 100
 	}
@@ -79,46 +52,42 @@ func (h *Handlers) SearchAuditLogs(c *gin.Context) {
 		req.Offset = 0
 	}
 
-	// Create search criteria
-	criteria := SearchCriteria{
-		UserID:       req.UserID,
-		ActionType:   req.ActionType,
-		Resource:     req.Resource,
-		IPAddress:    req.IPAddress,
-		UserAgent:    req.UserAgent,
-		StartTime:    req.StartTime,
-		EndTime:      req.EndTime,
-		MinRiskScore: req.MinRiskScore,
-		MaxRiskScore: req.MaxRiskScore,
-		Compliance:   req.Compliance,
-		Limit:        req.Limit,
-		Offset:       req.Offset,
+	// Build forensic query
+	var actorIDs []uuid.UUID
+	if req.UserID != "" {
+		if id, err := uuid.Parse(req.UserID); err == nil {
+			actorIDs = []uuid.UUID{id}
+		}
+	}
+	fq := ForensicQuery{
+		StartTime:   &req.StartTime,
+		EndTime:     &req.EndTime,
+		ActorIDs:    actorIDs,
+		Actions:     []string{req.ActionType},
+		ResourceIDs: []string{req.Resource},
+		ClientIPs:   []string{req.IPAddress},
+		Offset:      req.Offset,
+		Limit:       req.Limit,
 	}
 
-	// Search audit logs
-	events, total, err := h.forensicEngine.SearchEvents(c.Request.Context(), criteria)
+	events, total, err := h.forensicEngine.SearchEvents(c.Request.Context(), fq)
 	if err != nil {
-		h.logger.Error("Failed to search audit logs", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "search_failed",
-			"message": "Failed to search audit logs",
-		})
+		h.logger.Error("Search failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "search_failed", "message": err.Error()})
 		return
 	}
 
-	// Calculate pagination
-	page := (req.Offset / req.Limit) + 1
+	// Pagination
+	page := (req.Offset/req.Limit + 1)
 	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
 
-	response := SearchResponse{
-		Events:     events,
-		Total:      total,
-		Page:       page,
-		PageSize:   req.Limit,
-		TotalPages: totalPages,
-	}
-
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, gin.H{
+		"events":      events,
+		"total":       total,
+		"page":        page,
+		"page_size":   req.Limit,
+		"total_pages": totalPages,
+	})
 }
 
 // @Summary Get audit event by ID
@@ -174,21 +143,22 @@ type TimelineRequest struct {
 func (h *Handlers) GenerateUserTimeline(c *gin.Context) {
 	var req TimelineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"message": "Invalid timeline request format",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
 		return
 	}
 
-	timeline, err := h.forensicEngine.GenerateUserTimeline(c.Request.Context(), req.UserID, req.StartTime, req.EndTime)
+	// Parse actor ID
+	actorID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_user_id", "message": "User ID must be a valid UUID"})
+		return
+	}
+
+	// Call service
+	timeline, err := h.forensicEngine.GetTimeline(c.Request.Context(), actorID, req.StartTime, req.EndTime)
 	if err != nil {
 		h.logger.Error("Failed to generate timeline", zap.String("user_id", req.UserID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "timeline_failed",
-			"message": "Failed to generate user timeline",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "timeline_failed", "message": "Failed to generate user timeline"})
 		return
 	}
 
@@ -216,21 +186,16 @@ type PatternRequest struct {
 func (h *Handlers) DetectSuspiciousPatterns(c *gin.Context) {
 	var req PatternRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_request",
-			"message": "Invalid pattern request format",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
 		return
 	}
 
-	patterns, err := h.forensicEngine.DetectSuspiciousPatterns(c.Request.Context(), req.UserID, req.StartTime, req.EndTime)
+	// Use lookback period between times
+	lookback := req.EndTime.Sub(req.StartTime)
+	patterns, err := h.forensicEngine.DetectPatterns(c.Request.Context(), lookback)
 	if err != nil {
 		h.logger.Error("Failed to detect patterns", zap.String("user_id", req.UserID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "pattern_detection_failed",
-			"message": "Failed to detect suspicious patterns",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "pattern_detection_failed", "message": "Failed to detect suspicious patterns"})
 		return
 	}
 
@@ -351,7 +316,7 @@ func (h *Handlers) VerifyIntegrity(c *gin.Context) {
 	startCheck := time.Now()
 
 	// Verify integrity
-	valid, violations, err := h.auditService.VerifyIntegrity(c.Request.Context(), req.StartTime, req.EndTime)
+	report, err := h.auditService.VerifyIntegrity(c.Request.Context(), req.StartTime, req.EndTime)
 	if err != nil {
 		h.logger.Error("Failed to verify integrity", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -363,15 +328,15 @@ func (h *Handlers) VerifyIntegrity(c *gin.Context) {
 
 	checkDuration := time.Since(startCheck)
 
-	// Convert violations to response format
-	responseViolations := make([]IntegrityViolation, len(violations))
-	for i, v := range violations {
+	// Map integrity issues to response format
+	responseViolations := make([]IntegrityViolation, len(report.Issues))
+	for i, issue := range report.Issues {
 		responseViolations[i] = IntegrityViolation{
-			EventID:       v.EventID,
-			Timestamp:     v.Timestamp,
-			ViolationType: string(v.Type),
-			Description:   v.Description,
-			Severity:      string(v.Severity),
+			EventID:       issue.EventID.String(),
+			Timestamp:     issue.DetectedAt,
+			ViolationType: issue.IssueType,
+			Description:   issue.Description,
+			Severity:      issue.Severity,
 		}
 	}
 
@@ -379,9 +344,8 @@ func (h *Handlers) VerifyIntegrity(c *gin.Context) {
 	summary := IntegrityCheckSummary{
 		CheckDuration: checkDuration,
 	}
-
-	for _, v := range violations {
-		switch v.Type {
+	for _, issue := range report.Issues {
+		switch issue.IssueType {
 		case "hash_mismatch":
 			summary.HashMismatches++
 		case "chain_break":
@@ -393,10 +357,11 @@ func (h *Handlers) VerifyIntegrity(c *gin.Context) {
 		}
 	}
 
+	// Build response
 	response := IntegrityResponse{
-		Valid:          valid,
-		TotalEvents:    0, // Will be populated by service
-		VerifiedEvents: 0, // Will be populated by service
+		Valid:          report.InvalidEvents == 0,
+		TotalEvents:    int64(report.TotalEvents),
+		VerifiedEvents: int64(report.ValidEvents),
 		Violations:     responseViolations,
 		Summary:        summary,
 	}
@@ -423,50 +388,46 @@ func (h *Handlers) ExportAuditLogs(c *gin.Context) {
 	endTimeStr := c.Query("end_time")
 	userID := c.Query("user_id")
 	actionType := c.Query("action_type")
+	resource := c.Query("resource")
 
 	if startTimeStr == "" || endTimeStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "missing_parameters",
-			"message": "start_time and end_time are required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_parameters", "message": "start_time and end_time are required"})
 		return
 	}
 
 	startTime, err := time.Parse(time.RFC3339, startTimeStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_time_format",
-			"message": "Invalid start_time format, use RFC3339",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_time_format", "message": "Invalid start_time format, use RFC3339"})
 		return
 	}
-
 	endTime, err := time.Parse(time.RFC3339, endTimeStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid_time_format",
-			"message": "Invalid end_time format, use RFC3339",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_time_format", "message": "Invalid end_time format, use RFC3339"})
 		return
 	}
 
-	// Create export criteria
-	criteria := SearchCriteria{
-		UserID:     userID,
-		ActionType: actionType,
-		StartTime:  startTime,
-		EndTime:    endTime,
-		Limit:      10000, // Large limit for export
+	// Build forensic query
+	var actorIDs []uuid.UUID
+	if userID != "" {
+		if id, err := uuid.Parse(userID); err == nil {
+			actorIDs = []uuid.UUID{id}
+		}
+	}
+	fq := ForensicQuery{
+		StartTime:   &startTime,
+		EndTime:     &endTime,
+		ActorIDs:    actorIDs,
+		Actions:     []string{actionType},
+		ResourceIDs: []string{resource},
+		Offset:      0,
+		Limit:       10000,
 	}
 
 	// Export audit logs
-	data, contentType, filename, err := h.forensicEngine.ExportLogs(c.Request.Context(), criteria, format)
+	data, contentType, filename, err := h.forensicEngine.ExportLogs(c.Request.Context(), fq, format)
 	if err != nil {
 		h.logger.Error("Failed to export audit logs", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "export_failed",
-			"message": "Failed to export audit logs",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "export_failed", "message": "Failed to export audit logs"})
 		return
 	}
 
@@ -476,7 +437,7 @@ func (h *Handlers) ExportAuditLogs(c *gin.Context) {
 }
 
 // RegisterRoutes registers audit handlers with the router
-func (h *Handlers) RegisterRoutes(router gin.IRoutes) {
+func (h *Handlers) RegisterRoutes(router gin.IRouter) {
 	audit := router.Group("/audit")
 	{
 		audit.POST("/search", h.SearchAuditLogs)

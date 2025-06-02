@@ -192,6 +192,15 @@ func (fs *ForensicService) Search(ctx context.Context, query ForensicQuery) (*Fo
 	return result, nil
 }
 
+// SearchEvents wraps the Search method returning events and total count for handlers
+func (fs *ForensicService) SearchEvents(ctx context.Context, query ForensicQuery) ([]AuditEvent, int64, error) {
+	res, err := fs.Search(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.Events, res.TotalCount, nil
+}
+
 // GetTimeline builds a timeline of events for a specific actor
 func (fs *ForensicService) GetTimeline(ctx context.Context, actorID uuid.UUID, startTime, endTime time.Time) (*Timeline, error) {
 	var events []AuditEvent
@@ -454,15 +463,21 @@ func (fs *ForensicService) decryptEvent(event *AuditEvent) error {
 		return nil
 	}
 
+	// Parse EncryptedData JSON
+	var encData EncryptedData
+	if err := json.Unmarshal([]byte(*event.EncryptedData), &encData); err != nil {
+		return fmt.Errorf("failed to parse encrypted data: %w", err)
+	}
+
 	// Decrypt the data
-	decryptedData, err := fs.auditService.encryptionSvc.Decrypt([]byte(*event.EncryptedData))
+	plaintext, err := fs.auditService.encryptionSvc.Decrypt(&encData)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt audit data: %w", err)
 	}
 
 	// Parse the decrypted JSON
 	var sensitiveData map[string]interface{}
-	if err := json.Unmarshal(decryptedData, &sensitiveData); err != nil {
+	if err := json.Unmarshal(plaintext, &sensitiveData); err != nil {
 		return fmt.Errorf("failed to parse decrypted data: %w", err)
 	}
 
@@ -810,4 +825,41 @@ func isHighPrivilegeRole(role string) bool {
 		"system":      true,
 	}
 	return highPrivilegeRoles[strings.ToLower(role)]
+}
+
+// GetStatistics returns basic audit event statistics
+func (fs *ForensicService) GetStatistics(ctx context.Context, userID string, startTime, endTime time.Time) (map[string]interface{}, error) {
+	// Basic stub: count events for user and overall
+	query := fs.db.Model(&AuditEvent{}).Where("created_at BETWEEN ? AND ?", startTime, endTime)
+	if userID != "" {
+		query = query.Where("actor_id = ?", userID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return nil, fmt.Errorf("failed to count events: %w", err)
+	}
+	return map[string]interface{}{"total_events": count}, nil
+}
+
+// ExportLogs exports events matching the query in JSON or CSV format
+func (fs *ForensicService) ExportLogs(ctx context.Context, query ForensicQuery, format string) ([]byte, string, string, error) {
+	res, err := fs.Search(ctx, query)
+	if err != nil {
+		return nil, "", "", err
+	}
+	// Default to JSON export
+	if format != "csv" {
+		data, err := json.Marshal(res.Events)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return data, "application/json", "audit_export.json", nil
+	}
+	// CSV export stub
+	// TODO: implement CSV formatting
+	data := []byte("id,event_type,timestamp\n")
+	for _, e := range res.Events {
+		data = append(data, []byte(fmt.Sprintf("%s,%s,%s\n", e.ID, e.EventType, e.Timestamp.Format(time.RFC3339)))...)
+	}
+	return data, "text/csv", "audit_export.csv", nil
 }

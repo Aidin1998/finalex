@@ -220,7 +220,7 @@ func (p *SensitiveDataProcessor) ProcessRequestData(data map[string]interface{})
 	}
 
 	// Process each field
-	for key, value := range processed {
+	for key := range processed {
 		lowerKey := strings.ToLower(key)
 
 		if removeFields[lowerKey] {
@@ -228,7 +228,7 @@ func (p *SensitiveDataProcessor) ProcessRequestData(data map[string]interface{})
 			processed[key] = "[REDACTED]"
 		} else if sensitiveFields[lowerKey] {
 			// Encrypt sensitive fields
-			if strVal, ok := value.(string); ok && strVal != "" {
+			if strVal, ok := processed[key].(string); ok && strVal != "" {
 				encrypted, err := p.encService.EncryptString(strVal)
 				if err != nil {
 					return nil, fmt.Errorf("failed to encrypt field %s: %w", key, err)
@@ -272,7 +272,7 @@ func (p *SensitiveDataProcessor) ProcessResponseData(data map[string]interface{}
 	}
 
 	// Process each field
-	for key, value := range processed {
+	for key := range processed {
 		lowerKey := strings.ToLower(key)
 
 		if removeFields[lowerKey] {

@@ -13,11 +13,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// CryptoService defines encryption/decryption interface
+type CryptoService interface {
+	Encrypt(data []byte) (*EncryptedData, error)
+	Decrypt(encData *EncryptedData) ([]byte, error)
+}
+
 // AuditService provides comprehensive audit logging for administrative actions
 type AuditService struct {
 	db            *gorm.DB
 	logger        *zap.Logger
-	encryptionSvc EncryptionService
+	encryptionSvc CryptoService
 	config        *AuditConfig
 	eventQueue    chan *AuditEvent
 	batchBuffer   []*AuditEvent
@@ -223,14 +229,8 @@ type ForensicData struct {
 	ThreadID        *string           `json:"thread_id,omitempty"`
 }
 
-// EncryptionService interface for encrypting sensitive audit data
-type EncryptionService interface {
-	Encrypt(data []byte) ([]byte, error)
-	Decrypt(encryptedData []byte) ([]byte, error)
-}
-
 // NewAuditService creates a new audit service
-func NewAuditService(db *gorm.DB, logger *zap.Logger, encryptionSvc EncryptionService, config *AuditConfig) *AuditService {
+func NewAuditService(db *gorm.DB, logger *zap.Logger, encryptionSvc CryptoService, config *AuditConfig) *AuditService {
 	if config == nil {
 		config = DefaultAuditConfig()
 	}
@@ -298,9 +298,16 @@ func (as *AuditService) LogEvent(ctx context.Context, event *AuditEvent) error {
 
 	// Encrypt sensitive data if enabled
 	if as.config.EnableEncryption && as.encryptionSvc != nil {
-		if err := as.encryptSensitiveData(event); err != nil {
-			as.logger.Error("Failed to encrypt audit data", zap.Error(err))
+		// Encrypt the Details field (or entire event JSON) as needed
+		dataBytes, _ := json.Marshal(event.Details)
+		encryptedData, err := as.encryptionSvc.Encrypt(dataBytes)
+		if err != nil {
+			return fmt.Errorf("encryption failed: %w", err)
 		}
+		// Serialize encryptedData to JSON string
+		jsonBytes, _ := json.Marshal(encryptedData)
+		s := string(jsonBytes)
+		event.EncryptedData = &s
 	}
 
 	// Add forensic data if enabled and detail level is sufficient
@@ -364,40 +371,6 @@ func (as *AuditService) getLastEventHash() (string, error) {
 		return "", err
 	}
 	return lastEvent.Hash, nil
-}
-
-// encryptSensitiveData encrypts sensitive fields in the audit event
-func (as *AuditService) encryptSensitiveData(event *AuditEvent) error {
-	sensitiveData := map[string]interface{}{
-		"details":       event.Details,
-		"before_state":  event.BeforeState,
-		"after_state":   event.AfterState,
-		"changes":       event.Changes,
-		"metadata":      event.Metadata,
-		"forensic_data": event.ForensicData,
-	}
-
-	data, err := json.Marshal(sensitiveData)
-	if err != nil {
-		return err
-	}
-
-	encryptedData, err := as.encryptionSvc.Encrypt(data)
-	if err != nil {
-		return err
-	}
-
-	event.EncryptedData = &string(encryptedData)
-
-	// Clear original data
-	event.Details = nil
-	event.BeforeState = nil
-	event.AfterState = nil
-	event.Changes = nil
-	event.Metadata = nil
-	event.ForensicData = nil
-
-	return nil
 }
 
 // shouldIncludeForensicData determines if forensic data should be included
@@ -605,4 +578,13 @@ type IntegrityIssue struct {
 	Description string    `json:"description"`
 	Severity    string    `json:"severity"`
 	DetectedAt  time.Time `json:"detected_at"`
+}
+
+// GetEventByID retrieves an audit event by its string ID
+func (as *AuditService) GetEventByID(ctx context.Context, id string) (*AuditEvent, error) {
+	var event AuditEvent
+	if err := as.db.Where("id = ?", id).First(&event).Error; err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
