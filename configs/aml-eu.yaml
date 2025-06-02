@@ -1,0 +1,303 @@
+# AML Configuration for European Union Jurisdiction
+# Compliant with 5AMLD, 6AMLD, and MiCA requirements
+
+aml:
+  enabled: true
+  jurisdiction: "EU"
+  regulatory_framework: "5AMLD/6AMLD/MiCA"
+  
+  # Sanctions Screening Configuration
+  sanctions:
+    enabled: true
+    sources:
+      - name: "EU_SANCTIONS"
+        enabled: true
+        priority: 1
+        endpoint: "https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content"
+        update_interval: "4h"
+        match_threshold: 0.95
+      - name: "UN_SANCTIONS"
+        enabled: true
+        priority: 2
+        endpoint: "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
+        update_interval: "6h"
+        match_threshold: 0.90
+      - name: "OFAC"
+        enabled: true
+        priority: 3
+        endpoint: "https://www.treasury.gov/ofac/downloads/sdn.xml"
+        update_interval: "6h"
+        match_threshold: 0.85
+    
+    matching:
+      algorithms:
+        - "exact"
+        - "levenshtein"
+        - "jaro_winkler"
+        - "metaphone"
+      exact_match_threshold: 1.0
+      fuzzy_match_threshold: 0.80
+      phonetic_match_threshold: 0.75
+      confidence_threshold: 0.80
+      
+  # PEP Screening Configuration (Enhanced under 5AMLD)
+  pep:
+    enabled: true
+    sources:
+      - "world_check"
+      - "dow_jones"
+      - "refinitiv"
+      - "eu_pep_database"
+    include_family: true
+    include_associates: true
+    include_former_peps: true  # Required under 5AMLD
+    match_threshold: 0.80
+    risk_levels:
+      direct: "HIGH"
+      family: "HIGH"  # Higher risk under EU regulation
+      associate: "MEDIUM"
+      former: "MEDIUM"
+    
+    enhanced_monitoring_period: "12m"  # EU requirement
+    
+  # Transaction Monitoring (MiCA Compliant)
+  transaction_monitoring:
+    enabled: true
+    thresholds:
+      suspicious_activity_threshold: 1000.00  # EUR - Lower than US
+      cash_equivalent_threshold: 10000.00  # For crypto assets
+      travel_rule_threshold: 1000.00  # EU Travel Rule
+      large_transaction_threshold: 15000.00
+    
+    rules:
+      - name: "large_crypto_transaction"
+        threshold: 10000.00
+        currency: "EUR"
+        timeframe: "24h"
+        action: "report"
+        applies_to: ["cryptocurrency"]
+      - name: "cross_border_transfer"
+        threshold: 1000.00
+        timeframe: "24h"
+        action: "collect_travel_rule_data"
+      - name: "structuring_pattern"
+        pattern: "multiple_small_amounts"
+        threshold: 0.85
+        action: "flag"
+      - name: "privacy_coin_usage"
+        currencies: ["XMR", "ZEC", "DASH"]
+        action: "enhanced_monitoring"
+    
+  # Customer Due Diligence (5AMLD Enhanced)
+  cdd:
+    kyc_levels:
+      simplified:
+        required_documents: ["government_id"]
+        verification_methods: ["document_scan"]
+        max_transaction_limit: 150.00  # EU simplified DD threshold
+        ongoing_monitoring: "basic"
+      standard:
+        required_documents: ["government_id", "proof_of_address"]
+        verification_methods: ["document_scan", "liveness_check"]
+        max_transaction_limit: 15000.00
+        ongoing_monitoring: "standard"
+      enhanced:
+        required_documents: ["government_id", "proof_of_address", "source_of_funds", "business_license"]
+        verification_methods: ["document_scan", "liveness_check", "manual_review", "site_visit"]
+        max_transaction_limit: "unlimited"
+        ongoing_monitoring: "enhanced"
+    
+    enhanced_dd_triggers:
+      - "pep_match"
+      - "sanctions_match"
+      - "high_risk_third_country"
+      - "correspondent_banking"
+      - "shell_company"
+      - "beneficial_ownership_complex"
+      - "crypto_to_fiat_high_volume"
+    
+    beneficial_ownership:
+      threshold: 0.25  # 25% ownership threshold
+      ultimate_beneficial_owner: true
+      control_structure_mapping: true
+    
+  # Risk Assessment (Country-Specific)
+  risk_assessment:
+    country_risk:
+      high_risk_countries:  # EU High-Risk Third Countries
+        - "AF"  # Afghanistan
+        - "BB"  # Barbados
+        - "BF"  # Burkina Faso
+        - "KH"  # Cambodia
+        - "KY"  # Cayman Islands
+        - "HT"  # Haiti
+        - "IR"  # Iran
+        - "JM"  # Jamaica
+        - "JO"  # Jordan
+        - "ML"  # Mali
+        - "MM"  # Myanmar
+        - "NI"  # Nicaragua
+        - "KP"  # North Korea
+        - "PK"  # Pakistan
+        - "PA"  # Panama
+        - "PH"  # Philippines
+        - "SN"  # Senegal
+        - "SS"  # South Sudan
+        - "SY"  # Syria
+        - "TR"  # Turkey
+        - "UG"  # Uganda
+        - "AE"  # UAE
+        - "VU"  # Vanuatu
+        - "YE"  # Yemen
+      
+      medium_risk_countries:
+        - "CN"  # China
+        - "RU"  # Russia
+        - "BY"  # Belarus
+        - "VE"  # Venezuela
+    
+    business_risk:
+      high_risk_businesses:
+        - "crypto_asset_service_provider"
+        - "money_remitter"
+        - "casino"
+        - "precious_metals_dealer"
+        - "art_dealer"  # Added under 5AMLD
+        - "crowdfunding_platform"  # Added under 5AMLD
+      prohibited_businesses:
+        - "privacy_coin_exclusive"
+        - "mixing_service"
+        - "tumbling_service"
+    
+  # Reporting Configuration (EU Specific)
+  reporting:
+    sar:
+      enabled: true
+      threshold: 1000.00  # Lower threshold than US
+      filing_deadline: "immediately"  # EU requirement for suspicious activity
+      format: "EU_STR"
+      languages: ["en", "de", "fr", "es", "it"]
+    
+    large_transactions:
+      enabled: true
+      threshold: 15000.00
+      filing_deadline: "30d"
+      format: "EU_LTR"
+    
+    travel_rule:
+      enabled: true
+      threshold: 1000.00
+      required_data:
+        - "originator_name"
+        - "originator_address"
+        - "originator_account"
+        - "beneficiary_name"
+        - "beneficiary_address"
+        - "beneficiary_account"
+    
+  # Data Protection (GDPR Compliant)
+  data_protection:
+    gdpr_compliance: true
+    data_minimization: true
+    purpose_limitation: true
+    retention_periods:
+      transaction_records: "5y"
+      customer_records: "5y"
+      audit_logs: "5y"
+      deleted_customer_data: "30d"
+    
+    privacy_rights:
+      right_to_access: true
+      right_to_rectification: true
+      right_to_erasure: true  # Limited by AML retention requirements
+      right_to_portability: true
+      right_to_object: true
+    
+    consent_management:
+      explicit_consent: true
+      withdrawal_mechanism: true
+      consent_records: true
+    
+  # Alert Configuration
+  alerts:
+    channels:
+      - "email"
+      - "webhook"
+      - "sms"
+      - "dashboard"
+    
+    severity_levels:
+      critical:
+        - "sanctions_match"
+        - "pep_match_direct"
+        - "terrorist_financing_indicator"
+        - "privacy_coin_large_amount"
+      high:
+        - "pep_match_family"
+        - "high_risk_country"
+        - "structuring_detected"
+        - "beneficial_ownership_complex"
+      medium:
+        - "unusual_transaction_pattern"
+        - "new_high_value_customer"
+        - "cross_border_threshold"
+      low:
+        - "threshold_approach"
+        - "minor_deviation"
+    
+    notification_timing:
+      immediate: ["critical"]
+      within_1h: ["high"]
+      within_4h: ["medium"]
+      daily_summary: ["low"]
+    
+  # Compliance Monitoring
+  compliance:
+    audit_trail: true
+    retention_period: "5y"
+    encryption: "AES256"
+    access_logging: true
+    data_localization: true  # EU data residency requirements
+    
+    supervisory_reporting:
+      frequency: "quarterly"
+      format: "EU_SUPERVISORY"
+      include_metrics:
+        - "transaction_volumes"
+        - "alert_statistics"
+        - "false_positive_rates"
+        - "processing_times"
+        - "compliance_incidents"
+    
+    performance_metrics:
+      false_positive_rate_target: 0.03  # Stricter than US
+      processing_time_target: "300ms"
+      availability_target: 0.9999
+      
+    testing:
+      penetration_testing: "biannual"
+      compliance_audit: "annual"
+      stress_testing: "quarterly"
+      gdpr_compliance_review: "annual"
+
+  # MiCA Specific Requirements
+  mica:
+    asset_classification: true
+    operational_resilience: true
+    market_abuse_prevention: true
+    white_paper_compliance: true
+    
+    reserve_requirements:
+      stable_coin_reserves: true
+      segregation: true
+      daily_reporting: true
+    
+    authorization:
+      casp_license: true
+      significant_emt_authorization: true
+      
+  # Environmental Considerations
+  environmental:
+    carbon_footprint_monitoring: true
+    sustainable_consensus_preference: true
+    energy_consumption_reporting: true

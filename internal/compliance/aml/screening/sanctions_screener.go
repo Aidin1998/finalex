@@ -28,6 +28,15 @@ type SanctionsScreener struct {
 
 	// Watch list management
 	watchLists map[string]*WatchList
+
+	// Enhanced matching engine
+	fuzzyMatcher *FuzzyMatcher
+
+	// PEP screening engine
+	pepScreener *PEPScreener
+	// Performance optimization
+	nameIndex map[string][]*SanctionsEntry // For fast name lookups
+	cache     map[string]ScreeningResult   // Cache for recent results
 }
 
 // SanctionsList represents a sanctions list (OFAC, UN, EU, etc.)
@@ -139,6 +148,7 @@ type ScreeningResult struct {
 	RiskLevel       aml.RiskLevel          `json:"risk_level"`
 	IsFalsePositive bool                   `json:"is_false_positive"`
 	ReviewStatus    string                 `json:"review_status"` // "pending", "cleared", "confirmed", "escalated"
+	CachedAt        time.Time              `json:"cached_at"`     // For cache management
 	Metadata        map[string]interface{} `json:"metadata"`
 }
 
@@ -178,7 +188,10 @@ func NewSanctionsScreener(logger *zap.SugaredLogger) *SanctionsScreener {
 		logger:           logger,
 		sanctionsLists:   make(map[string]*SanctionsList),
 		screeningHistory: make(map[string]*ScreeningHistory),
-		watchLists:       make(map[string]*WatchList),
+		watchLists:       make(map[string]*WatchList), nameIndex: make(map[string][]*SanctionsEntry),
+		cache:        make(map[string]ScreeningResult),
+		fuzzyMatcher: NewFuzzyMatcher(logger),
+		pepScreener:  NewPEPScreener(logger),
 		config: ScreeningConfig{
 			MatchThreshold:       0.95,
 			FuzzyMatchThreshold:  0.80,
@@ -195,7 +208,40 @@ func NewSanctionsScreener(logger *zap.SugaredLogger) *SanctionsScreener {
 	// Initialize default sanctions lists
 	screener.initializeDefaultLists()
 
+	// Build initial indexes
+	screener.rebuildIndexes()
+
 	return screener
+}
+
+// rebuildIndexes rebuilds performance indexes for fast lookups
+func (ss *SanctionsScreener) rebuildIndexes() {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	// Clear existing indexes
+	ss.nameIndex = make(map[string][]*SanctionsEntry)
+
+	// Build name index for all entries
+	for _, list := range ss.sanctionsLists {
+		for _, entry := range list.Entries {
+			// Index primary name
+			if entry.PrimaryName != "" {
+				normalizedName := ss.normalizeName(entry.PrimaryName)
+				ss.nameIndex[normalizedName] = append(ss.nameIndex[normalizedName], entry)
+			}
+
+			// Index alternate names
+			for _, altName := range entry.AlternateNames {
+				if altName != "" {
+					normalizedName := ss.normalizeName(altName)
+					ss.nameIndex[normalizedName] = append(ss.nameIndex[normalizedName], entry)
+				}
+			}
+		}
+	}
+
+	ss.logger.Infow("Rebuilt screening indexes", "total_entries", len(ss.nameIndex))
 }
 
 // initializeDefaultLists initializes default sanctions lists
@@ -302,129 +348,112 @@ func (ss *SanctionsScreener) ScreenUser(ctx context.Context, userID uuid.UUID, u
 	return screeningEvent, nil
 }
 
-// screenAgainstList screens user data against a specific sanctions list
+// normalizeName normalizes a name for consistent comparison
+func (ss *SanctionsScreener) normalizeName(name string) string {
+	return ss.fuzzyMatcher.normalizeName(name)
+}
+
+// screenAgainstList performs enhanced screening against a sanctions list
 func (ss *SanctionsScreener) screenAgainstList(userData *aml.AMLUser, list *SanctionsList) []ScreeningResult {
 	var results []ScreeningResult
 
-	// Screen against each entry in the list
+	// Extract user name from KYC data (this would normally come from actual user data)
+	userName := userData.KYCStatus // This should be replaced with actual name extraction
+
+	if userName == "" {
+		return results
+	}
+	// Check cache first for performance
+	cacheKey := fmt.Sprintf("%s:%s", list.ID, userName)
+	if cachedResult, exists := ss.cache[cacheKey]; exists {
+		// Check if cache entry is still valid (within 1 hour)
+		if time.Since(cachedResult.CachedAt) < time.Hour {
+			return []ScreeningResult{cachedResult}
+		}
+	}
+
+	// Fast exact match lookup using index
+	normalizedUserName := ss.normalizeName(userName)
+	if indexedEntries, exists := ss.nameIndex[normalizedUserName]; exists {
+		for _, entry := range indexedEntries {
+			result := ss.createExactMatchResult(entry, userName, normalizedUserName)
+			results = append(results, result)
+		}
+	}
+
+	// If fuzzy matching is enabled and no exact matches found, perform fuzzy matching
+	if ss.config.EnableFuzzyMatching && len(results) == 0 {
+		results = ss.performFuzzyMatching(userData, list, userName)
+	}
+	// Cache results for performance
+	if len(results) > 0 {
+		results[0].CachedAt = time.Now()
+		ss.cache[cacheKey] = results[0] // Cache the best result
+	}
+
+	return results
+}
+
+// createExactMatchResult creates a screening result for an exact match
+func (ss *SanctionsScreener) createExactMatchResult(entry *SanctionsEntry, originalName, normalizedName string) ScreeningResult {
+	return ScreeningResult{
+		ID:              uuid.New(),
+		MatchType:       "exact",
+		MatchScore:      1.0,
+		ListID:          entry.ListID,
+		ListName:        ss.sanctionsLists[entry.ListID].Name,
+		EntryID:         entry.ID,
+		MatchedName:     entry.PrimaryName,
+		MatchedField:    "name",
+		SanctionsType:   entry.SanctionsType,
+		RiskLevel:       ss.determineRiskLevel(entry),
+		IsFalsePositive: false,
+		ReviewStatus:    "pending",
+		Metadata: map[string]interface{}{
+			"original_name":    originalName,
+			"normalized_name":  normalizedName,
+			"entry_risk_score": entry.RiskScore,
+		},
+	}
+}
+
+// performFuzzyMatching performs fuzzy matching against all entries in a list
+func (ss *SanctionsScreener) performFuzzyMatching(userData *aml.AMLUser, list *SanctionsList, userName string) []ScreeningResult {
+	var results []ScreeningResult
+
 	for _, entry := range list.Entries {
-		if !entry.IsActive {
-			continue
-		}
+		// Use fuzzy matcher to compare names
+		matchResult := ss.fuzzyMatcher.MatchNames(
+			context.Background(),
+			userName,
+			entry.PrimaryName,
+			entry.AlternateNames,
+		)
 
-		// Check name matches
-		nameMatches := ss.checkNameMatches(userData, entry, list)
-		results = append(results, nameMatches...)
-
-		// Check identifier matches if configured for enhanced screening
-		if ss.config.ScreeningDepth == "enhanced" || ss.config.ScreeningDepth == "comprehensive" {
-			idMatches := ss.checkIdentifierMatches(userData, entry, list)
-			results = append(results, idMatches...)
-		}
-
-		// Check address matches for comprehensive screening
-		if ss.config.ScreeningDepth == "comprehensive" {
-			addressMatches := ss.checkAddressMatches(userData, entry, list)
-			results = append(results, addressMatches...)
+		// Only consider results above threshold
+		if matchResult.OverallScore >= ss.config.FuzzyMatchThreshold {
+			result := ScreeningResult{
+				ID:              uuid.New(),
+				MatchType:       matchResult.MatchType,
+				MatchScore:      matchResult.OverallScore,
+				ListID:          entry.ListID,
+				ListName:        list.Name,
+				EntryID:         entry.ID,
+				MatchedName:     entry.PrimaryName,
+				MatchedField:    "name",
+				SanctionsType:   entry.SanctionsType,
+				RiskLevel:       ss.determineRiskLevel(entry),
+				IsFalsePositive: false,
+				ReviewStatus:    "pending",
+				Metadata: map[string]interface{}{
+					"fuzzy_match_details": matchResult.Details,
+					"confidence":          matchResult.Confidence,
+					"entry_risk_score":    entry.RiskScore,
+				},
+			}
+			results = append(results, result)
 		}
 	}
-
-	return results
-}
-
-// checkNameMatches checks for name matches using various algorithms
-func (ss *SanctionsScreener) checkNameMatches(userData *aml.AMLUser, entry *SanctionsEntry, list *SanctionsList) []ScreeningResult {
-	var results []ScreeningResult
-
-	// Get user names to check (this would come from user profile data)
-	userNames := []string{
-		// Would extract from userData - for now using placeholder
-		"User Full Name", // This would be userData.FullName or similar
-	}
-
-	// Check against primary name and alternate names
-	namesToCheck := append([]string{entry.PrimaryName}, entry.AlternateNames...)
-
-	for _, userName := range userNames {
-		for _, entryName := range namesToCheck {
-			// Exact match
-			if ss.isExactMatch(userName, entryName) {
-				results = append(results, ScreeningResult{
-					ID:            uuid.New(),
-					MatchType:     "exact",
-					MatchScore:    1.0,
-					ListID:        list.ID,
-					ListName:      list.Name,
-					EntryID:       entry.ID,
-					MatchedName:   entryName,
-					MatchedField:  "name",
-					SanctionsType: entry.SanctionsType,
-					RiskLevel:     ss.calculateRiskLevel(1.0),
-					ReviewStatus:  "pending",
-				})
-			}
-
-			// Fuzzy match
-			if ss.config.EnableFuzzyMatching {
-				fuzzyScore := ss.calculateFuzzyMatch(userName, entryName)
-				if fuzzyScore >= ss.config.FuzzyMatchThreshold {
-					results = append(results, ScreeningResult{
-						ID:            uuid.New(),
-						MatchType:     "fuzzy",
-						MatchScore:    fuzzyScore,
-						ListID:        list.ID,
-						ListName:      list.Name,
-						EntryID:       entry.ID,
-						MatchedName:   entryName,
-						MatchedField:  "name",
-						SanctionsType: entry.SanctionsType,
-						RiskLevel:     ss.calculateRiskLevel(fuzzyScore),
-						ReviewStatus:  "pending",
-					})
-				}
-			}
-
-			// Phonetic match
-			if ss.config.EnablePhoneticMatch {
-				phoneticScore := ss.calculatePhoneticMatch(userName, entryName)
-				if phoneticScore >= ss.config.FuzzyMatchThreshold {
-					results = append(results, ScreeningResult{
-						ID:            uuid.New(),
-						MatchType:     "phonetic",
-						MatchScore:    phoneticScore,
-						ListID:        list.ID,
-						ListName:      list.Name,
-						EntryID:       entry.ID,
-						MatchedName:   entryName,
-						MatchedField:  "name",
-						SanctionsType: entry.SanctionsType,
-						RiskLevel:     ss.calculateRiskLevel(phoneticScore),
-						ReviewStatus:  "pending",
-					})
-				}
-			}
-		}
-	}
-
-	return results
-}
-
-// checkIdentifierMatches checks for identifier matches
-func (ss *SanctionsScreener) checkIdentifierMatches(userData *aml.AMLUser, entry *SanctionsEntry, list *SanctionsList) []ScreeningResult {
-	var results []ScreeningResult
-
-	// This would check passport numbers, national IDs, etc.
-	// Implementation depends on available user data structure
-
-	return results
-}
-
-// checkAddressMatches checks for address matches
-func (ss *SanctionsScreener) checkAddressMatches(userData *aml.AMLUser, entry *SanctionsEntry, list *SanctionsList) []ScreeningResult {
-	var results []ScreeningResult
-
-	// This would check user addresses against sanctions entry addresses
-	// Implementation depends on available user data structure
 
 	return results
 }
@@ -433,36 +462,87 @@ func (ss *SanctionsScreener) checkAddressMatches(userData *aml.AMLUser, entry *S
 func (ss *SanctionsScreener) screenAgainstWatchLists(userData *aml.AMLUser) []ScreeningResult {
 	var results []ScreeningResult
 
+	// Extract user name
+	userName := userData.KYCStatus // This should be replaced with actual name extraction
+
+	if userName == "" {
+		return results
+	}
+
 	for _, watchList := range ss.watchLists {
 		if !watchList.IsActive {
 			continue
 		}
 
-		// Screen against watch list entries
 		for _, entry := range watchList.Entries {
-			if !entry.IsActive || (entry.ExpiryDate != nil && entry.ExpiryDate.Before(time.Now())) {
-				continue
-			}
-
-			// Simple name matching for watch lists
-			if ss.isNameMatch(userData, entry.Name, entry.AlternateNames) {
-				results = append(results, ScreeningResult{
-					ID:           uuid.New(),
-					MatchType:    "watchlist",
-					MatchScore:   0.95, // High confidence for watch list matches
-					ListID:       watchList.ID,
-					ListName:     watchList.Name,
-					EntryID:      entry.ID,
-					MatchedName:  entry.Name,
-					MatchedField: "name",
-					RiskLevel:    entry.RiskLevel,
-					ReviewStatus: "pending",
-				})
+			if ss.isWatchListMatch(userName, entry) {
+				result := ScreeningResult{
+					ID:            uuid.New(),
+					MatchType:     "watchlist",
+					MatchScore:    0.95,
+					ListID:        watchList.ID,
+					ListName:      watchList.Name,
+					EntryID:       entry.ID,
+					MatchedName:   entry.Name,
+					MatchedField:  "name",
+					SanctionsType: "watchlist",
+					RiskLevel:     entry.RiskLevel,
+					ReviewStatus:  "pending",
+					Metadata: map[string]interface{}{
+						"watchlist_type": watchList.Type,
+						"entry_reason":   entry.Reason,
+					},
+				}
+				results = append(results, result)
 			}
 		}
 	}
 
 	return results
+}
+
+// isWatchListMatch determines if a name matches a watch list entry
+func (ss *SanctionsScreener) isWatchListMatch(userName string, entry *WatchListEntry) bool {
+	normalizedUserName := ss.normalizeName(userName)
+	normalizedEntryName := ss.normalizeName(entry.Name)
+
+	// Exact match
+	if normalizedUserName == normalizedEntryName {
+		return true
+	}
+
+	// Check alternate names
+	for _, altName := range entry.AlternateNames {
+		if normalizedUserName == ss.normalizeName(altName) {
+			return true
+		}
+	}
+
+	// Fuzzy match if enabled
+	if ss.config.EnableFuzzyMatching {
+		matchResult := ss.fuzzyMatcher.MatchNames(
+			context.Background(),
+			userName,
+			entry.Name,
+			entry.AlternateNames,
+		)
+		return matchResult.OverallScore >= ss.config.FuzzyMatchThreshold
+	}
+
+	return false
+}
+
+// determineRiskLevel determines risk level from sanctions entry
+func (ss *SanctionsScreener) determineRiskLevel(entry *SanctionsEntry) aml.RiskLevel {
+	if entry.RiskScore >= 0.95 {
+		return aml.RiskLevelCritical
+	} else if entry.RiskScore >= 0.85 {
+		return aml.RiskLevelHigh
+	} else if entry.RiskScore >= 0.70 {
+		return aml.RiskLevelMedium
+	} else {
+		return aml.RiskLevelLow
+	}
 }
 
 // Helper functions

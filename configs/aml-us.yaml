@@ -1,0 +1,193 @@
+# AML Configuration for United States Jurisdiction
+# Compliant with BSA, PATRIOT Act, and FinCEN requirements
+
+aml:
+  enabled: true
+  jurisdiction: "US"
+  regulatory_framework: "BSA/PATRIOT"
+  
+  # Sanctions Screening Configuration
+  sanctions:
+    enabled: true
+    sources:
+      - name: "OFAC"
+        enabled: true
+        priority: 1
+        endpoint: "https://www.treasury.gov/ofac/downloads/sdn.xml"
+        update_interval: "6h"
+        match_threshold: 0.95
+      - name: "BIS"
+        enabled: true
+        priority: 2
+        endpoint: "https://www.bis.doc.gov/dpl/default.shtm"
+        update_interval: "24h"
+        match_threshold: 0.90
+    
+    matching:
+      algorithms:
+        - "exact"
+        - "levenshtein"
+        - "jaro_winkler"
+        - "soundex"
+      exact_match_threshold: 1.0
+      fuzzy_match_threshold: 0.85
+      phonetic_match_threshold: 0.80
+      confidence_threshold: 0.85
+      
+  # PEP Screening Configuration
+  pep:
+    enabled: true
+    sources:
+      - "world_check"
+      - "dow_jones"
+      - "refinitiv"
+    include_family: true
+    include_associates: true
+    match_threshold: 0.85
+    risk_levels:
+      direct: "HIGH"
+      family: "MEDIUM"
+      associate: "LOW"
+    
+  # Transaction Monitoring
+  transaction_monitoring:
+    enabled: true
+    thresholds:
+      cash_reporting_threshold: 10000.00  # CTR threshold
+      suspicious_activity_threshold: 5000.00  # SAR consideration
+      structuring_detection: true
+      velocity_monitoring: true
+    
+    rules:
+      - name: "large_cash_transaction"
+        threshold: 10000.00
+        currency: "USD"
+        timeframe: "24h"
+        action: "report"
+      - name: "rapid_succession"
+        count: 5
+        amount: 3000.00
+        timeframe: "1h"
+        action: "flag"
+      - name: "round_number_pattern"
+        pattern: "round_numbers"
+        threshold: 0.8
+        action: "review"
+    
+  # Customer Due Diligence
+  cdd:
+    kyc_levels:
+      basic:
+        required_documents: ["government_id"]
+        verification_methods: ["document_scan", "liveness_check"]
+        max_daily_limit: 1000.00
+      enhanced:
+        required_documents: ["government_id", "proof_of_address", "income_verification"]
+        verification_methods: ["document_scan", "liveness_check", "manual_review"]
+        max_daily_limit: 10000.00
+      premium:
+        required_documents: ["government_id", "proof_of_address", "income_verification", "source_of_funds"]
+        verification_methods: ["document_scan", "liveness_check", "manual_review", "enhanced_screening"]
+        max_daily_limit: 100000.00
+    
+    enhanced_dd_triggers:
+      - "pep_match"
+      - "sanctions_match"
+      - "high_risk_country"
+      - "large_transaction"
+      - "suspicious_pattern"
+    
+  # Risk Assessment
+  risk_assessment:
+    country_risk:
+      high_risk_countries:
+        - "IR"  # Iran
+        - "KP"  # North Korea
+        - "SY"  # Syria
+        - "CU"  # Cuba
+      medium_risk_countries:
+        - "AF"  # Afghanistan
+        - "IQ"  # Iraq
+        - "LB"  # Lebanon
+        - "LY"  # Libya
+    
+    business_risk:
+      high_risk_businesses:
+        - "money_service_business"
+        - "casino"
+        - "cryptocurrency"
+        - "precious_metals"
+      medium_risk_businesses:
+        - "real_estate"
+        - "law_firm"
+        - "accounting_firm"
+        - "trust_company"
+    
+  # Reporting Configuration
+  reporting:
+    ctr:
+      enabled: true
+      threshold: 10000.00
+      filing_deadline: "15d"
+      format: "FinCEN_CTR"
+    
+    sar:
+      enabled: true
+      threshold: 5000.00
+      filing_deadline: "30d"
+      format: "FinCEN_SAR"
+    
+    suspicious_patterns:
+      - "structuring"
+      - "smurfing"
+      - "round_dollar_amounts"
+      - "unusual_velocity"
+      - "geographic_anomalies"
+    
+  # Alert Configuration
+  alerts:
+    channels:
+      - "email"
+      - "webhook"
+      - "database"
+    
+    severity_levels:
+      critical:
+        - "sanctions_match"
+        - "pep_match_high"
+        - "structuring_detected"
+      high:
+        - "large_transaction"
+        - "velocity_anomaly"
+        - "geographic_risk"
+      medium:
+        - "unusual_pattern"
+        - "round_amounts"
+        - "new_counterparty"
+      low:
+        - "threshold_approach"
+        - "minor_anomaly"
+    
+    escalation:
+      auto_escalate_after: "2h"
+      manual_review_required:
+        - "critical"
+        - "high"
+      auto_approve_threshold: "low"
+    
+  # Compliance Monitoring
+  compliance:
+    audit_trail: true
+    retention_period: "5y"  # US requirement
+    encryption: "AES256"
+    access_logging: true
+    
+    performance_metrics:
+      false_positive_rate_target: 0.05
+      processing_time_target: "500ms"
+      availability_target: 0.9999
+      
+    testing:
+      penetration_testing: "quarterly"
+      compliance_audit: "annual"
+      stress_testing: "monthly"
