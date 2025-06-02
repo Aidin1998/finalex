@@ -8,11 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	
 
-	"go.uber.org/zap"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 // BackpressureManager orchestrates all backpressure components for optimal
@@ -23,7 +22,7 @@ type BackpressureManager struct {
 	// Core components
 	detector    *ClientCapabilityDetector
 	rateLimiter *AdaptiveRateLimiter
-	priorityQ   *PriorityQueue
+	priorityQ   *LockFreePriorityQueue
 	coordinator *CrossServiceCoordinator
 
 	// Client management
@@ -58,21 +57,21 @@ type ManagedClient struct {
 	ID           string
 	Connection   *websocket.Conn
 	Capability   *ClientCapability
-	RateLimit    *ClientRateLimit
+	RateLimit    *ClientRateLimiter
 	SendChannel  chan *PriorityMessage
 	LastActivity time.Time
-	
+
 	// Client-specific emergency handling
-	InEmergency  int32 // atomic bool
-	EmergencyAt  time.Time
-	RecoveryAt   time.Time
-	
+	InEmergency int32 // atomic bool
+	EmergencyAt time.Time
+	RecoveryAt  time.Time
+
 	// Per-client metrics
-	MessagesSent     int64
-	MessagesDropped  int64
-	BytesSent        int64
-	LastLatency      time.Duration
-	
+	MessagesSent    int64
+	MessagesDropped int64
+	BytesSent       int64
+	LastLatency     time.Duration
+
 	// Connection state
 	ConnectedAt time.Time
 	IsActive    int32 // atomic bool
@@ -99,48 +98,48 @@ type ProcessedJob struct {
 }
 
 // ManagerConfig configures the backpressure manager
-type ManagerConfig struct {
-	// Worker configuration
-	WorkerCount             int           `json:"worker_count"`
-	ProcessingTimeout       time.Duration `json:"processing_timeout"`
-	MaxRetries              int           `json:"max_retries"`
-	
-	// Emergency thresholds
-	EmergencyLatencyThreshold    time.Duration `json:"emergency_latency_threshold"`
-	EmergencyQueueLengthThreshold int          `json:"emergency_queue_length_threshold"`
-	EmergencyDropRateThreshold   float64      `json:"emergency_drop_rate_threshold"`
-	
-	// Recovery configuration
-	RecoveryGracePeriod     time.Duration `json:"recovery_grace_period"`
-	RecoveryLatencyTarget   time.Duration `json:"recovery_latency_target"`
-	
-	// Client management
-	ClientTimeout           time.Duration `json:"client_timeout"`
-	MaxClientsPerShard      int          `json:"max_clients_per_shard"`
-	
-	// Rate limiting
-	GlobalRateLimit         int64        `json:"global_rate_limit"`
-	PriorityRateMultipliers map[MessagePriority]float64 `json:"priority_rate_multipliers"`
-}
+// type ManagerConfig struct {
+// 	// Worker configuration
+// 	WorkerCount       int           `json:"worker_count"`
+// 	ProcessingTimeout time.Duration `json:"processing_timeout"`
+// 	MaxRetries        int           `json:"max_retries"`
+
+// 	// Emergency thresholds
+// 	EmergencyLatencyThreshold     time.Duration `json:"emergency_latency_threshold"`
+// 	EmergencyQueueLengthThreshold int           `json:"emergency_queue_length_threshold"`
+// 	EmergencyDropRateThreshold    float64       `json:"emergency_drop_rate_threshold"`
+
+// 	// Recovery configuration
+// 	RecoveryGracePeriod   time.Duration `json:"recovery_grace_period"`
+// 	RecoveryLatencyTarget time.Duration `json:"recovery_latency_target"`
+
+// 	// Client management
+// 	ClientTimeout      time.Duration `json:"client_timeout"`
+// 	MaxClientsPerShard int           `json:"max_clients_per_shard"`
+
+// 	// Rate limiting
+// 	GlobalRateLimit         int64                       `json:"global_rate_limit"`
+// 	PriorityRateMultipliers map[MessagePriority]float64 `json:"priority_rate_multipliers"`
+// }
 
 // ManagerMetrics tracks comprehensive backpressure management metrics
 type ManagerMetrics struct {
 	// Message flow metrics
-	MessagesReceived     prometheus.Counter
-	MessagesProcessed    prometheus.Counter
-	MessagesDropped      prometheus.Counter
-	MessageLatency       prometheus.Histogram
-	
+	MessagesReceived  prometheus.Counter
+	MessagesProcessed prometheus.Counter
+	MessagesDropped   prometheus.Counter
+	MessageLatency    prometheus.Histogram
+
 	// Client metrics
 	ActiveClients        prometheus.Gauge
 	ClientsInEmergency   prometheus.Gauge
 	AverageClientLatency prometheus.Gauge
-	
+
 	// System health metrics
 	ProcessingQueueLength prometheus.Gauge
 	WorkerUtilization     prometheus.Gauge
-	MemoryUsage          prometheus.Gauge
-	
+	MemoryUsage           prometheus.Gauge
+
 	// Emergency metrics
 	EmergencyActivations prometheus.Counter
 	EmergencyDuration    prometheus.Histogram
@@ -149,60 +148,33 @@ type ManagerMetrics struct {
 
 // EmergencyMetrics tracks emergency mode statistics
 type EmergencyMetrics struct {
-	ActivationCount    int64
-	TotalDuration      time.Duration
-	LastActivation     time.Time
-	LastRecovery       time.Time
-	MessagesDropped    int64
-	ClientsAffected    int64
+	ActivationCount     int64
+	TotalDuration       time.Duration
+	LastActivation      time.Time
+	LastRecovery        time.Time
+	MessagesDropped     int64
+	ClientsAffected     int64
 	AverageRecoveryTime time.Duration
 }
 
 // NewBackpressureManager creates a new comprehensive backpressure manager
-func NewBackpressureManager(config *ManagerConfig, logger *zap.Logger) (*BackpressureManager, error) {
-	if config == nil {
-		config = getDefaultManagerConfig()
-	}
-	
+func NewBackpressureManager(cfg *BackpressureConfig, logger *zap.Logger) (*BackpressureManager, error) {
+	// Extract sub-configs
+	managerCfg := &cfg.Manager
+	rlCfg := &cfg.RateLimiter
+	pqCfg := &cfg.PriorityQueue
+	coordCfg := &cfg.Coordinator
+
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Initialize core components
-	detector, err := NewClientCapabilityDetector(logger.Named("detector"))
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to create capability detector: %w", err)
-	}
-
-	rateLimiter, err := NewAdaptiveRateLimiter(&RateLimiterConfig{
-		GlobalRateLimit:     config.GlobalRateLimit,
-		BurstMultiplier:     2.0,
-		RefillInterval:      time.Second,
-		AdaptationInterval:  time.Second * 10,
-	}, logger.Named("rate_limiter"))
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
-	}
-
-	priorityQ, err := NewPriorityQueue(&PriorityQueueConfig{
-		InitialCapacity: 10000,
-		MaxCapacity:     1000000,
-		ShardCount:      8,
-	}, logger.Named("priority_queue"))
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to create priority queue: %w", err)
-	}
-
-	coordinator, err := NewCrossServiceCoordinator(&CoordinatorConfig{
-		ServiceID:     "marketdata-backpressure",
-		KafkaBrokers:  []string{"localhost:9092"}, // TODO: Make configurable
-		UpdateInterval: time.Second * 5,
-	}, logger.Named("coordinator"))
+	detector := NewClientCapabilityDetector(logger.Named("detector"))
+	rateLimiter := NewAdaptiveRateLimiter(logger.Named("rate_limiter"), detector, rlCfg)
+	priorityQ := NewLockFreePriorityQueue(pqCfg, logger.Named("priority_queue"))
+	coordinator, err := NewCrossServiceCoordinator(logger.Named("coordinator"), coordCfg)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create cross-service coordinator: %w", err)
@@ -214,18 +186,16 @@ func NewBackpressureManager(config *ManagerConfig, logger *zap.Logger) (*Backpre
 		rateLimiter: rateLimiter,
 		priorityQ:   priorityQ,
 		coordinator: coordinator,
-		
+
 		incomingMessages: make(chan *IncomingMessage, 10000),
 		processedJobs:    make(chan *ProcessedJob, 10000),
-		workerCount:      config.WorkerCount,
-		
-		emergencyMetrics: &EmergencyMetrics{},
-		config:          config,
-		
+		workerCount:      managerCfg.WorkerCount,
+		config:           managerCfg,
+
 		ctx:      ctx,
 		cancel:   cancel,
 		shutdown: make(chan struct{}),
-		
+
 		metrics: initManagerMetrics(),
 	}
 
@@ -243,10 +213,6 @@ func (m *BackpressureManager) Start(ctx context.Context) error {
 
 	if err := m.rateLimiter.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start rate limiter: %w", err)
-	}
-
-	if err := m.priorityQ.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start priority queue: %w", err)
 	}
 
 	if err := m.coordinator.Start(ctx); err != nil {
@@ -293,15 +259,12 @@ func (m *BackpressureManager) RegisterClient(clientID string, conn *websocket.Co
 	}
 
 	// Register with detector for capability measurement
-	if err := m.detector.RegisterClient(clientID, conn); err != nil {
+	if err := m.detector.RegisterClient(clientID); err != nil {
 		return fmt.Errorf("failed to register client with detector: %w", err)
 	}
 
-	// Create rate limit for client
-	rateLimit, err := m.rateLimiter.CreateClientLimit(clientID, DefaultClientClass)
-	if err != nil {
-		return fmt.Errorf("failed to create rate limit for client: %w", err)
-	}
+	// Use getOrCreateClientLimiter for rate limiter
+	rateLimit := m.rateLimiter.getOrCreateClientLimiter(clientID)
 	client.RateLimit = rateLimit
 
 	// Store client mappings
@@ -316,42 +279,6 @@ func (m *BackpressureManager) RegisterClient(clientID string, conn *websocket.Co
 		zap.String("rate_limit_class", string(DefaultClientClass)))
 
 	return nil
-}
-
-// UnregisterClient removes a client from backpressure management
-func (m *BackpressureManager) UnregisterClient(clientID string) {
-	m.logger.Debug("Unregistering client", zap.String("client_id", clientID))
-
-	// Get client
-	clientInterface, exists := m.clients.Load(clientID)
-	if !exists {
-		return
-	}
-	client := clientInterface.(*ManagedClient)
-
-	// Mark as inactive
-	atomic.StoreInt32(&client.IsActive, 0)
-
-	// Clean up detector
-	m.detector.UnregisterClient(clientID)
-
-	// Clean up rate limiter
-	m.rateLimiter.RemoveClientLimit(clientID)
-
-	// Remove from maps
-	m.clients.Delete(clientID)
-	m.connections.Delete(client.Connection)
-
-	// Close send channel
-	close(client.SendChannel)
-
-	// Update metrics
-	m.metrics.ActiveClients.Dec()
-
-	m.logger.Info("Client unregistered",
-		zap.String("client_id", clientID),
-		zap.Int64("messages_sent", client.MessagesSent),
-		zap.Int64("messages_dropped", client.MessagesDropped))
 }
 
 // DistributeMessage queues a message for distribution with backpressure handling
@@ -386,7 +313,7 @@ func (m *BackpressureManager) DistributeMessage(messageType MessagePriority, dat
 		for _, target := range targets {
 			targetMsg := *msg
 			targetMsg.TargetID = target
-			
+
 			select {
 			case m.incomingMessages <- &targetMsg:
 				m.metrics.MessagesReceived.Inc()
@@ -402,7 +329,8 @@ func (m *BackpressureManager) DistributeMessage(messageType MessagePriority, dat
 
 // GetClientCapability returns the current capability measurement for a client
 func (m *BackpressureManager) GetClientCapability(clientID string) (*ClientCapability, error) {
-	return m.detector.GetClientCapability(clientID)
+	cap := m.detector.GetClientCapability(clientID)
+	return cap, nil
 }
 
 // SetEmergencyMode manually activates or deactivates emergency mode
@@ -412,7 +340,7 @@ func (m *BackpressureManager) SetEmergencyMode(enable bool) {
 			m.emergencyMetrics.ActivationCount++
 			m.emergencyMetrics.LastActivation = time.Now()
 			m.metrics.EmergencyActivations.Inc()
-			
+
 			m.logger.Warn("Emergency backpressure mode activated manually")
 		}
 	} else {
@@ -422,7 +350,7 @@ func (m *BackpressureManager) SetEmergencyMode(enable bool) {
 			m.emergencyMetrics.TotalDuration += duration
 			m.emergencyMetrics.LastRecovery = now
 			m.metrics.EmergencyDuration.Observe(duration.Seconds())
-			
+
 			m.logger.Info("Emergency backpressure mode deactivated manually",
 				zap.Duration("duration", duration))
 		}
@@ -443,15 +371,15 @@ func (m *BackpressureManager) GetStatus() map[string]interface{} {
 	})
 
 	return map[string]interface{}{
-		"active":                atomic.LoadInt32(&m.emergencyMode) == 0,
-		"emergency_mode":        atomic.LoadInt32(&m.emergencyMode) == 1,
-		"active_clients":        activeClients,
-		"incoming_queue_length": len(m.incomingMessages),
+		"active":                 atomic.LoadInt32(&m.emergencyMode) == 0,
+		"emergency_mode":         atomic.LoadInt32(&m.emergencyMode) == 1,
+		"active_clients":         activeClients,
+		"incoming_queue_length":  len(m.incomingMessages),
 		"processed_queue_length": len(m.processedJobs),
-		"worker_count":          m.workerCount,
-		"emergency_activations": m.emergencyMetrics.ActivationCount,
-		"last_activation":       m.emergencyMetrics.LastActivation,
-		"last_recovery":         m.emergencyMetrics.LastRecovery,
+		"worker_count":           m.workerCount,
+		"emergency_activations":  m.emergencyMetrics.ActivationCount,
+		"last_activation":        m.emergencyMetrics.LastActivation,
+		"last_recovery":          m.emergencyMetrics.LastRecovery,
 		"config": map[string]interface{}{
 			"emergency_latency_threshold":      m.config.EmergencyLatencyThreshold,
 			"emergency_queue_length_threshold": m.config.EmergencyQueueLengthThreshold,
@@ -469,12 +397,12 @@ func (m *BackpressureManager) GetMetrics() map[string]interface{} {
 
 	return map[string]interface{}{
 		"manager": map[string]interface{}{
-			"messages_received":      m.metrics.MessagesReceived,
-			"messages_processed":     m.metrics.MessagesProcessed,
-			"messages_dropped":       m.metrics.MessagesDropped,
-			"active_clients":         m.metrics.ActiveClients,
-			"clients_in_emergency":   m.metrics.ClientsInEmergency,
-			"emergency_activations":  m.emergencyMetrics.ActivationCount,
+			"messages_received":        m.metrics.MessagesReceived,
+			"messages_processed":       m.metrics.MessagesProcessed,
+			"messages_dropped":         m.metrics.MessagesDropped,
+			"active_clients":           m.metrics.ActiveClients,
+			"clients_in_emergency":     m.metrics.ClientsInEmergency,
+			"emergency_activations":    m.emergencyMetrics.ActivationCount,
 			"total_emergency_duration": m.emergencyMetrics.TotalDuration,
 			"queue_lengths": map[string]int{
 				"incoming":  len(m.incomingMessages),
@@ -494,11 +422,11 @@ func (m *BackpressureManager) TriggerEmergencyStop(reason string) {
 		m.emergencyMetrics.ActivationCount++
 		m.emergencyMetrics.LastActivation = time.Now()
 		m.metrics.EmergencyActivations.Inc()
-		
+
 		m.logger.Error("Emergency stop triggered",
 			zap.String("reason", reason),
 			zap.Time("activation_time", m.emergencyMetrics.LastActivation))
-		
+
 		// Notify cross-service coordinator
 		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
 			SignalID:      fmt.Sprintf("emergency-stop-%d", time.Now().UnixNano()),
@@ -520,10 +448,10 @@ func (m *BackpressureManager) RecoverFromEmergency() error {
 	// Check if conditions are safe for recovery
 	incomingQueueLen := len(m.incomingMessages)
 	processedQueueLen := len(m.processedJobs)
-	
+
 	if incomingQueueLen > m.config.EmergencyQueueLengthThreshold/2 ||
 		processedQueueLen > m.config.EmergencyQueueLengthThreshold/2 {
-		return fmt.Errorf("queue lengths too high for recovery: incoming=%d, processed=%d", 
+		return fmt.Errorf("queue lengths too high for recovery: incoming=%d, processed=%d",
 			incomingQueueLen, processedQueueLen)
 	}
 
@@ -533,12 +461,12 @@ func (m *BackpressureManager) RecoverFromEmergency() error {
 		m.emergencyMetrics.TotalDuration += duration
 		m.emergencyMetrics.LastRecovery = now
 		m.metrics.EmergencyDuration.Observe(duration.Seconds())
-		
+
 		m.logger.Info("Emergency recovery completed",
 			zap.Duration("emergency_duration", duration),
 			zap.Int("incoming_queue", incomingQueueLen),
 			zap.Int("processed_queue", processedQueueLen))
-		
+
 		// Notify cross-service coordinator
 		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
 			SignalID:      fmt.Sprintf("recovery-%d", time.Now().UnixNano()),
@@ -562,10 +490,10 @@ func (m *BackpressureManager) Stop() error {
 	m.cancel()
 
 	// Stop core components
-	m.detector.Stop()
-	m.rateLimiter.Stop()
-	m.priorityQ.Stop()
-	m.coordinator.Stop()
+	ctx := context.Background()
+	m.detector.Stop(ctx)
+	m.rateLimiter.Stop(ctx)
+	m.coordinator.Stop(ctx)
 
 	// Wait for workers to finish
 	m.workers.Wait()
@@ -576,125 +504,6 @@ func (m *BackpressureManager) Stop() error {
 	close(m.processedJobs)
 
 	m.logger.Info("Backpressure manager stopped")
-	return nil
-}
-
-// GetStatus returns the current status of the backpressure manager
-func (m *BackpressureManager) GetStatus() map[string]interface{} {
-	var activeClients int64
-	m.clients.Range(func(key, value interface{}) bool {
-		activeClients++
-		return true
-	})
-
-	return map[string]interface{
-		"active":                atomic.LoadInt32(&m.emergencyMode) == 0,
-		"emergency_mode":        atomic.LoadInt32(&m.emergencyMode) == 1,
-		"active_clients":        activeClients,
-		"incoming_queue_length": len(m.incomingMessages),
-		"processed_queue_length": len(m.processedJobs),
-		"worker_count":          m.workerCount,
-		"emergency_activations": m.emergencyMetrics.ActivationCount,
-		"last_activation":       m.emergencyMetrics.LastActivation,
-		"last_recovery":         m.emergencyMetrics.LastRecovery,
-		"config": map[string]interface{}{
-			"emergency_latency_threshold":      m.config.EmergencyLatencyThreshold,
-			"emergency_queue_length_threshold": m.config.EmergencyQueueLengthThreshold,
-			"global_rate_limit":                m.config.GlobalRateLimit,
-		},
-	}
-}
-
-// GetMetrics returns comprehensive metrics from all components
-func (m *BackpressureManager) GetMetrics() map[string]interface{} {
-	// Get metrics from all components
-	detectorMetrics := m.detector.GetMetrics()
-	rateLimiterMetrics := m.rateLimiter.GetMetrics()
-	coordinatorMetrics := m.coordinator.GetMetrics()
-
-	return map[string]interface{}{
-		"manager": map[string]interface{}{
-			"messages_received":      m.metrics.MessagesReceived,
-			"messages_processed":     m.metrics.MessagesProcessed,
-			"messages_dropped":       m.metrics.MessagesDropped,
-			"active_clients":         m.metrics.ActiveClients,
-			"clients_in_emergency":   m.metrics.ClientsInEmergency,
-			"emergency_activations":  m.emergencyMetrics.ActivationCount,
-			"total_emergency_duration": m.emergencyMetrics.TotalDuration,
-			"queue_lengths": map[string]int{
-				"incoming":  len(m.incomingMessages),
-				"processed": len(m.processedJobs),
-			},
-		},
-		"detector":     detectorMetrics,
-		"rate_limiter": rateLimiterMetrics,
-		"coordinator":  coordinatorMetrics,
-		"timestamp":    time.Now(),
-	}
-}
-
-// TriggerEmergencyStop triggers emergency stop mode with a reason
-func (m *BackpressureManager) TriggerEmergencyStop(reason string) {
-	if atomic.CompareAndSwapInt32(&m.emergencyMode, 0, 1) {
-		m.emergencyMetrics.ActivationCount++
-		m.emergencyMetrics.LastActivation = time.Now()
-		m.metrics.EmergencyActivations.Inc()
-		
-		m.logger.Error("Emergency stop triggered",
-			zap.String("reason", reason),
-			zap.Time("activation_time", m.emergencyMetrics.LastActivation))
-		
-		// Notify cross-service coordinator
-		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
-			SignalID:      fmt.Sprintf("emergency-stop-%d", time.Now().UnixNano()),
-			SourceService: "marketdata-backpressure",
-			SignalType:    SignalTypeEmergencyStop,
-			Severity:      5,
-			Reason:        reason,
-			ExpiresAt:     time.Now().Add(time.Hour),
-		})
-	}
-}
-
-// RecoverFromEmergency attempts to recover from emergency mode
-func (m *BackpressureManager) RecoverFromEmergency() error {
-	if atomic.LoadInt32(&m.emergencyMode) == 0 {
-		return fmt.Errorf("system is not in emergency mode")
-	}
-
-	// Check if conditions are safe for recovery
-	incomingQueueLen := len(m.incomingMessages)
-	processedQueueLen := len(m.processedJobs)
-	
-	if incomingQueueLen > m.config.EmergencyQueueLengthThreshold/2 ||
-		processedQueueLen > m.config.EmergencyQueueLengthThreshold/2 {
-		return fmt.Errorf("queue lengths too high for recovery: incoming=%d, processed=%d", 
-			incomingQueueLen, processedQueueLen)
-	}
-
-	if atomic.CompareAndSwapInt32(&m.emergencyMode, 1, 0) {
-		now := time.Now()
-		duration := now.Sub(m.emergencyMetrics.LastActivation)
-		m.emergencyMetrics.TotalDuration += duration
-		m.emergencyMetrics.LastRecovery = now
-		m.metrics.EmergencyDuration.Observe(duration.Seconds())
-		
-		m.logger.Info("Emergency recovery completed",
-			zap.Duration("emergency_duration", duration),
-			zap.Int("incoming_queue", incomingQueueLen),
-			zap.Int("processed_queue", processedQueueLen))
-		
-		// Notify cross-service coordinator
-		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
-			SignalID:      fmt.Sprintf("recovery-%d", time.Now().UnixNano()),
-			SourceService: "marketdata-backpressure",
-			SignalType:    SignalTypeRecovery,
-			Severity:      1,
-			Reason:        "Manual emergency recovery",
-			ExpiresAt:     time.Now().Add(time.Minute * 5),
-		})
-	}
-
 	return nil
 }
 
@@ -709,11 +518,11 @@ func getDefaultManagerConfig() *ManagerConfig {
 		EmergencyLatencyThreshold:     time.Millisecond * 500,
 		EmergencyQueueLengthThreshold: 50000,
 		EmergencyDropRateThreshold:    0.1,
-		RecoveryGracePeriod:          time.Second * 30,
-		RecoveryLatencyTarget:        time.Millisecond * 200,
-		ClientTimeout:                time.Minute * 5,
-		MaxClientsPerShard:           1000,
-		GlobalRateLimit:              100000,
+		RecoveryGracePeriod:           time.Second * 30,
+		RecoveryLatencyTarget:         time.Millisecond * 200,
+		ClientTimeout:                 time.Minute * 5,
+		MaxClientsPerShard:            1000,
+		GlobalRateLimit:               100000,
 		PriorityRateMultipliers: map[MessagePriority]float64{
 			PriorityCritical: 10.0,
 			PriorityHigh:     3.0,
@@ -786,8 +595,8 @@ func initManagerMetrics() *ManagerMetrics {
 
 // Error definitions
 var (
-	ErrEmergencyMode = fmt.Errorf("message dropped due to emergency backpressure mode")
-	ErrQueueFull     = fmt.Errorf("message queue is full")
-	ErrClientNotFound = fmt.Errorf("client not found")
+	ErrEmergencyMode   = fmt.Errorf("message dropped due to emergency backpressure mode")
+	ErrQueueFull       = fmt.Errorf("message queue is full")
+	ErrClientNotFound  = fmt.Errorf("client not found")
 	ErrInvalidPriority = fmt.Errorf("invalid message priority")
 )

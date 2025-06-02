@@ -14,7 +14,9 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -464,12 +466,222 @@ func (demo *IntegrationDemo) runLoadTest(ctx context.Context) {
 // SimpleAuthService provides basic auth for demo
 type SimpleAuthService struct{}
 
-func (s *SimpleAuthService) ValidateToken(ctx context.Context, token string) (*auth.Claims, error) {
+// Core Authentication
+func (s *SimpleAuthService) AuthenticateUser(ctx context.Context, email, password string) (*auth.TokenPair, *models.User, error) {
+	// Demo implementation - accept any credentials
+	userID := uuid.New()
+	user := &models.User{
+		ID:    userID,
+		Email: email,
+		Role:  "user",
+	}
+
+	tokenPair := &auth.TokenPair{
+		AccessToken:  "demo-access-token",
+		RefreshToken: "demo-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		TokenType:    "Bearer",
+	}
+
+	return tokenPair, user, nil
+}
+
+func (s *SimpleAuthService) CheckMFA(ctx context.Context, userID uuid.UUID) (bool, error) {
+	// Demo - no MFA required
+	return false, nil
+}
+
+// Token Management
+func (s *SimpleAuthService) ValidateToken(ctx context.Context, token string) (*auth.TokenClaims, error) {
 	// Simple demo auth - accept any token
-	return &auth.Claims{
-		UserID: "demo_user",
-		Email:  "demo@example.com",
+	userID, _ := uuid.NewRandom()
+	return &auth.TokenClaims{
+		UserID:      userID,
+		Email:       "demo@example.com",
+		Role:        "user",
+		Permissions: []string{"orders:read", "trades:read"},
 	}, nil
+}
+
+func (s *SimpleAuthService) RefreshToken(ctx context.Context, refreshToken string) (*auth.TokenPair, error) {
+	// Demo implementation
+	return &auth.TokenPair{
+		AccessToken:  "demo-new-access-token",
+		RefreshToken: "demo-new-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		TokenType:    "Bearer",
+	}, nil
+}
+
+func (s *SimpleAuthService) RevokeToken(ctx context.Context, tokenString string) error {
+	// Demo implementation - just log
+	fmt.Printf("Demo: Revoked token\n")
+	return nil
+}
+
+func (s *SimpleAuthService) RevokeAllTokens(ctx context.Context, userID uuid.UUID) error {
+	// Demo implementation - just log
+	fmt.Printf("Demo: Revoked all tokens for user %s\n", userID.String())
+	return nil
+}
+
+// API Key Management
+func (s *SimpleAuthService) CreateAPIKey(ctx context.Context, userID uuid.UUID, name string, permissions []string, expiresAt *time.Time) (*auth.APIKey, error) {
+	// Demo implementation
+	return &auth.APIKey{
+		ID:          uuid.New(),
+		UserID:      userID,
+		Name:        name,
+		Permissions: permissions,
+		ExpiresAt:   expiresAt,
+	}, nil
+}
+
+func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (*auth.APIKeyClaims, error) {
+	// Demo implementation
+	return &auth.APIKeyClaims{
+		UserID:      uuid.New(),
+		KeyID:       uuid.New(),
+		Permissions: []string{"api:read"},
+	}, nil
+}
+
+func (s *SimpleAuthService) RevokeAPIKey(ctx context.Context, keyID uuid.UUID) error {
+	// Demo implementation
+	fmt.Printf("Demo: Revoked API key %s\n", keyID.String())
+	return nil
+}
+
+func (s *SimpleAuthService) ListAPIKeys(ctx context.Context, userID uuid.UUID) ([]*auth.APIKey, error) {
+	// Demo implementation - return empty list
+	return []*auth.APIKey{}, nil
+}
+
+// Multi-Factor Authentication
+func (s *SimpleAuthService) GenerateTOTPSecret(ctx context.Context, userID uuid.UUID) (*auth.TOTPSetup, error) {
+	// Demo implementation
+	return &auth.TOTPSetup{
+		Secret: "demo-totp-secret",
+		QRCode: "demo-qr-code",
+	}, nil
+}
+
+func (s *SimpleAuthService) VerifyTOTPSetup(ctx context.Context, userID uuid.UUID, secret, token string) error {
+	// Demo implementation - always succeeds
+	return nil
+}
+
+func (s *SimpleAuthService) VerifyTOTPToken(ctx context.Context, userID uuid.UUID, token string) error {
+	// Demo implementation - always succeeds
+	return nil
+}
+
+func (s *SimpleAuthService) DisableTOTP(ctx context.Context, userID uuid.UUID, currentPassword string) error {
+	// Demo implementation - always succeeds
+	return nil
+}
+
+// Session Management
+func (s *SimpleAuthService) CreateSession(ctx context.Context, userID uuid.UUID, deviceFingerprint string) (*auth.Session, error) {
+	// Demo implementation
+	return &auth.Session{
+		ID:        uuid.New(),
+		UserID:    userID,
+		IsActive:  true,
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}, nil
+}
+
+func (s *SimpleAuthService) ValidateSession(ctx context.Context, sessionID uuid.UUID) (*auth.Session, error) {
+	// Demo implementation
+	return &auth.Session{
+		ID:        sessionID,
+		UserID:    uuid.New(),
+		IsActive:  true,
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}, nil
+}
+
+func (s *SimpleAuthService) InvalidateSession(ctx context.Context, sessionID uuid.UUID) error {
+	// Demo implementation
+	fmt.Printf("Demo: Invalidated session %s\n", sessionID.String())
+	return nil
+}
+
+func (s *SimpleAuthService) InvalidateAllSessions(ctx context.Context, userID uuid.UUID) error {
+	// Demo implementation
+	fmt.Printf("Demo: Invalidated all sessions for user %s\n", userID.String())
+	return nil
+}
+
+// OAuth2/OIDC
+func (s *SimpleAuthService) InitiateOAuthFlow(ctx context.Context, provider, redirectURI string) (*auth.OAuthState, error) {
+	// Demo implementation
+	return &auth.OAuthState{
+		State:       "demo-oauth-state",
+		Provider:    provider,
+		RedirectURI: redirectURI,
+	}, nil
+}
+
+func (s *SimpleAuthService) HandleOAuthCallback(ctx context.Context, state, code string) (*auth.TokenPair, error) {
+	// Demo implementation
+	return &auth.TokenPair{
+		AccessToken:  "demo-oauth-access-token",
+		RefreshToken: "demo-oauth-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		TokenType:    "Bearer",
+	}, nil
+}
+
+func (s *SimpleAuthService) LinkOAuthAccount(ctx context.Context, userID uuid.UUID, provider, oauthUserID string) error {
+	// Demo implementation
+	fmt.Printf("Demo: Linked OAuth account %s:%s to user %s\n", provider, oauthUserID, userID.String())
+	return nil
+}
+
+// Role-Based Access Control (RBAC)
+func (s *SimpleAuthService) ValidatePermission(ctx context.Context, userID uuid.UUID, resource, action string) error {
+	// Demo implementation - always allow
+	return nil
+}
+
+func (s *SimpleAuthService) AssignRole(ctx context.Context, userID uuid.UUID, role string) error {
+	// Demo implementation - just log the assignment
+	fmt.Printf("Demo: Assigned role %s to user %s\n", role, userID.String())
+	return nil
+}
+
+func (s *SimpleAuthService) RevokeRole(ctx context.Context, userID uuid.UUID, role string) error {
+	// Demo implementation
+	fmt.Printf("Demo: Revoked role %s from user %s\n", role, userID.String())
+	return nil
+}
+
+func (s *SimpleAuthService) GetUserPermissions(ctx context.Context, userID uuid.UUID) ([]auth.Permission, error) {
+	// Demo implementation - return basic permissions
+	return []auth.Permission{
+		{Resource: "orders", Action: "read"},
+		{Resource: "trades", Action: "read"},
+	}, nil
+}
+
+// Device Management
+func (s *SimpleAuthService) RegisterTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) error {
+	// Demo implementation
+	fmt.Printf("Demo: Registered trusted device %s for user %s\n", deviceFingerprint, userID.String())
+	return nil
+}
+
+func (s *SimpleAuthService) IsTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) (bool, error) {
+	// Demo implementation - all devices are trusted
+	return true, nil
+}
+
+func (s *SimpleAuthService) RevokeTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) error {
+	// Demo implementation
+	fmt.Printf("Demo: Revoked trusted device %s for user %s\n", deviceFingerprint, userID.String())
+	return nil
 }
 
 // Main function to run the integration demo

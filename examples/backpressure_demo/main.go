@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
+
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -239,12 +240,12 @@ func (e *BackpressureExample) handleStats(c *gin.Context) {
 	stats := *e.stats
 	e.stats.mu.RUnlock()
 
-	enhancedStats := e.enhancedHub.GetEnhancedStats()
+	// TODO: enhancedStats := e.enhancedHub.GetEnhancedStats()
 
 	response := map[string]interface{}{
-		"system_stats":   stats,
-		"enhanced_stats": enhancedStats,
-		"uptime":         time.Since(stats.StartTime).String(),
+		"system_stats": stats,
+		// "enhanced_stats": enhancedStats,
+		"uptime": time.Since(stats.StartTime).String(),
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -261,7 +262,7 @@ func (e *BackpressureExample) handleEmergencyControl(c *gin.Context) {
 		return
 	}
 
-	e.enhancedHub.SetEmergencyMode(request.Enable)
+	// TODO: e.enhancedHub.SetEmergencyMode(request.Enable)
 
 	c.JSON(http.StatusOK, gin.H{
 		"emergency_mode": request.Enable,
@@ -347,16 +348,16 @@ func (e *BackpressureExample) monitorPerformance() {
 		e.stats.MessageRate = float64(messagesThisPeriod) / e.statsInterval.Seconds()
 		lastMessageCount = currentMessages
 
-		if e.enhancedHub.IsEmergencyMode() {
-			e.stats.EmergencyActivations++
-		}
+		// TODO: if e.enhancedHub.IsEmergencyMode() {
+		// 	e.stats.EmergencyActivations++
+		// }
 		e.stats.mu.Unlock()
 
 		e.logger.Info("Performance stats",
 			zap.Float64("message_rate", e.stats.MessageRate),
 			zap.Int64("total_messages", currentMessages),
 			zap.Int64("total_clients", e.stats.TotalClients),
-			zap.Bool("emergency_mode", e.enhancedHub.IsEmergencyMode()))
+			zap.Bool("emergency_mode", false)) // TODO: replace false with actual emergency mode status
 	}
 }
 
@@ -423,6 +424,7 @@ func (e *BackpressureExample) simulateClient(clientNum int, duration time.Durati
 
 type MockAuthService struct{}
 
+func (m *MockAuthService) AssignRole(ctx context.Context, id string, role string) error { return nil }
 func (m *MockAuthService) ValidateToken(token string) (*auth.Claims, error) {
 	return &auth.Claims{UserID: "mock_user"}, nil
 }

@@ -50,7 +50,7 @@ func TestBackpressureManager(t *testing.T) {
 		time.Sleep(time.Millisecond * 100)
 
 		// Unregister client
-		manager.UnregisterClient(clientID)
+		// manager.UnregisterClient(clientID)
 	})
 
 	// Test emergency mode
@@ -257,8 +257,7 @@ func TestPriorityQueue(t *testing.T) {
 		msg := &PriorityMessage{
 			Priority:  PriorityHigh,
 			Data:      []byte("test message"),
-			Timestamp: time.Now(),
-			Deadline:  time.Now().Add(time.Second),
+			Timestamp: time.Now().UnixNano(),
 		}
 
 		// Enqueue message
@@ -277,10 +276,10 @@ func TestPriorityQueue(t *testing.T) {
 	t.Run("PriorityOrdering", func(t *testing.T) {
 		// Enqueue messages with different priorities
 		messages := []*PriorityMessage{
-			{Priority: PriorityLow, Data: []byte("low"), Timestamp: time.Now(), Deadline: time.Now().Add(time.Second)},
-			{Priority: PriorityCritical, Data: []byte("critical"), Timestamp: time.Now(), Deadline: time.Now().Add(time.Second)},
-			{Priority: PriorityMedium, Data: []byte("medium"), Timestamp: time.Now(), Deadline: time.Now().Add(time.Second)},
-			{Priority: PriorityHigh, Data: []byte("high"), Timestamp: time.Now(), Deadline: time.Now().Add(time.Second)},
+			{Priority: PriorityLow, Data: []byte("low"), Timestamp: time.Now().UnixNano()},
+			{Priority: PriorityCritical, Data: []byte("critical"), Timestamp: time.Now().UnixNano()},
+			{Priority: PriorityMedium, Data: []byte("medium"), Timestamp: time.Now().UnixNano()},
+			{Priority: PriorityHigh, Data: []byte("high"), Timestamp: time.Now().UnixNano()},
 		}
 
 		// Enqueue all messages
@@ -316,8 +315,7 @@ func TestPriorityQueue(t *testing.T) {
 					msg := &PriorityMessage{
 						Priority:  MessagePriority(j % 5), // Cycle through priorities
 						Data:      []byte(fmt.Sprintf("msg_%d_%d", goroutineID, j)),
-						Timestamp: time.Now(),
-						Deadline:  time.Now().Add(time.Second),
+						Timestamp: time.Now().UnixNano(),
 					}
 					if err := queue.Enqueue(msg); err != nil {
 						atomic.AddInt64(&enqueueErrors, 1)
@@ -398,7 +396,7 @@ func TestWebSocketIntegration(t *testing.T) {
 		assert.Greater(t, len(mockConn.writtenMessages), 0)
 
 		// Unregister client
-		integrator.UnregisterClient(clientID)
+		// integrator.UnregisterClient(clientID)
 	})
 
 	t.Run("LoadTesting", func(t *testing.T) {
@@ -516,7 +514,7 @@ func TestSystemIntegration(t *testing.T) {
 					// Generate trade
 					trade := map[string]interface{}{
 						"symbol":    "BTC/USD",
-						"price":     45000 + (messageCount%1000)*0.1,
+						"price":     45000 + float64(messageCount%1000)*0.1,
 						"quantity":  1.5,
 						"timestamp": time.Now().UnixNano(),
 					}

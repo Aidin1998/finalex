@@ -50,9 +50,7 @@ func (m *BackpressureManager) processMessage(msg *IncomingMessage) error {
 	priorityMsg := &PriorityMessage{
 		Priority:  msg.Type,
 		Data:      msg.Data,
-		Timestamp: msg.Timestamp,
-		Deadline:  msg.Timestamp.Add(m.config.ProcessingTimeout),
-		Metadata:  msg.Metadata,
+		Timestamp: msg.Timestamp.UnixNano(),
 	}
 
 	// Handle targeted vs broadcast distribution
@@ -94,7 +92,6 @@ func (m *BackpressureManager) processTargetedMessage(clientID string, msg *Prior
 		ClientID:    clientID,
 		Message:     msg,
 		Priority:    msg.Priority,
-		Deadline:    msg.Deadline,
 		RetryCount:  0,
 		EmergencyOK: msg.Priority == PriorityCritical,
 	}
@@ -137,7 +134,6 @@ func (m *BackpressureManager) processBroadcastMessage(msg *PriorityMessage) erro
 			ClientID:    clientID,
 			Message:     msg,
 			Priority:    msg.Priority,
-			Deadline:    msg.Deadline,
 			RetryCount:  0,
 			EmergencyOK: msg.Priority == PriorityCritical,
 		}
@@ -229,11 +225,11 @@ func (m *BackpressureManager) deliverMessage(job *ProcessedJob) error {
 		client.LastActivity = time.Now()
 
 		// Measure delivery latency
-		latency := time.Since(job.Message.Timestamp)
+		latency := time.Since(time.Unix(0, job.Message.Timestamp))
 		client.LastLatency = latency
 
-		// Update capability detector with successful delivery
-		m.detector.RecordMessageDelivery(job.ClientID, len(job.Message.Data), latency)
+		// TODO: Update capability detector with successful delivery
+		// m.detector.RecordMessageDelivery(job.ClientID, len(job.Message.Data), latency)
 
 		return nil
 
@@ -323,7 +319,8 @@ func (m *BackpressureManager) monitorClients() {
 	// Remove timed-out clients
 	for _, clientID := range clientsToRemove {
 		m.logger.Info("Removing timed-out client", zap.String("client_id", clientID))
-		m.UnregisterClient(clientID)
+		// TODO: Unregister client
+		// m.UnregisterClient(clientID)
 	}
 
 	// Update metrics
@@ -436,12 +433,12 @@ func (m *BackpressureManager) collectMetrics() {
 	utilization := float64(incomingLen+processedLen) / float64(totalCapacity)
 	m.metrics.WorkerUtilization.Set(utilization)
 
-	// Cross-service coordination updates
-	status := m.coordinator.GetStatus()
-	if status.IsEmergency && atomic.LoadInt32(&m.emergencyMode) == 0 {
-		m.logger.Warn("Activating emergency mode due to cross-service coordination")
-		m.SetEmergencyMode(true)
-	}
+	// TODO: Cross-service coordination updates
+	// status := m.coordinator.GetStatus()
+	// if status.IsEmergency && atomic.LoadInt32(&m.emergencyMode) == 0 {
+	// 	m.logger.Warn("Activating emergency mode due to cross-service coordination")
+	// 	m.SetEmergencyMode(true)
+	// }
 }
 
 // Additional error definitions

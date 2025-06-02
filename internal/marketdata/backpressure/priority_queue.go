@@ -46,20 +46,8 @@ type LockFreePriorityQueue struct {
 	stats QueueStats
 
 	// Configuration
-	config *QueueConfig
+	config *PriorityQueueConfig
 	logger *zap.Logger
-}
-
-// QueueConfig defines queue configuration
-type QueueConfig struct {
-	CriticalQueueSize int           // Size for critical messages (trades/settlements)
-	HighQueueSize     int           // Size for high priority messages
-	MediumQueueSize   int           // Size for medium priority messages
-	LowQueueSize      int           // Size for low priority messages
-	MarketQueueSize   int           // Size for market data messages
-	FastPathEnabled   bool          // Enable ultra-fast path for critical messages
-	DropPolicy        DropPolicy    // What to drop when queues are full
-	MaxLatency        time.Duration // Maximum acceptable latency
 }
 
 // DropPolicy defines what to drop when queues are full
@@ -97,9 +85,17 @@ type lockFreeRingBuffer struct {
 }
 
 // NewLockFreePriorityQueue creates a new lock-free priority queue
-func NewLockFreePriorityQueue(config *QueueConfig, logger *zap.Logger) *LockFreePriorityQueue {
+func NewLockFreePriorityQueue(config *PriorityQueueConfig, logger *zap.Logger) *LockFreePriorityQueue {
 	if config == nil {
-		config = DefaultQueueConfig()
+		// Use some sensible defaults if needed
+		config = &PriorityQueueConfig{
+			InitialCapacity: 4096,
+			MaxCapacity:     8192,
+			ShardCount:      1,
+			FastPathEnabled: true,
+			GCInterval:      time.Second * 10,
+			CompactionRatio: 0.5,
+		}
 	}
 
 	q := &LockFreePriorityQueue{
@@ -107,33 +103,23 @@ func NewLockFreePriorityQueue(config *QueueConfig, logger *zap.Logger) *LockFree
 		logger: logger,
 	}
 
-	// Initialize per-priority queues with optimized sizes
-	q.queues[PriorityCritical] = newLockFreeRingBuffer(config.CriticalQueueSize)
-	q.queues[PriorityHigh] = newLockFreeRingBuffer(config.HighQueueSize)
-	q.queues[PriorityMedium] = newLockFreeRingBuffer(config.MediumQueueSize)
-	q.queues[PriorityLow] = newLockFreeRingBuffer(config.LowQueueSize)
-	q.queues[PriorityMarket] = newLockFreeRingBuffer(config.MarketQueueSize)
+	// Map centralized config to internal queue sizes
+	criticalSize := config.InitialCapacity
+	highSize := config.InitialCapacity / 2
+	mediumSize := config.InitialCapacity / 4
+	lowSize := config.InitialCapacity / 8
+	marketSize := config.InitialCapacity / 16
 
-	// Initialize fast path for critical messages
+	q.queues[PriorityCritical] = newLockFreeRingBuffer(criticalSize)
+	q.queues[PriorityHigh] = newLockFreeRingBuffer(highSize)
+	q.queues[PriorityMedium] = newLockFreeRingBuffer(mediumSize)
+	q.queues[PriorityLow] = newLockFreeRingBuffer(lowSize)
+	q.queues[PriorityMarket] = newLockFreeRingBuffer(marketSize)
+
 	if config.FastPathEnabled {
 		q.criticalFast = make(chan *PriorityMessage, 16) // Small buffered channel for burst
 	}
-
 	return q
-}
-
-// DefaultQueueConfig returns optimized default configuration
-func DefaultQueueConfig() *QueueConfig {
-	return &QueueConfig{
-		CriticalQueueSize: 4096,                   // Large buffer for trades/settlements
-		HighQueueSize:     2048,                   // Medium buffer for order events
-		MediumQueueSize:   1024,                   // Smaller buffer for order book updates
-		LowQueueSize:      512,                    // Small buffer for statistics
-		MarketQueueSize:   256,                    // Tiny buffer for market data (can drop)
-		FastPathEnabled:   true,                   // Enable ultra-fast critical path
-		DropPolicy:        DropNever,              // Never drop critical/high priority
-		MaxLatency:        time.Microsecond * 100, // 100μs max latency target
-	}
 }
 
 // newLockFreeRingBuffer creates a new lock-free ring buffer

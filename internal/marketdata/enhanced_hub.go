@@ -22,7 +22,7 @@ type EnhancedHub struct {
 	// Backpressure management
 	backpressureManager *backpressure.BackpressureManager
 	wsIntegrator        *backpressure.WebSocketIntegrator
-	
+
 	// Enhanced client management
 	enhancedClients sync.Map // clientID -> *EnhancedClient
 	clientIDCounter int64
@@ -52,21 +52,21 @@ type EnhancedClient struct {
 type EnhancedHubConfig struct {
 	// Backpressure configuration
 	BackpressureConfigPath string `json:"backpressure_config_path"`
-	
+
 	// Enhanced features
 	EnablePerformanceMonitoring bool `json:"enable_performance_monitoring"`
 	EnableAdaptiveRateLimiting  bool `json:"enable_adaptive_rate_limiting"`
 	EnableCrossServiceCoord     bool `json:"enable_cross_service_coordination"`
-	
+
 	// Client management
-	AutoClientClassification   bool          `json:"auto_client_classification"`
-	ClientTimeoutExtended      time.Duration `json:"client_timeout_extended"`
-	MaxClientsPerInstance      int           `json:"max_clients_per_instance"`
-	
+	AutoClientClassification bool          `json:"auto_client_classification"`
+	ClientTimeoutExtended    time.Duration `json:"client_timeout_extended"`
+	MaxClientsPerInstance    int           `json:"max_clients_per_instance"`
+
 	// Performance tuning
-	MessageBatchSize           int           `json:"message_batch_size"`
-	BroadcastCoalescing        bool          `json:"broadcast_coalescing"`
-	CoalescingWindowMs         int           `json:"coalescing_window_ms"`
+	MessageBatchSize    int  `json:"message_batch_size"`
+	BroadcastCoalescing bool `json:"broadcast_coalescing"`
+	CoalescingWindowMs  int  `json:"coalescing_window_ms"`
 }
 
 // NewEnhancedHub creates a new market data hub with backpressure management
@@ -74,7 +74,7 @@ func NewEnhancedHub(authService auth.AuthService, config *EnhancedHubConfig, log
 	if config == nil {
 		config = getDefaultEnhancedHubConfig()
 	}
-	
+
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -89,7 +89,7 @@ func NewEnhancedHub(authService auth.AuthService, config *EnhancedHubConfig, log
 	}
 
 	// Create backpressure manager
-	backpressureManager, err := backpressure.NewBackpressureManager(&backpressureConfig.Manager, logger.Named("backpressure"))
+	backpressureManager, err := backpressure.NewBackpressureManager(backpressureConfig, logger.Named("backpressure"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backpressure manager: %w", err)
 	}
@@ -164,9 +164,9 @@ func (h *EnhancedHub) RegisterClientEnhanced(conn *websocket.Conn, userID string
 
 	// Create enhanced client
 	enhancedClient := &EnhancedClient{
-		Client:       originalClient,
-		ID:           clientID,
-		LastActivity: time.Now(),
+		Client:         originalClient,
+		ID:             clientID,
+		LastActivity:   time.Now(),
 		Classification: backpressure.ClientTypeUnknown, // Will be updated by auto-classification
 	}
 
@@ -193,10 +193,9 @@ func (h *EnhancedHub) UnregisterClientEnhanced(conn *websocket.Conn) {
 	// Find client by connection
 	var clientID string
 	var enhancedClient *EnhancedClient
-
 	h.enhancedClients.Range(func(key, value interface{}) bool {
 		client := value.(*EnhancedClient)
-		if client.conn == conn {
+		if client.Client.conn == conn {
 			clientID = key.(string)
 			enhancedClient = client
 			return false
@@ -273,7 +272,7 @@ func (h *EnhancedHub) SendToClientEnhanced(clientID string, messageType string, 
 	if err != nil {
 		return fmt.Errorf("failed to serialize message: %w", err)
 	}
-	
+
 	return h.wsIntegrator.SendToClient(clientID, messageType, messageData)
 }
 
@@ -360,12 +359,12 @@ func (h *EnhancedHub) GetPerformanceStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_clients":        clientCount,
-		"active_clients":       activeConnections,
-		"avg_latency_ns":       avgLatency,
-		"avg_bandwidth_bps":    avgBandwidth,
-		"avg_processing_speed": avgProcessingSpeed,
-		"emergency_mode":       h.isEmergencyModeWrapper(),
+		"total_clients":                  clientCount,
+		"active_clients":                 activeConnections,
+		"avg_latency_ns":                 avgLatency,
+		"avg_bandwidth_bps":              avgBandwidth,
+		"avg_processing_speed":           avgProcessingSpeed,
+		"emergency_mode":                 h.isEmergencyModeWrapper(),
 		"performance_class_distribution": h.getClientClassDistribution(),
 	}
 }
@@ -382,7 +381,7 @@ func (h *EnhancedHub) getClientClassDistribution() map[string]int {
 
 	h.enhancedClients.Range(func(key, value interface{}) bool {
 		client := value.(*EnhancedClient)
-		
+
 		switch client.Classification {
 		case backpressure.ClientTypeHFT:
 			distribution["HFT"]++
@@ -395,7 +394,7 @@ func (h *EnhancedHub) getClientClassDistribution() map[string]int {
 		default:
 			distribution["Unknown"]++
 		}
-		
+
 		return true
 	})
 
@@ -501,7 +500,7 @@ func (h *EnhancedHub) serializeMessage(messageType string, data interface{}) ([]
 		"data":      data,
 		"timestamp": time.Now(),
 	}
-	
+
 	return json.Marshal(message)
 }
 
@@ -524,382 +523,6 @@ func (h *EnhancedHub) Stop(ctx context.Context) error {
 		if err := h.backpressureManager.Stop(); err != nil {
 			h.logger.Error("Error stopping backpressure manager", zap.Error(err))
 		}
-	}
-
-	// Wait for monitoring goroutines
-	h.shutdownWG.Wait()
-
-	h.logger.Info("Enhanced market data hub stopped")
-	return nil
-}
-
-func getDefaultEnhancedHubConfig() *EnhancedHubConfig {
-	return &EnhancedHubConfig{
-		BackpressureConfigPath:      "configs/backpressure.yaml",
-		EnablePerformanceMonitoring: true,
-		EnableAdaptiveRateLimiting:  true,
-		EnableCrossServiceCoord:     true,
-		AutoClientClassification:    true,
-		ClientTimeoutExtended:       time.Minute * 10,
-		MaxClientsPerInstance:       10000,
-		MessageBatchSize:            100,
-		BroadcastCoalescing:         true,
-		CoalescingWindowMs:          10,
-	}
-}
-
-	h.enhancedClients.Range(func(key, value interface{}) bool {
-		clientID := key.(string)
-		client := value.(*EnhancedClient)
-		activeClients++
-
-		// Update client activity
-		client.LastActivity = time.Now()
-
-		// Auto-classify client if enabled
-		if h.config.AutoClientClassification {
-			if capability, err := h.getClientCapabilityWrapper(clientID); err == nil && capability != nil {
-				newClass := h.classifyClient(capability)
-				if newClass != client.Classification {
-					client.Classification = newClass
-					h.logger.Debug("Client reclassified",
-						zap.String("client_id", clientID),
-						zap.Int("old_class", int(client.Classification)),
-						zap.Int("new_class", int(newClass)))
-				}
-			}
-		}
-
-		return true
-	})
-
-	h.logger.Debug("Performance metrics collected", zap.Int("active_clients", activeClients))
-}
-
-// classifyClient automatically classifies a client based on performance
-func (h *EnhancedHub) classifyClient(capability *backpressure.ClientCapability) backpressure.ClientType {
-	// Classification logic based on thresholds
-	if capability.CurrentBandwidth > 10*1024*1024 && // 10MB/s
-		capability.CurrentProcessingSpeed > 10000 && // 10k msgs/s
-		capability.CurrentLatency < int64(5*time.Millisecond) { // < 5ms
-		return backpressure.ClientTypeHFT
-	}
-
-	if capability.CurrentBandwidth > 5*1024*1024 && // 5MB/s
-		capability.CurrentProcessingSpeed > 5000 && // 5k msgs/s
-		capability.CurrentLatency < int64(10*time.Millisecond) { // < 10ms
-		return backpressure.ClientTypeMarketMaker
-	}
-
-	if capability.CurrentBandwidth > 2*1024*1024 && // 2MB/s
-		capability.CurrentProcessingSpeed > 2000 && // 2k msgs/s
-		capability.CurrentLatency < int64(25*time.Millisecond) { // < 25ms
-		return backpressure.ClientTypeInstitutional
-	}
-
-	return backpressure.ClientTypeRetail
-}
-
-// Helper methods to wrap functionality that may not be available
-
-func (h *EnhancedHub) getClientCapabilityWrapper(clientID string) (*backpressure.ClientCapability, error) {
-	// Try to get capability from detector directly
-	if h.backpressureManager != nil {
-		return h.backpressureManager.GetClientCapability(clientID)
-	}
-	return nil, fmt.Errorf("backpressure manager not available")
-}
-
-func (h *EnhancedHub) isEmergencyModeWrapper() bool {
-	if h.backpressureManager != nil {
-		return h.backpressureManager.IsEmergencyMode()
-	}
-	return false
-}
-
-func (h *EnhancedHub) serializeMessage(messageType string, data interface{}) ([]byte, error) {
-	message := map[string]interface{}{
-		"type":      messageType,
-		"data":      data,
-		"timestamp": time.Now(),
-	}
-	
-	return json.Marshal(message)
-}
-
-// Stop gracefully shuts down the enhanced hub
-func (h *EnhancedHub) Stop(ctx context.Context) error {
-	h.logger.Info("Stopping enhanced market data hub")
-
-	// Cancel context
-	h.cancel()
-
-	// Stop WebSocket integrator
-	if h.wsIntegrator != nil {
-		if err := h.wsIntegrator.Stop(); err != nil {
-			h.logger.Error("Error stopping WebSocket integrator", zap.Error(err))
-		}
-	}
-
-	// Stop backpressure manager
-	if h.backpressureManager != nil {
-		if err := h.backpressureManager.Stop(); err != nil {
-			h.logger.Error("Error stopping backpressure manager", zap.Error(err))
-		}
-	}
-
-	// Wait for monitoring goroutines
-	h.shutdownWG.Wait()
-
-	h.logger.Info("Enhanced market data hub stopped")
-	return nil
-}
-
-func getDefaultEnhancedHubConfig() *EnhancedHubConfig {
-	return &EnhancedHubConfig{
-		BackpressureConfigPath:      "configs/backpressure.yaml",
-		EnablePerformanceMonitoring: true,
-		EnableAdaptiveRateLimiting:  true,
-		EnableCrossServiceCoord:     true,
-		AutoClientClassification:    true,
-		ClientTimeoutExtended:       time.Minute * 10,
-		MaxClientsPerInstance:       10000,
-		MessageBatchSize:            100,
-		BroadcastCoalescing:         true,
-		CoalescingWindowMs:          10,
-	}
-}
-
-// BroadcastToChannelEnhanced broadcasts a message to a specific channel with backpressure management
-func (h *EnhancedHub) BroadcastToChannelEnhanced(channel, messageType string, data interface{}) error {
-	start := time.Now()
-
-	// Use WebSocket integrator for channel-specific broadcast
-	if err := h.wsIntegrator.BroadcastToChannel(channel, messageType, data); err != nil {
-		MarketDataDroppedMessages.Inc()
-		return fmt.Errorf("failed to broadcast to channel %s: %w", channel, err)
-	}
-
-	// Update metrics
-	MarketDataMessages.Inc()
-	MarketDataBroadcastLatency.Observe(time.Since(start).Seconds())
-
-	return nil
-}
-
-// GetConnectedClientsCount returns the number of connected clients
-func (h *EnhancedHub) GetConnectedClientsCount() int {
-	count := 0
-	h.enhancedClients.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
-}
-
-// GetClientStats returns detailed statistics for all connected clients
-func (h *EnhancedHub) GetClientStats() []map[string]interface{} {
-	var stats []map[string]interface{}
-
-	h.enhancedClients.Range(func(key, value interface{}) bool {
-		clientID := key.(string)
-		client := value.(*EnhancedClient)
-
-		clientStat := map[string]interface{}{
-			"id":             clientID,
-			"connected_at":   client.connected,
-			"last_activity":  client.LastActivity,
-			"message_count":  client.MessageCount,
-			"bytes_sent":     client.BytesSent,
-			"classification": string(client.Classification),
-		}
-
-		// Add capability info if available
-		if capability, err := h.backpressureManager.GetClientCapability(clientID); err == nil {
-			clientStat["capability"] = map[string]interface{}{
-				"bandwidth":         capability.CurrentBandwidth,
-				"processing_speed":  capability.CurrentProcessingSpeed,
-				"latency":           capability.CurrentLatency,
-				"message_queue_size": capability.MessageQueueSize,
-			}
-		}
-
-		stats = append(stats, clientStat)
-		return true
-	})
-
-	return stats
-}
-
-// GetPerformanceStats returns overall performance statistics
-func (h *EnhancedHub) GetPerformanceStats() map[string]interface{} {
-	// Get backpressure manager metrics
-	backpressureMetrics := h.backpressureManager.GetMetrics()
-	
-	// Get WebSocket integrator stats
-	wsStats := h.wsIntegrator.GetStats()
-
-	// Calculate aggregated statistics
-	var totalBandwidth int64
-	var totalProcessingSpeed int64
-	var totalLatency int64
-	var clientCount int
-	var activeConnections int
-
-	h.enhancedClients.Range(func(key, value interface{}) bool {
-		clientID := key.(string)
-		client := value.(*EnhancedClient)
-		clientCount++
-
-		// Check if client is active (sent message in last minute)
-		if time.Since(client.LastActivity) < time.Minute {
-			activeConnections++
-		}
-
-		// Add capability metrics
-		if capability, err := h.backpressureManager.GetClientCapability(clientID); err == nil {
-			totalBandwidth += capability.CurrentBandwidth
-			totalProcessingSpeed += capability.CurrentProcessingSpeed
-			totalLatency += capability.CurrentLatency
-		}
-
-		return true
-	})
-
-	avgLatency := int64(0)
-	avgBandwidth := int64(0)
-	avgProcessingSpeed := int64(0)
-
-	if clientCount > 0 {
-		avgLatency = totalLatency / int64(clientCount)
-		avgBandwidth = totalBandwidth / int64(clientCount)
-		avgProcessingSpeed = totalProcessingSpeed / int64(clientCount)
-	}
-
-	return map[string]interface{}{
-		"total_clients":        clientCount,
-		"active_clients":       activeConnections,
-		"avg_latency_ns":       avgLatency,
-		"avg_bandwidth_bps":    avgBandwidth,
-		"avg_processing_speed": avgProcessingSpeed,
-		"emergency_mode":       h.IsEmergencyMode(),
-		"backpressure_metrics": backpressureMetrics,
-		"websocket_stats":      wsStats,
-		"performance_class_distribution": h.getClientClassDistribution(),
-	}
-}
-
-// getClientClassDistribution returns distribution of client performance classes
-func (h *EnhancedHub) getClientClassDistribution() map[string]int {
-	distribution := map[string]int{
-		string(backpressure.HFTClient):           0,
-		string(backpressure.MarketMakerClient):   0,
-		string(backpressure.InstitutionalClient): 0,
-		string(backpressure.RetailClient):        0,
-	}
-
-	h.enhancedClients.Range(func(key, value interface{}) bool {
-		client := value.(*EnhancedClient)
-		distribution[string(client.Classification)]++
-		return true
-	})
-
-	return distribution
-}
-
-// UpdateClientSubscription updates channel subscriptions for a client
-func (h *EnhancedHub) UpdateClientSubscription(clientID string, channel string, subscribe bool) error {
-	// Find the enhanced client
-	clientInterface, exists := h.enhancedClients.Load(clientID)
-	if !exists {
-		return fmt.Errorf("client %s not found", clientID)
-	}
-
-	client := clientInterface.(*EnhancedClient)
-
-	// Update subscription in original client
-	if subscribe {
-		client.channels[channel] = true
-	} else {
-		delete(client.channels, channel)
-	}
-
-	// Update subscription in WebSocket integrator
-	return h.wsIntegrator.UpdateClientSubscription(clientID, channel, subscribe)
-}
-
-// GetClientSubscriptions returns current subscriptions for a client
-func (h *EnhancedHub) GetClientSubscriptions(clientID string) ([]string, error) {
-	clientInterface, exists := h.enhancedClients.Load(clientID)
-	if !exists {
-		return nil, fmt.Errorf("client %s not found", clientID)
-	}
-
-	client := clientInterface.(*EnhancedClient)
-	
-	var subscriptions []string
-	for channel := range client.channels {
-		if channel != "_protocol" { // Skip internal markers
-			subscriptions = append(subscriptions, channel)
-		}
-	}
-
-	return subscriptions, nil
-}
-
-// SetClientPriority sets the message priority for a specific client
-func (h *EnhancedHub) SetClientPriority(clientID string, priority backpressure.MessagePriority) error {
-	return h.wsIntegrator.SetClientPriority(clientID, priority)
-}
-
-// GetSystemLoad returns current system load metrics
-func (h *EnhancedHub) GetSystemLoad() map[string]interface{} {
-	return map[string]interface{}{
-		"cpu_usage":           "calculated_from_runtime",
-		"memory_usage":        "calculated_from_runtime", 
-		"goroutine_count":     "runtime.NumGoroutine()",
-		"gc_stats":            "runtime.ReadMemStats",
-		"message_queue_depth": h.backpressureManager.GetQueueDepth(),
-		"emergency_mode":      h.IsEmergencyMode(),
-	}
-}
-
-// ValidateConfiguration validates the enhanced hub configuration
-func (config *EnhancedHubConfig) Validate() error {
-	if config.BackpressureConfigPath == "" {
-		return fmt.Errorf("backpressure config path is required")
-	}
-
-	if config.MaxClientsPerInstance <= 0 {
-		return fmt.Errorf("max clients per instance must be positive")
-	}
-
-	if config.MessageBatchSize <= 0 {
-		return fmt.Errorf("message batch size must be positive")
-	}
-
-	if config.CoalescingWindowMs < 0 {
-		return fmt.Errorf("coalescing window must be non-negative")
-	}
-
-	return nil
-}
-
-// Stop gracefully shuts down the enhanced hub
-func (h *EnhancedHub) Stop() error {
-	h.logger.Info("Stopping enhanced market data hub")
-
-	// Cancel context
-	h.cancel()
-
-	// Stop WebSocket integrator
-	if err := h.wsIntegrator.Stop(); err != nil {
-		h.logger.Error("Error stopping WebSocket integrator", zap.Error(err))
-	}
-
-	// Stop backpressure manager
-	if err := h.backpressureManager.Stop(); err != nil {
-		h.logger.Error("Error stopping backpressure manager", zap.Error(err))
 	}
 
 	// Wait for monitoring goroutines

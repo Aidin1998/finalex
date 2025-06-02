@@ -140,28 +140,7 @@ type SignalHandler interface {
 }
 
 // CoordinatorConfig configures the cross-service coordinator
-type CoordinatorConfig struct {
-	// Kafka configuration
-	KafkaBrokers      []string
-	BackpressureTopic string
-	ConsumerGroup     string
-
-	// Service health monitoring
-	HealthCheckInterval time.Duration
-	ServiceTimeout      time.Duration
-
-	// Backpressure thresholds
-	GlobalLoadThreshold float64 // Global system load threshold
-	EmergencyThreshold  float64 // Emergency mode threshold
-
-	// Signal processing
-	SignalBufferSize int
-	SignalTimeout    time.Duration
-
-	// Service priorities
-	CriticalServices  []string // Services that cannot be throttled
-	SheddableServices []string // Services that can shed load
-}
+// [REMOVED] type CoordinatorConfig struct { ... }
 
 // CoordinatorMetrics tracks cross-service coordination metrics
 type CoordinatorMetrics struct {

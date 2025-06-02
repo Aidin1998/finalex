@@ -60,11 +60,10 @@ type ClientCapability struct {
 	SafeRate  int64 // Conservative rate for guaranteed delivery
 	MaxRate   int64 // Maximum sustainable rate
 	BurstRate int64 // Short-term burst capability
-
 	// Client type classification
-	ClientType     ClientType // Detected client type
-	TradingProfile Profile    // Trading behavior profile
-	PriorityClass  Priority   // Assigned priority class
+	ClientType     ClientType      // Detected client type
+	TradingProfile Profile         // Trading behavior profile
+	PriorityClass  MessagePriority // Assigned priority class
 
 	// Real-time measurement state
 	measurementWindow unsafe.Pointer // *MeasurementWindow
@@ -98,16 +97,8 @@ const (
 	ProfileMarketData            // Market data consumer only
 )
 
-// Priority represents client priority classification
-type Priority int
-
-const (
-	PriorityLow Priority = iota
-	PriorityNormal
-	PriorityHigh
-	PriorityCritical
-	PriorityUltra // Reserved for critical infrastructure
-)
+// Priority represents client priority classification (now using MessagePriority)
+// Removed separate Priority type to avoid conflicts - using MessagePriority throughout
 
 // MeasurementWindow maintains sliding window of performance data
 type MeasurementWindow struct {
@@ -191,13 +182,12 @@ func (ccd *ClientCapabilityDetector) RegisterClient(clientID string) error {
 		ConnectedAt: time.Now(),
 
 		// Initialize with conservative defaults
-		SafeRate:  10,  // 10 msg/sec safe default
-		MaxRate:   100, // 100 msg/sec initial max
-		BurstRate: 200, // 200 msg/sec burst
-
+		SafeRate:       10,  // 10 msg/sec safe default
+		MaxRate:        100, // 100 msg/sec initial max
+		BurstRate:      200, // 200 msg/sec burst
 		ClientType:     ClientTypeUnknown,
 		TradingProfile: ProfileUnknown,
-		PriorityClass:  PriorityNormal,
+		PriorityClass:  PriorityMedium,
 
 		lastMeasurement: time.Now().UnixNano(),
 	}
@@ -293,7 +283,7 @@ func (ccd *ClientCapabilityDetector) GetClientCapability(clientID string) *Clien
 }
 
 // GetAdaptiveRateLimit returns the appropriate rate limit for a client
-func (ccd *ClientCapabilityDetector) GetAdaptiveRateLimit(clientID string, messageType Priority) int64 {
+func (ccd *ClientCapabilityDetector) GetAdaptiveRateLimit(clientID string, messageType MessagePriority) int64 {
 	capability := ccd.getClientCapability(clientID)
 	if capability == nil {
 		return 10 // Conservative default
@@ -301,14 +291,14 @@ func (ccd *ClientCapabilityDetector) GetAdaptiveRateLimit(clientID string, messa
 
 	// Select rate based on message priority and client capability
 	switch messageType {
-	case PriorityCritical, PriorityUltra:
+	case PriorityCritical:
 		// Critical messages get highest sustainable rate
 		return atomic.LoadInt64(&capability.MaxRate)
 	case PriorityHigh:
 		// High priority gets 80% of max rate
 		return int64(float64(atomic.LoadInt64(&capability.MaxRate)) * 0.8)
-	case PriorityNormal:
-		// Normal priority gets safe rate
+	case PriorityMedium:
+		// Medium priority gets safe rate
 		return atomic.LoadInt64(&capability.SafeRate)
 	default:
 		// Low priority gets conservative rate
@@ -562,10 +552,9 @@ func (ccd *ClientCapabilityDetector) classifyClient(clientID string, capability 
 	processingSpeed := atomic.LoadInt64(&capability.CurrentProcessingSpeed)
 	latency := atomic.LoadInt64(&capability.CurrentLatency)
 	bandwidth := atomic.LoadInt64(&capability.CurrentBandwidth)
-
 	// Classify client type based on performance characteristics
 	var newClientType ClientType
-	var newPriority Priority
+	var newPriority MessagePriority
 
 	if processingSpeed > 10000 && latency < int64(time.Millisecond) {
 		// High-frequency trading characteristics
@@ -578,11 +567,11 @@ func (ccd *ClientCapabilityDetector) classifyClient(clientID string, capability 
 	} else if bandwidth > 512*1024 { // >512KB/s
 		// Institutional characteristics
 		newClientType = ClientTypeInstitutional
-		newPriority = PriorityNormal
+		newPriority = PriorityMedium
 	} else if processingSpeed > 100 {
 		// API client characteristics
 		newClientType = ClientTypeAPI
-		newPriority = PriorityNormal
+		newPriority = PriorityMedium
 	} else {
 		// Retail client characteristics
 		newClientType = ClientTypeRetail

@@ -66,22 +66,6 @@ type ClientWriter struct {
 // MessageHandler defines how different message types are processed
 type MessageHandler func(clientID string, messageType string, data []byte) (*PriorityMessage, error)
 
-// WebSocketConfig configures WebSocket integration
-type WebSocketConfig struct {
-	WriteTimeout      time.Duration `json:"write_timeout"`
-	PingInterval      time.Duration `json:"ping_interval"`
-	MaxMessageSize    int64         `json:"max_message_size"`
-	EnableCompression bool          `json:"enable_compression"`
-
-	// Emergency handling
-	MaxWriteErrors    int           `json:"max_write_errors"`
-	ErrorRecoveryTime time.Duration `json:"error_recovery_time"`
-
-	// Performance tuning
-	BufferSize          int `json:"buffer_size"`
-	MaxConcurrentWrites int `json:"max_concurrent_writes"`
-}
-
 // NewWebSocketIntegrator creates a new WebSocket integrator
 func NewWebSocketIntegrator(manager *BackpressureManager, config *WebSocketConfig, logger *zap.Logger) *WebSocketIntegrator {
 	if config == nil {
@@ -167,7 +151,7 @@ func (w *WebSocketIntegrator) UnregisterClient(clientID string) {
 	}
 
 	// Unregister from backpressure manager
-	w.manager.UnregisterClient(clientID)
+	// w.manager.UnregisterClient(clientID) // Method does not exist. TODO: implement if needed
 }
 
 // BroadcastMessage broadcasts a message to all clients with backpressure handling
@@ -389,9 +373,7 @@ func (w *WebSocketIntegrator) registerDefaultHandlers() {
 		return &PriorityMessage{
 			Priority:  PriorityCritical,
 			Data:      data,
-			Timestamp: time.Now(),
-			Deadline:  time.Now().Add(time.Millisecond * 100),
-			Metadata:  map[string]interface{}{"type": "trade"},
+			Timestamp: time.Now().UnixNano(),
 		}, nil
 	})
 
@@ -400,9 +382,7 @@ func (w *WebSocketIntegrator) registerDefaultHandlers() {
 		return &PriorityMessage{
 			Priority:  PriorityHigh,
 			Data:      data,
-			Timestamp: time.Now(),
-			Deadline:  time.Now().Add(time.Millisecond * 500),
-			Metadata:  map[string]interface{}{"type": "orderbook"},
+			Timestamp: time.Now().UnixNano(),
 		}, nil
 	})
 
@@ -411,9 +391,7 @@ func (w *WebSocketIntegrator) registerDefaultHandlers() {
 		return &PriorityMessage{
 			Priority:  PriorityMedium,
 			Data:      data,
-			Timestamp: time.Now(),
-			Deadline:  time.Now().Add(time.Second * 2),
-			Metadata:  map[string]interface{}{"type": "ticker"},
+			Timestamp: time.Now().UnixNano(),
 		}, nil
 	})
 }

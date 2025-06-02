@@ -310,18 +310,3 @@ func getDefaultServerConfig() *ServerConfig {
 		AuthTokenQueryParam: "token",
 	}
 }
-
-func getDefaultEnhancedHubConfig() *EnhancedHubConfig {
-	return &EnhancedHubConfig{
-		BackpressureConfigPath:      "configs/backpressure.yaml",
-		EnablePerformanceMonitoring: true,
-		EnableAdaptiveRateLimiting:  true,
-		EnableCrossServiceCoord:     true,
-		AutoClientClassification:    true,
-		ClientTimeoutExtended:       5 * time.Minute,
-		MaxClientsPerInstance:       10000,
-		MessageBatchSize:            100,
-		BroadcastCoalescing:         true,
-		CoalescingWindowMs:          10,
-	}
-}

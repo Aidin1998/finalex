@@ -32,9 +32,101 @@ type BackpressureConfig struct {
 
 	// Logging configuration
 	Logging LoggingConfig `json:"logging" yaml:"logging"`
-
 	// Metrics configuration
 	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
+}
+
+// ManagerConfig configures the backpressure manager
+type ManagerConfig struct {
+	WorkerCount                   int                         `json:"worker_count" yaml:"worker_count"`
+	ProcessingTimeout             time.Duration               `json:"processing_timeout" yaml:"processing_timeout"`
+	MaxRetries                    int                         `json:"max_retries" yaml:"max_retries"`
+	EmergencyLatencyThreshold     time.Duration               `json:"emergency_latency_threshold" yaml:"emergency_latency_threshold"`
+	EmergencyQueueLengthThreshold int                         `json:"emergency_queue_length_threshold" yaml:"emergency_queue_length_threshold"`
+	EmergencyDropRateThreshold    float64                     `json:"emergency_drop_rate_threshold" yaml:"emergency_drop_rate_threshold"`
+	RecoveryGracePeriod           time.Duration               `json:"recovery_grace_period" yaml:"recovery_grace_period"`
+	RecoveryLatencyTarget         time.Duration               `json:"recovery_latency_target" yaml:"recovery_latency_target"`
+	ClientTimeout                 time.Duration               `json:"client_timeout" yaml:"client_timeout"`
+	MaxClientsPerShard            int                         `json:"max_clients_per_shard" yaml:"max_clients_per_shard"`
+	GlobalRateLimit               int64                       `json:"global_rate_limit" yaml:"global_rate_limit"`
+	PriorityRateMultipliers       map[MessagePriority]float64 `json:"priority_rate_multipliers" yaml:"priority_rate_multipliers"`
+}
+
+// ClientClass defines client classification for rate limiting
+// Used as keys in ClientClassLimits
+type ClientClass uint8
+
+const (
+	HFTClient ClientClass = iota
+	MarketMakerClient
+	InstitutionalClient
+	RetailClient
+	DefaultClientClass
+)
+
+// RateLimiterConfig configures the adaptive rate limiter
+type RateLimiterConfig struct {
+	GlobalRateLimit    int64                             `json:"global_rate_limit" yaml:"global_rate_limit"`
+	BurstMultiplier    float64                           `json:"burst_multiplier" yaml:"burst_multiplier"`
+	RefillInterval     time.Duration                     `json:"refill_interval" yaml:"refill_interval"`
+	AdaptationInterval time.Duration                     `json:"adaptation_interval" yaml:"adaptation_interval"`
+	MinTokens          int64                             `json:"min_tokens" yaml:"min_tokens"`
+	MaxTokens          int64                             `json:"max_tokens" yaml:"max_tokens"`
+	ClientClassLimits  map[ClientClass]ClientClassConfig `json:"client_class_limits" yaml:"client_class_limits"`
+	PriorityWeights    map[MessagePriority]float64       `json:"priority_weights" yaml:"priority_weights"`
+}
+
+// ClientClassConfig configures limits for a specific client class
+type ClientClassConfig struct {
+	BaseRate    int64         `json:"base_rate" yaml:"base_rate"`
+	BurstRate   int64         `json:"burst_rate" yaml:"burst_rate"`
+	Priority    int           `json:"priority" yaml:"priority"`
+	TokenRefill time.Duration `json:"token_refill" yaml:"token_refill"`
+}
+
+// PriorityQueueConfig configures the priority queue
+type PriorityQueueConfig struct {
+	InitialCapacity int           `json:"initial_capacity" yaml:"initial_capacity"`
+	MaxCapacity     int           `json:"max_capacity" yaml:"max_capacity"`
+	ShardCount      int           `json:"shard_count" yaml:"shard_count"`
+	FastPathEnabled bool          `json:"fast_path_enabled" yaml:"fast_path_enabled"`
+	GCInterval      time.Duration `json:"gc_interval" yaml:"gc_interval"`
+	CompactionRatio float64       `json:"compaction_ratio" yaml:"compaction_ratio"`
+	DropPolicy      DropPolicy    `json:"drop_policy" yaml:"drop_policy"` // Changed from int to DropPolicy
+	MaxLatency      time.Duration `json:"max_latency" yaml:"max_latency"` // Added for latency control
+}
+
+// CoordinatorConfig configures the cross-service coordinator
+type CoordinatorConfig struct {
+	ServiceID                 string        `json:"service_id" yaml:"service_id"`
+	KafkaBrokers              []string      `json:"kafka_brokers" yaml:"kafka_brokers"`
+	UpdateInterval            time.Duration `json:"update_interval" yaml:"update_interval"`
+	RetryInterval             time.Duration `json:"retry_interval" yaml:"retry_interval"`
+	MaxRetries                int           `json:"max_retries" yaml:"max_retries"`
+	HealthCheckInterval       time.Duration `json:"health_check_interval" yaml:"health_check_interval"`
+	EmergencyBroadcastEnabled bool          `json:"emergency_broadcast_enabled" yaml:"emergency_broadcast_enabled"`
+	// Additional fields for full compatibility
+	BackpressureTopic   string        `json:"backpressure_topic" yaml:"backpressure_topic"`
+	ConsumerGroup       string        `json:"consumer_group" yaml:"consumer_group"`
+	ServiceTimeout      time.Duration `json:"service_timeout" yaml:"service_timeout"`
+	GlobalLoadThreshold float64       `json:"global_load_threshold" yaml:"global_load_threshold"`
+	EmergencyThreshold  float64       `json:"emergency_threshold" yaml:"emergency_threshold"`
+	SignalBufferSize    int           `json:"signal_buffer_size" yaml:"signal_buffer_size"`
+	SignalTimeout       time.Duration `json:"signal_timeout" yaml:"signal_timeout"`
+	CriticalServices    []string      `json:"critical_services" yaml:"critical_services"`
+	SheddableServices   []string      `json:"sheddable_services" yaml:"sheddable_services"`
+}
+
+// WebSocketConfig configures WebSocket integration
+type WebSocketConfig struct {
+	WriteTimeout        time.Duration `json:"write_timeout" yaml:"write_timeout"`
+	PingInterval        time.Duration `json:"ping_interval" yaml:"ping_interval"`
+	MaxMessageSize      int64         `json:"max_message_size" yaml:"max_message_size"`
+	EnableCompression   bool          `json:"enable_compression" yaml:"enable_compression"`
+	MaxWriteErrors      int           `json:"max_write_errors" yaml:"max_write_errors"`
+	ErrorRecoveryTime   time.Duration `json:"error_recovery_time" yaml:"error_recovery_time"`
+	BufferSize          int           `json:"buffer_size" yaml:"buffer_size"`
+	MaxConcurrentWrites int           `json:"max_concurrent_writes" yaml:"max_concurrent_writes"`
 }
 
 // CapabilityDetectorConfig configures the client capability detector
@@ -236,6 +328,8 @@ func GetDefaultBackpressureConfig() *BackpressureConfig {
 			FastPathEnabled: true,
 			GCInterval:      time.Minute * 5,
 			CompactionRatio: 0.5,
+			DropPolicy:      0,               // Default drop policy
+			MaxLatency:      time.Second * 1, // Default max latency
 		},
 
 		CapabilityDetector: CapabilityDetectorConfig{
@@ -267,6 +361,16 @@ func GetDefaultBackpressureConfig() *BackpressureConfig {
 			MaxRetries:                5,
 			HealthCheckInterval:       time.Second * 30,
 			EmergencyBroadcastEnabled: true,
+			// Additional fields for full compatibility
+			BackpressureTopic:   "backpressure",
+			ConsumerGroup:       "marketdata_group",
+			ServiceTimeout:      time.Second * 10,
+			GlobalLoadThreshold: 0.8,
+			EmergencyThreshold:  0.9,
+			SignalBufferSize:    1000,
+			SignalTimeout:       time.Second * 5,
+			CriticalServices:    []string{"serviceA", "serviceB"},
+			SheddableServices:   []string{"serviceC", "serviceD"},
 		},
 
 		WebSocket: WebSocketConfig{
