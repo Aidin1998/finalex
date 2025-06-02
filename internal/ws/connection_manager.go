@@ -598,6 +598,6 @@ func (cm *ConnectionManager) GetResourceStats() map[string]interface{} {
 
 // Custom errors
 var (
-	ErrConnectionLimitExceeded = websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "Connection limit exceeded"}
-	ErrManagerNotRunning       = websocket.CloseError{Code: websocket.CloseServiceRestart, Text: "Connection manager not running"}
+	ErrConnectionLimitExceeded = &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "Connection limit exceeded"}
+	ErrManagerNotRunning       = &websocket.CloseError{Code: websocket.CloseServiceRestart, Text: "Connection manager not running"}
 )
