@@ -1,0 +1,166 @@
+# Backpressure Management Configuration for PinCEX Market Data
+# This configuration provides comprehensive backpressure handling for market data distribution
+# ensuring zero trade loss while optimizing delivery performance
+
+# Manager Configuration - Core backpressure orchestration
+manager:
+  worker_count: 8                              # Number of processing workers
+  processing_timeout: 100ms                    # Timeout for message processing
+  max_retries: 3                              # Maximum retry attempts
+  emergency_latency_threshold: 500ms          # Latency threshold for emergency mode
+  emergency_queue_length_threshold: 50000     # Queue length threshold for emergency
+  emergency_drop_rate_threshold: 0.1          # Drop rate threshold (10%)
+  recovery_grace_period: 30s                  # Recovery grace period
+  recovery_latency_target: 200ms              # Target latency for recovery
+  client_timeout: 5m                          # Client timeout
+  max_clients_per_shard: 1000                # Maximum clients per shard
+  global_rate_limit: 100000                   # Global rate limit (msgs/sec)
+  
+  # Priority-based rate multipliers
+  priority_rate_multipliers:
+    CRITICAL: 10.0                            # Critical messages get 10x rate
+    HIGH: 3.0                                 # High priority gets 3x rate
+    MEDIUM: 1.0                               # Medium priority baseline
+    LOW: 0.5                                  # Low priority gets 0.5x rate
+    MARKET: 0.8                               # Market data gets 0.8x rate
+
+# Rate Limiter Configuration - Token bucket algorithm with adaptive limits
+rate_limiter:
+  global_rate_limit: 100000                   # Global system rate limit
+  burst_multiplier: 2.0                       # Burst capacity multiplier
+  refill_interval: 1s                         # Token refill interval
+  adaptation_interval: 10s                    # Rate adaptation interval
+  min_tokens: 100                             # Minimum token count
+  max_tokens: 1000000                         # Maximum token count
+  
+  # Client class configurations
+  client_class_limits:
+    HFT:                                      # High-Frequency Trading clients
+      base_rate: 50000                       # Base messages per second
+      burst_rate: 100000                     # Burst capacity
+      priority: 1                           # Highest priority
+      token_refill: 10ms                    # Fast token refill
+      
+    MARKET_MAKER:                            # Market maker clients
+      base_rate: 25000
+      burst_rate: 50000
+      priority: 2
+      token_refill: 20ms
+      
+    INSTITUTIONAL:                           # Institutional clients
+      base_rate: 10000
+      burst_rate: 20000
+      priority: 3
+      token_refill: 50ms
+      
+    RETAIL:                                  # Retail clients
+      base_rate: 1000
+      burst_rate: 2000
+      priority: 4
+      token_refill: 100ms
+      
+    DEFAULT:                                 # Default classification
+      base_rate: 5000
+      burst_rate: 10000
+      priority: 5
+      token_refill: 100ms
+  
+  # Priority-based message weights
+  priority_weights:
+    CRITICAL: 10.0
+    HIGH: 3.0
+    MEDIUM: 1.0
+    LOW: 0.5
+    MARKET: 0.8
+
+# Priority Queue Configuration - Lock-free message queuing
+priority_queue:
+  initial_capacity: 10000                     # Initial queue capacity
+  max_capacity: 1000000                       # Maximum queue capacity
+  shard_count: 8                              # Number of queue shards
+  fast_path_enabled: true                     # Enable fast path for critical messages
+  gc_interval: 5m                             # Garbage collection interval
+  compaction_ratio: 0.5                       # Queue compaction threshold
+
+# Client Capability Detector Configuration - Performance measurement
+capability_detector:
+  measurement_interval: 5s                    # Capability measurement interval
+  bandwidth_window_size: 20                   # Bandwidth measurement window
+  processing_window_size: 50                  # Processing speed window
+  latency_window_size: 100                    # Latency measurement window
+  
+  # HFT client thresholds
+  hft_bandwidth_threshold: 10485760           # 10MB/s bandwidth
+  hft_processing_threshold: 10000             # 10k messages/second
+  hft_latency_threshold: 5ms                  # 5ms latency
+  
+  # Market maker thresholds
+  market_maker_bandwidth_threshold: 5242880   # 5MB/s bandwidth
+  market_maker_processing_threshold: 5000     # 5k messages/second
+  market_maker_latency_threshold: 10ms        # 10ms latency
+  
+  # Institutional client thresholds
+  institutional_bandwidth_threshold: 2097152  # 2MB/s bandwidth
+  institutional_processing_threshold: 2000    # 2k messages/second
+  institutional_latency_threshold: 25ms       # 25ms latency
+  
+  # Adaptation parameters
+  adaptation_sensitivity: 0.8                 # Adaptation sensitivity (0-1)
+  min_observation_period: 30s                 # Minimum observation time
+  max_observation_period: 10m                 # Maximum observation time
+  worker_count: 4                             # Number of measurement workers
+  max_concurrent_measurements: 1000           # Max concurrent measurements
+
+# Cross-Service Coordinator Configuration - Global backpressure coordination
+coordinator:
+  service_id: "marketdata-backpressure"       # Service identifier
+  kafka_brokers:                              # Kafka brokers for coordination
+    - "localhost:9092"
+    - "localhost:9093"
+    - "localhost:9094"
+  update_interval: 5s                         # Status update interval
+  retry_interval: 2s                          # Retry interval for failed operations
+  max_retries: 5                              # Maximum retry attempts
+  health_check_interval: 30s                  # Health check interval
+  emergency_broadcast_enabled: true           # Enable emergency broadcasts
+
+# WebSocket Integration Configuration - WebSocket-specific settings
+websocket:
+  write_timeout: 10s                          # WebSocket write timeout
+  ping_interval: 30s                          # Ping interval for keep-alive
+  max_message_size: 1048576                   # 1MB maximum message size
+  enable_compression: true                    # Enable WebSocket compression
+  max_write_errors: 5                         # Maximum write errors before emergency
+  error_recovery_time: 2m                     # Recovery time after errors
+  buffer_size: 1000                           # Send buffer size per client
+  max_concurrent_writes: 100                  # Maximum concurrent writes
+
+# Logging Configuration
+logging:
+  level: "info"                               # Log level (debug, info, warn, error, fatal)
+  format: "json"                              # Log format (json, console)
+  output_file: "logs/backpressure.log"        # Log file path
+  max_file_size_mb: 100                       # Maximum log file size (MB)
+  max_backups: 5                              # Number of backup files
+  max_age_days: 30                            # Maximum age of log files (days)
+  enable_console: true                        # Enable console logging
+  enable_stack_trace: false                   # Enable stack traces for errors
+
+# Metrics Configuration - Prometheus metrics
+metrics:
+  enabled: true                               # Enable metrics collection
+  port: 8080                                  # Metrics server port
+  path: "/metrics"                            # Metrics endpoint path
+  update_interval: 10s                        # Metrics update interval
+  enable_detailed: true                       # Enable detailed metrics
+  
+  # Service metadata
+  service_name: "pincex-backpressure"         # Service name for metrics
+  service_version: "1.0.0"                    # Service version
+  environment: "production"                   # Environment label
+  
+  # Custom labels for all metrics
+  custom_labels:
+    datacenter: "us-east-1"
+    cluster: "trading-cluster"
+    region: "north-america"

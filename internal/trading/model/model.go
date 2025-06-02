@@ -287,14 +287,17 @@ type Order struct {
 
 // Trade represents a trade execution in the system.
 type Trade struct {
-	ID        uuid.UUID       `json:"id"`
-	OrderID   uuid.UUID       `json:"order_id"`
-	Pair      string          `json:"pair"`
-	Price     decimal.Decimal `json:"price"`
-	Quantity  decimal.Decimal `json:"quantity"`
-	Side      string          `json:"side"`
-	Maker     bool            `json:"maker"`
-	CreatedAt time.Time       `json:"created_at"`
+	ID             uuid.UUID       `json:"id"`
+	OrderID        uuid.UUID       `json:"order_id"`
+	CounterOrderID uuid.UUID       `json:"counter_order_id"`
+	UserID         uuid.UUID       `json:"user_id"`
+	CounterUserID  uuid.UUID       `json:"counter_user_id"`
+	Pair           string          `json:"pair"`
+	Price          decimal.Decimal `json:"price"`
+	Quantity       decimal.Decimal `json:"quantity"`
+	Side           string          `json:"side"`
+	Maker          bool            `json:"maker"`
+	CreatedAt      time.Time       `json:"created_at"`
 	// ... add other fields as needed ...
 }
 
