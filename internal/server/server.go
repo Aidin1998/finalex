@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/common/apiutil"
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/audit"
 	"github.com/Aidin1998/pincex_unified/internal/auth"
@@ -96,6 +97,9 @@ func (s *Server) Router() *gin.Engine {
 	router.Use(ginzap.RecoveryWithZap(s.logger, true))
 	router.Use(otelgin.Middleware("pincex"))
 	router.Use(cors.Default())
+
+	// Add RFC 7807 compliant error handling middleware
+	router.Use(apiutil.RFC7807ErrorMiddleware())
 
 	// Add enhanced input validation middleware with comprehensive security
 	enhancedValidationConfig := validation.DefaultEnhancedValidationConfig()
@@ -310,30 +314,24 @@ func (m *errorMapper) mapError(err error) int {
 	}
 }
 
-// writeError writes a JSON error response with mapped status and enhanced structure
-// writeError writes a JSON error response with mapped status and enhanced structure
+// writeError writes a JSON error response with RFC 7807 compliant format
 func (s *Server) writeError(c *gin.Context, err error) {
-	status := (&errorMapper{}).mapError(err)
-	// Example: parse error for code/message, or use generic fallback
-	code := "internal_error"
+	instance := c.Request.URL.Path
+
+	// Map specific errors to appropriate RFC 7807 responses
 	msg := err.Error()
-	if strings.Contains(msg, "unauthorized") {
-		code = "unauthorized"
-		msg = "Unauthorized: valid authentication credentials are required."
-	} else if strings.Contains(msg, "not found") {
-		code = "not_found"
-		msg = "Resource not found. Please check the request parameters."
-	} else if strings.Contains(msg, "forbidden") {
-		code = "forbidden"
-		msg = "Forbidden: you do not have permission to access this resource."
-	} else if strings.Contains(msg, "invalid") {
-		code = "invalid_request"
-		// Optionally parse for more detail
+	switch {
+	case strings.Contains(msg, "unauthorized"):
+		apiutil.UnauthorizedResponse(c, "Authentication required", instance)
+	case strings.Contains(msg, "forbidden"):
+		apiutil.ForbiddenResponse(c, "Insufficient permissions", instance)
+	case strings.Contains(msg, "not found"):
+		apiutil.NotFoundResponse(c, "Resource not found", instance)
+	case strings.Contains(msg, "invalid"):
+		apiutil.BadRequestResponse(c, "Invalid request parameters", instance)
+	default:
+		apiutil.InternalServerErrorResponse(c, "Internal server error", instance)
 	}
-	c.JSON(status, gin.H{
-		"error":   code,
-		"message": msg,
-	})
 }
 
 // authMiddleware creates a middleware for authentication with enhanced JWT validation
