@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
 
 	"github.com/Aidin1998/pincex_unified/internal/marketdata"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
@@ -237,15 +239,20 @@ func (e *BackpressureExample) handleWebSocket(c *gin.Context) {
 // handleStats returns current system statistics
 func (e *BackpressureExample) handleStats(c *gin.Context) {
 	e.stats.mu.RLock()
-	stats := *e.stats
+	statsCopy := &PerformanceStats{
+		StartTime:            e.stats.StartTime,
+		TotalMessages:        e.stats.TotalMessages,
+		TotalClients:         e.stats.TotalClients,
+		EmergencyActivations: e.stats.EmergencyActivations,
+		AverageLatency:       e.stats.AverageLatency,
+		MessageRate:          e.stats.MessageRate,
+		DropRate:             e.stats.DropRate,
+	}
 	e.stats.mu.RUnlock()
 
-	// TODO: enhancedStats := e.enhancedHub.GetEnhancedStats()
-
 	response := map[string]interface{}{
-		"system_stats": stats,
-		// "enhanced_stats": enhancedStats,
-		"uptime": time.Since(stats.StartTime).String(),
+		"system_stats": statsCopy,
+		"uptime":       time.Since(statsCopy.StartTime).String(),
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -424,9 +431,94 @@ func (e *BackpressureExample) simulateClient(clientNum int, duration time.Durati
 
 type MockAuthService struct{}
 
-func (m *MockAuthService) AssignRole(ctx context.Context, id string, role string) error { return nil }
-func (m *MockAuthService) ValidateToken(token string) (*auth.Claims, error) {
-	return &auth.Claims{UserID: "mock_user"}, nil
+func (m *MockAuthService) AuthenticateUser(ctx context.Context, email, password string) (*auth.TokenPair, *models.User, error) {
+	return nil, &models.User{
+		ID:        uuid.New(),
+		Email:     email,
+		Username:  "mockuser",
+		FirstName: "Mock",
+		LastName:  "User",
+		KYCStatus: "approved",
+		Role:      "user",
+		Tier:      "basic",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}, nil
+}
+func (m *MockAuthService) CheckMFA(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (m *MockAuthService) ValidateToken(ctx context.Context, token string) (*auth.TokenClaims, error) {
+	return &auth.TokenClaims{UserID: uuid.New()}, nil
+}
+func (m *MockAuthService) RefreshToken(ctx context.Context, refreshToken string) (*auth.TokenPair, error) {
+	return nil, nil
+}
+func (m *MockAuthService) RevokeToken(ctx context.Context, tokenString string) error   { return nil }
+func (m *MockAuthService) RevokeAllTokens(ctx context.Context, userID uuid.UUID) error { return nil }
+func (m *MockAuthService) CreateAPIKey(ctx context.Context, userID uuid.UUID, name string, permissions []string, expiresAt *time.Time) (*auth.APIKey, error) {
+	return nil, nil
+}
+func (m *MockAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (*auth.APIKeyClaims, error) {
+	return nil, nil
+}
+func (m *MockAuthService) RevokeAPIKey(ctx context.Context, keyID uuid.UUID) error { return nil }
+func (m *MockAuthService) ListAPIKeys(ctx context.Context, userID uuid.UUID) ([]*auth.APIKey, error) {
+	return nil, nil
+}
+func (m *MockAuthService) GenerateTOTPSecret(ctx context.Context, userID uuid.UUID) (*auth.TOTPSetup, error) {
+	return nil, nil
+}
+func (m *MockAuthService) VerifyTOTPSetup(ctx context.Context, userID uuid.UUID, secret, token string) error {
+	return nil
+}
+func (m *MockAuthService) VerifyTOTPToken(ctx context.Context, userID uuid.UUID, token string) error {
+	return nil
+}
+func (m *MockAuthService) DisableTOTP(ctx context.Context, userID uuid.UUID, currentPassword string) error {
+	return nil
+}
+func (m *MockAuthService) CreateSession(ctx context.Context, userID uuid.UUID, deviceFingerprint string) (*auth.Session, error) {
+	return nil, nil
+}
+func (m *MockAuthService) ValidateSession(ctx context.Context, sessionID uuid.UUID) (*auth.Session, error) {
+	return nil, nil
+}
+func (m *MockAuthService) InvalidateSession(ctx context.Context, sessionID uuid.UUID) error {
+	return nil
+}
+func (m *MockAuthService) InvalidateAllSessions(ctx context.Context, userID uuid.UUID) error {
+	return nil
+}
+func (m *MockAuthService) InitiateOAuthFlow(ctx context.Context, provider, redirectURI string) (*auth.OAuthState, error) {
+	return nil, nil
+}
+func (m *MockAuthService) HandleOAuthCallback(ctx context.Context, state, code string) (*auth.TokenPair, error) {
+	return nil, nil
+}
+func (m *MockAuthService) LinkOAuthAccount(ctx context.Context, userID uuid.UUID, provider, oauthUserID string) error {
+	return nil
+}
+func (m *MockAuthService) ValidatePermission(ctx context.Context, userID uuid.UUID, resource, action string) error {
+	return nil
+}
+func (m *MockAuthService) AssignRole(ctx context.Context, userID uuid.UUID, role string) error {
+	return nil
+}
+func (m *MockAuthService) RevokeRole(ctx context.Context, userID uuid.UUID, role string) error {
+	return nil
+}
+func (m *MockAuthService) GetUserPermissions(ctx context.Context, userID uuid.UUID) ([]auth.Permission, error) {
+	return nil, nil
+}
+func (m *MockAuthService) RegisterTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) error {
+	return nil
+}
+func (m *MockAuthService) IsTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) (bool, error) {
+	return false, nil
+}
+func (m *MockAuthService) RevokeTrustedDevice(ctx context.Context, userID uuid.UUID, deviceFingerprint string) error {
+	return nil
 }
 
 func NewMockTradeGenerator() *MockTradeGenerator {
