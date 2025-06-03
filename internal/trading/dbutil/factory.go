@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -73,3 +73,5 @@ func RedisClient() *redis.ClusterClient {
 	}
 	return redisClient
 }
+
+// All redis.ClusterClient usage remains compatible, but ensure context is always passed and check for any API changes in v9.

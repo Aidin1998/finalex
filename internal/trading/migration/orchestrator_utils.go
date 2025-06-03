@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -21,100 +22,78 @@ import (
 // Configuration Handlers
 // ================================
 
-// handleGetConfig handles configuration requests
-func (o *MigrationOrchestrator) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+// handleGetConfig handles configuration requests (Gin)
+func (o *MigrationOrchestrator) handleGetConfig(c *gin.Context) {
 	config := o.buildOrchestratorConfigInfo()
-	o.writeJSONResponse(w, config)
+	o.writeJSONResponseGin(c, config)
 }
 
-// handleUpdateConfig handles configuration update requests
-func (o *MigrationOrchestrator) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
+// handleUpdateConfig handles configuration update requests (Gin)
+func (o *MigrationOrchestrator) handleUpdateConfig(c *gin.Context) {
 	var updateReq map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	if err := c.ShouldBindJSON(&updateReq); err != nil {
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid JSON: "+err.Error())
 		return
 	}
-
-	// TODO: Implement configuration updates
-	// For now, just return the current config
-
 	response := MigrationResponse{
 		Success:   true,
 		Message:   "Configuration updated successfully",
 		Data:      o.buildOrchestratorConfigInfo(),
 		Timestamp: time.Now(),
 	}
-
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // ================================
 // Event Handlers
 // ================================
 
-// handleGetEvents handles event listing requests
-func (o *MigrationOrchestrator) handleGetEvents(w http.ResponseWriter, r *http.Request) {
-	// Parse query parameters
+// handleGetEvents handles event listing requests (Gin)
+func (o *MigrationOrchestrator) handleGetEvents(c *gin.Context) {
 	limit := 100 // default limit
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+	if limitStr := c.Query("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 1000 {
 			limit = l
 		}
 	}
-
-	// Get events from buffer
 	o.eventsMu.RLock()
 	events := make([]MigrationEvent, 0, len(o.eventBuffer))
 	for i := len(o.eventBuffer) - 1; i >= 0 && len(events) < limit; i-- {
 		events = append(events, o.eventBuffer[i])
 	}
 	o.eventsMu.RUnlock()
-
 	response := map[string]interface{}{
 		"events": events,
 		"total":  len(o.eventBuffer),
 		"limit":  limit,
 	}
-
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
-// handleEventStream handles server-sent events for real-time updates
-func (o *MigrationOrchestrator) handleEventStream(w http.ResponseWriter, r *http.Request) {
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	// Create event channel
+// handleEventStream handles server-sent events for real-time updates (Gin)
+func (o *MigrationOrchestrator) handleEventStream(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
 	eventChan := make(chan MigrationEvent, 10)
-	// clientID not used, skip assignment
-
-	// Subscribe to events (simplified implementation)
-	// TODO: Implement proper event subscription mechanism
-
-	// Send initial data
 	data := o.buildDashboardData()
 	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
-
-	// Keep connection alive
+	fmt.Fprintf(c.Writer, "data: %s\n\n", jsonData)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-c.Request.Context().Done():
 			return
 		case event := <-eventChan:
 			eventData, _ := json.Marshal(event)
-			fmt.Fprintf(w, "data: %s\n\n", eventData)
-			if f, ok := w.(http.Flusher); ok {
+			fmt.Fprintf(c.Writer, "data: %s\n\n", eventData)
+			if f, ok := c.Writer.(http.Flusher); ok {
 				f.Flush()
 			}
 		case <-ticker.C:
-			fmt.Fprintf(w, "data: {\"type\":\"heartbeat\",\"timestamp\":\"%s\"}\n\n", time.Now().Format(time.RFC3339))
-			if f, ok := w.(http.Flusher); ok {
+			fmt.Fprintf(c.Writer, "data: {\"type\":\"heartbeat\",\"timestamp\":\"%s\"}\n\n", time.Now().Format(time.RFC3339))
+			if f, ok := c.Writer.(http.Flusher); ok {
 				f.Flush()
 			}
 		}
@@ -125,19 +104,16 @@ func (o *MigrationOrchestrator) handleEventStream(w http.ResponseWriter, r *http
 // WebSocket Handlers
 // ================================
 
-// handleWebSocket handles general WebSocket connections
-func (o *MigrationOrchestrator) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := o.upgrader.Upgrade(w, r, nil)
+// handleWebSocket handles general WebSocket connections (Gin)
+func (o *MigrationOrchestrator) handleWebSocket(c *gin.Context) {
+	conn, err := o.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		o.logger.Errorw("WebSocket upgrade failed", "error", err)
 		return
 	}
 	defer conn.Close()
-
 	clientID := uuid.New().String()
 	o.logger.Infow("WebSocket client connected", "client_id", clientID)
-
-	// Add connection to pool
 	o.wsConnsMu.Lock()
 	if len(o.wsConnections) >= o.config.MaxWSConnections {
 		o.wsConnsMu.Unlock()
@@ -146,16 +122,12 @@ func (o *MigrationOrchestrator) handleWebSocket(w http.ResponseWriter, r *http.R
 	}
 	o.wsConnections[clientID] = conn
 	o.wsConnsMu.Unlock()
-
-	// Remove connection when done
 	defer func() {
 		o.wsConnsMu.Lock()
 		delete(o.wsConnections, clientID)
 		o.wsConnsMu.Unlock()
 		o.logger.Infow("WebSocket client disconnected", "client_id", clientID)
 	}()
-
-	// Send initial data
 	data := o.buildDashboardData()
 	if err := conn.WriteJSON(map[string]interface{}{
 		"type": "initial_data",
@@ -164,8 +136,6 @@ func (o *MigrationOrchestrator) handleWebSocket(w http.ResponseWriter, r *http.R
 		o.logger.Errorw("Failed to send initial data", "error", err)
 		return
 	}
-
-	// Handle incoming messages
 	for {
 		var msg map[string]interface{}
 		if err := conn.ReadJSON(&msg); err != nil {
@@ -174,8 +144,6 @@ func (o *MigrationOrchestrator) handleWebSocket(w http.ResponseWriter, r *http.R
 			}
 			break
 		}
-
-		// Handle ping messages
 		if msgType, ok := msg["type"].(string); ok && msgType == "ping" {
 			conn.WriteJSON(map[string]interface{}{
 				"type":      "pong",
@@ -185,22 +153,17 @@ func (o *MigrationOrchestrator) handleWebSocket(w http.ResponseWriter, r *http.R
 	}
 }
 
-// handleWebSocketEvents handles WebSocket connections for events
-func (o *MigrationOrchestrator) handleWebSocketEvents(w http.ResponseWriter, r *http.Request) {
-	conn, err := o.upgrader.Upgrade(w, r, nil)
+// handleWebSocketEvents handles WebSocket connections for events (Gin)
+func (o *MigrationOrchestrator) handleWebSocketEvents(c *gin.Context) {
+	conn, err := o.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		o.logger.Errorw("WebSocket upgrade failed", "error", err)
 		return
 	}
 	defer conn.Close()
-
 	clientID := uuid.New().String()
 	o.logger.Infow("WebSocket events client connected", "client_id", clientID)
-
-	// Subscribe to events (simplified implementation)
 	eventChan := make(chan MigrationEvent, 100)
-
-	// Send recent events
 	o.eventsMu.RLock()
 	recentEvents := make([]MigrationEvent, 0, 10)
 	start := len(o.eventBuffer) - 10
@@ -211,7 +174,6 @@ func (o *MigrationOrchestrator) handleWebSocketEvents(w http.ResponseWriter, r *
 		recentEvents = append(recentEvents, o.eventBuffer[i])
 	}
 	o.eventsMu.RUnlock()
-
 	if err := conn.WriteJSON(map[string]interface{}{
 		"type":   "recent_events",
 		"events": recentEvents,
@@ -219,11 +181,8 @@ func (o *MigrationOrchestrator) handleWebSocketEvents(w http.ResponseWriter, r *
 		o.logger.Errorw("Failed to send recent events", "error", err)
 		return
 	}
-
-	// Handle events and pings
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case event := <-eventChan:
@@ -244,21 +203,18 @@ func (o *MigrationOrchestrator) handleWebSocketEvents(w http.ResponseWriter, r *
 	}
 }
 
-// handleWebSocketMetrics handles WebSocket connections for metrics
-func (o *MigrationOrchestrator) handleWebSocketMetrics(w http.ResponseWriter, r *http.Request) {
-	conn, err := o.upgrader.Upgrade(w, r, nil)
+// handleWebSocketMetrics handles WebSocket connections for metrics (Gin)
+func (o *MigrationOrchestrator) handleWebSocketMetrics(c *gin.Context) {
+	conn, err := o.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		o.logger.Errorw("WebSocket upgrade failed", "error", err)
 		return
 	}
 	defer conn.Close()
-
 	clientID := uuid.New().String()
 	o.logger.Infow("WebSocket metrics client connected", "client_id", clientID)
-
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:

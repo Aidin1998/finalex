@@ -7,96 +7,80 @@ package migration
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 )
 
 // ================================
-// Middleware Functions
+// Middleware Functions (Gin version)
 // ================================
 
-// corsMiddleware handles CORS headers
-func (o *MigrationOrchestrator) corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+// corsMiddleware handles CORS headers (Gin)
+func (o *MigrationOrchestrator) corsMiddleware(c *gin.Context) {
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+	c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	c.Next()
 }
 
-// authMiddleware handles API authentication
-func (o *MigrationOrchestrator) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health check and dashboard
-		if strings.HasSuffix(r.URL.Path, "/health") ||
-			strings.HasPrefix(r.URL.Path, o.config.DashboardPath) {
-			next.ServeHTTP(w, r)
-			return
+// authMiddleware handles API authentication (Gin)
+func (o *MigrationOrchestrator) authMiddleware(c *gin.Context) {
+	apiKey := c.GetHeader("X-API-Key")
+	valid := false
+	for _, key := range o.config.APIKeys {
+		if apiKey == key {
+			valid = true
+			break
 		}
-
-		// Check API key
-		apiKey := r.Header.Get("X-API-Key")
-		if apiKey == "" {
-			apiKey = r.URL.Query().Get("api_key")
-		}
-
-		if !o.isValidAPIKey(apiKey) {
-			o.writeErrorResponse(w, http.StatusUnauthorized, "Invalid or missing API key")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	}
+	if !valid {
+		o.writeErrorResponseGin(c, http.StatusUnauthorized, "Invalid or missing API key")
+		c.Abort()
+		return
+	}
+	c.Next()
 }
 
-// rateLimitMiddleware handles rate limiting
-func (o *MigrationOrchestrator) rateLimitMiddleware(next http.Handler) http.Handler {
+// rateLimitMiddleware handles rate limiting (Gin)
+func (o *MigrationOrchestrator) rateLimitMiddleware(c *gin.Context) {
 	// Simplified rate limiting - in production, use a proper rate limiter
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Implement proper rate limiting
-		next.ServeHTTP(w, r)
-	})
+	c.Next()
 }
 
-// loggingMiddleware logs HTTP requests
-func (o *MigrationOrchestrator) loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+// loggingMiddleware logs HTTP requests (Gin)
+func (o *MigrationOrchestrator) loggingMiddleware(c *gin.Context) {
+	start := time.Now()
 
-		// Create a response writer wrapper to capture status code
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+	// Create a response writer wrapper to capture status code
+	wrapped := &responseWriter{ResponseWriter: c.Writer, statusCode: http.StatusOK}
 
-		next.ServeHTTP(wrapped, r)
+	c.Writer = wrapped
 
-		duration := time.Since(start)
+	c.Next()
 
-		o.logger.Infow("HTTP request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", wrapped.statusCode,
-			"duration_ms", duration.Milliseconds(),
-			"remote_addr", r.RemoteAddr,
-			"user_agent", r.UserAgent(),
-		)
-	})
+	duration := time.Since(start)
+
+	o.logger.Infow("HTTP request",
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"status", wrapped.statusCode,
+		"duration_ms", duration.Milliseconds(),
+		"remote_addr", c.Request.RemoteAddr,
+		"user_agent", c.Request.UserAgent(),
+	)
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code
+// responseWriter wraps gin.ResponseWriter to capture status code
 type responseWriter struct {
-	http.ResponseWriter
+	gin.ResponseWriter
 	statusCode int
 }
 
@@ -110,26 +94,26 @@ func (rw *responseWriter) WriteHeader(code int) {
 // ================================
 
 // handleDashboard serves the main dashboard page
-func (o *MigrationOrchestrator) handleDashboard(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleDashboard(c *gin.Context) {
 	if o.templates == nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Dashboard templates not loaded")
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Dashboard templates not loaded")
 		return
 	}
 
 	data := o.buildDashboardData()
 
-	w.Header().Set("Content-Type", "text/html")
-	if err := o.templates.ExecuteTemplate(w, "dashboard.html", data); err != nil {
+	c.Header("Content-Type", "text/html")
+	if err := o.templates.ExecuteTemplate(c.Writer, "dashboard.html", data); err != nil {
 		o.logger.Errorw("Error rendering dashboard template", "error", err)
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Error rendering dashboard")
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Error rendering dashboard")
 		return
 	}
 }
 
 // handleDashboardData serves dashboard data as JSON
-func (o *MigrationOrchestrator) handleDashboardData(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleDashboardData(c *gin.Context) {
 	data := o.buildDashboardData()
-	o.writeJSONResponse(w, data)
+	o.writeJSONResponseGin(c, data)
 }
 
 // ================================
@@ -137,13 +121,13 @@ func (o *MigrationOrchestrator) handleDashboardData(w http.ResponseWriter, r *ht
 // ================================
 
 // handleListMigrations lists all migrations
-func (o *MigrationOrchestrator) handleListMigrations(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleListMigrations(c *gin.Context) {
 	// Parse query parameters
-	status := r.URL.Query().Get("status")
-	phase := r.URL.Query().Get("phase")
+	status := c.Query("status")
+	phase := c.Query("phase")
 	limit := 50 // default limit
 
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+	if limitStr := c.Query("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 500 {
 			limit = l
 		}
@@ -188,24 +172,24 @@ func (o *MigrationOrchestrator) handleListMigrations(w http.ResponseWriter, r *h
 		"limit":      limit,
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // handleCreateMigration creates a new migration
-func (o *MigrationOrchestrator) handleCreateMigration(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleCreateMigration(c *gin.Context) {
 	var req MigrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	if err := c.ShouldBindJSON(&req); err != nil {
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid JSON: "+err.Error())
 		return
 	}
 
 	// Validate request
 	if req.Pair == "" {
-		o.writeErrorResponse(w, http.StatusBadRequest, "pair is required")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "pair is required")
 		return
 	}
 	if req.Config == nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "config is required")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "config is required")
 		return
 	}
 
@@ -213,7 +197,7 @@ func (o *MigrationOrchestrator) handleCreateMigration(w http.ResponseWriter, r *
 	ctx := context.Background()
 	state, err := o.coordinator.StartMigration(ctx, &req)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to start migration: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to start migration: "+err.Error())
 		return
 	}
 
@@ -225,45 +209,42 @@ func (o *MigrationOrchestrator) handleCreateMigration(w http.ResponseWriter, r *
 		Timestamp:   time.Now(),
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	o.writeJSONResponse(w, response)
+	c.JSON(http.StatusCreated, response)
 }
 
 // handleGetMigration gets details of a specific migration
-func (o *MigrationOrchestrator) handleGetMigration(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	idStr := vars["id"]
+func (o *MigrationOrchestrator) handleGetMigration(c *gin.Context) {
+	idStr := c.Param("id")
 
 	migrationID, err := uuid.Parse(idStr)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid migration ID")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid migration ID")
 		return
 	}
 
 	migration, exists := o.coordinator.GetMigration(migrationID)
 	if !exists {
-		o.writeErrorResponse(w, http.StatusNotFound, "Migration not found")
+		o.writeErrorResponseGin(c, http.StatusNotFound, "Migration not found")
 		return
 	}
 
 	info := o.buildMigrationStateInfo(migration)
-	o.writeJSONResponse(w, info)
+	o.writeJSONResponseGin(c, info)
 }
 
 // handleAbortMigration aborts a migration
-func (o *MigrationOrchestrator) handleAbortMigration(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	idStr := vars["id"]
+func (o *MigrationOrchestrator) handleAbortMigration(c *gin.Context) {
+	idStr := c.Param("id")
 
 	migrationID, err := uuid.Parse(idStr)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid migration ID")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid migration ID")
 		return
 	}
 
 	ctx := context.Background()
 	if err := o.coordinator.AbortMigration(ctx, migrationID, "manual abort requested via API"); err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to abort migration: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to abort migration: "+err.Error())
 		return
 	}
 
@@ -273,23 +254,22 @@ func (o *MigrationOrchestrator) handleAbortMigration(w http.ResponseWriter, r *h
 		Timestamp: time.Now(),
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // handleResumeMigration resumes a paused migration
-func (o *MigrationOrchestrator) handleResumeMigration(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	idStr := vars["id"]
+func (o *MigrationOrchestrator) handleResumeMigration(c *gin.Context) {
+	idStr := c.Param("id")
 
 	migrationID, err := uuid.Parse(idStr)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid migration ID")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid migration ID")
 		return
 	}
 
 	ctx := context.Background()
 	if err := o.coordinator.ResumeMigration(ctx, migrationID); err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to resume migration: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to resume migration: "+err.Error())
 		return
 	}
 
@@ -299,23 +279,22 @@ func (o *MigrationOrchestrator) handleResumeMigration(w http.ResponseWriter, r *
 		Timestamp: time.Now(),
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // handleRetryMigration retries a failed migration
-func (o *MigrationOrchestrator) handleRetryMigration(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	idStr := vars["id"]
+func (o *MigrationOrchestrator) handleRetryMigration(c *gin.Context) {
+	idStr := c.Param("id")
 
 	migrationID, err := uuid.Parse(idStr)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid migration ID")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid migration ID")
 		return
 	}
 
 	ctx := context.Background()
 	if err := o.coordinator.RetryMigration(ctx, migrationID); err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to retry migration: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to retry migration: "+err.Error())
 		return
 	}
 
@@ -325,7 +304,7 @@ func (o *MigrationOrchestrator) handleRetryMigration(w http.ResponseWriter, r *h
 		Timestamp: time.Now(),
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // ================================
@@ -333,7 +312,7 @@ func (o *MigrationOrchestrator) handleRetryMigration(w http.ResponseWriter, r *h
 // ================================
 
 // handleListParticipants lists all participants
-func (o *MigrationOrchestrator) handleListParticipants(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleListParticipants(c *gin.Context) {
 	o.coordinator.participantsMu.RLock()
 	participants := make(map[string]MigrationParticipant, len(o.coordinator.participants))
 	for id, p := range o.coordinator.participants {
@@ -355,17 +334,17 @@ func (o *MigrationOrchestrator) handleListParticipants(w http.ResponseWriter, r 
 		"participants": participantStatus,
 		"total":        len(participantStatus),
 	}
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // handleGetParticipant retrieves details of a single participant
-func (o *MigrationOrchestrator) handleGetParticipant(w http.ResponseWriter, r *http.Request) {
-	participantID := mux.Vars(r)["participant_id"]
+func (o *MigrationOrchestrator) handleGetParticipant(c *gin.Context) {
+	participantID := c.Param("participant_id")
 	o.coordinator.participantsMu.RLock()
 	participant, exists := o.coordinator.participants[participantID]
 	o.coordinator.participantsMu.RUnlock()
 	if !exists {
-		o.writeErrorResponse(w, http.StatusNotFound, "Participant not found")
+		o.writeErrorResponseGin(c, http.StatusNotFound, "Participant not found")
 		return
 	}
 
@@ -374,19 +353,17 @@ func (o *MigrationOrchestrator) handleGetParticipant(w http.ResponseWriter, r *h
 		Type: participant.GetType(),
 		// ...additional fields as before...
 	}
-	o.writeJSONResponse(w, status)
+	o.writeJSONResponseGin(c, status)
 }
 
 // handleParticipantHealth gets health status of a specific participant
-func (o *MigrationOrchestrator) handleParticipantHealth(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	participantID := vars["id"]
-
+func (o *MigrationOrchestrator) handleParticipantHealth(c *gin.Context) {
+	participantID := c.Param("id")
 	o.coordinator.participantsMu.RLock()
 	participant, exists := o.coordinator.participants[participantID]
 	o.coordinator.participantsMu.RUnlock()
 	if !exists {
-		o.writeErrorResponse(w, http.StatusNotFound, "Participant not found")
+		o.writeErrorResponseGin(c, http.StatusNotFound, "Participant not found")
 		return
 	}
 
@@ -395,11 +372,11 @@ func (o *MigrationOrchestrator) handleParticipantHealth(w http.ResponseWriter, r
 
 	healthCheck, err := participant.HealthCheck(ctx)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Health check failed: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Health check failed: "+err.Error())
 		return
 	}
 
-	o.writeJSONResponse(w, healthCheck)
+	o.writeJSONResponseGin(c, healthCheck)
 }
 
 // ================================
@@ -407,7 +384,7 @@ func (o *MigrationOrchestrator) handleParticipantHealth(w http.ResponseWriter, r
 // ================================
 
 // handleHealth handles health check requests
-func (o *MigrationOrchestrator) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleHealth(c *gin.Context) {
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now(),
@@ -419,17 +396,17 @@ func (o *MigrationOrchestrator) handleHealth(w http.ResponseWriter, r *http.Requ
 		},
 	}
 
-	o.writeJSONResponse(w, health)
+	o.writeJSONResponseGin(c, health)
 }
 
 // handleSystemHealth handles system health requests
-func (o *MigrationOrchestrator) handleSystemHealth(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleSystemHealth(c *gin.Context) {
 	healthInfo := o.buildSystemHealthInfo()
-	o.writeJSONResponse(w, healthInfo)
+	o.writeJSONResponseGin(c, healthInfo)
 }
 
 // handleSystemMetrics handles system metrics requests
-func (o *MigrationOrchestrator) handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleSystemMetrics(c *gin.Context) {
 	metrics := map[string]interface{}{
 		"total_migrations":      o.coordinator.GetTotalMigrations(),
 		"successful_migrations": o.coordinator.GetSuccessfulMigrations(),
@@ -438,13 +415,13 @@ func (o *MigrationOrchestrator) handleSystemMetrics(w http.ResponseWriter, r *ht
 		"timestamp":             time.Now(),
 	}
 
-	o.writeJSONResponse(w, metrics)
+	o.writeJSONResponseGin(c, metrics)
 }
 
 // handlePerformanceMetrics handles performance metrics requests
-func (o *MigrationOrchestrator) handlePerformanceMetrics(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handlePerformanceMetrics(c *gin.Context) {
 	performance := o.buildPerformanceSnapshot()
-	o.writeJSONResponse(w, performance)
+	o.writeJSONResponseGin(c, performance)
 }
 
 // ================================
@@ -452,36 +429,34 @@ func (o *MigrationOrchestrator) handlePerformanceMetrics(w http.ResponseWriter, 
 // ================================
 
 // handleSafetyStatus handles safety status requests
-func (o *MigrationOrchestrator) handleSafetyStatus(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleSafetyStatus(c *gin.Context) {
 	if o.safetyManager == nil {
-		o.writeErrorResponse(w, http.StatusServiceUnavailable, "Safety manager not available")
+		o.writeErrorResponseGin(c, http.StatusServiceUnavailable, "Safety manager not available")
 		return
 	}
 
 	ctx := context.Background()
 	status := o.safetyManager.GetSafetyStatus(ctx)
-	o.writeJSONResponse(w, status)
+	o.writeJSONResponseGin(c, status)
 }
 
 // handleSafetyRollback handles safety rollback requests
-func (o *MigrationOrchestrator) handleSafetyRollback(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleSafetyRollback(c *gin.Context) {
 	if o.safetyManager == nil {
-		o.writeErrorResponse(w, http.StatusServiceUnavailable, "Safety manager not available")
+		o.writeErrorResponseGin(c, http.StatusServiceUnavailable, "Safety manager not available")
 		return
 	}
 
-	vars := mux.Vars(r)
-	idStr := vars["id"]
-
+	idStr := c.Param("id")
 	migrationID, err := uuid.Parse(idStr)
 	if err != nil {
-		o.writeErrorResponse(w, http.StatusBadRequest, "Invalid migration ID")
+		o.writeErrorResponseGin(c, http.StatusBadRequest, "Invalid migration ID")
 		return
 	}
 
 	ctx := context.Background()
 	if err := o.safetyManager.TriggerRollback(ctx, migrationID, "Manual rollback requested via API"); err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to trigger rollback: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to trigger rollback: "+err.Error())
 		return
 	}
 
@@ -491,30 +466,30 @@ func (o *MigrationOrchestrator) handleSafetyRollback(w http.ResponseWriter, r *h
 		Timestamp: time.Now(),
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
 }
 
 // handleCircuitBreakerStatus handles circuit breaker status requests
-func (o *MigrationOrchestrator) handleCircuitBreakerStatus(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleCircuitBreakerStatus(c *gin.Context) {
 	if o.safetyManager == nil {
-		o.writeErrorResponse(w, http.StatusServiceUnavailable, "Safety manager not available")
+		o.writeErrorResponseGin(c, http.StatusServiceUnavailable, "Safety manager not available")
 		return
 	}
 
 	status := o.safetyManager.GetCircuitBreakerStatus()
-	o.writeJSONResponse(w, status)
+	o.writeJSONResponseGin(c, status)
 }
 
 // handleCircuitBreakerReset handles circuit breaker reset requests
-func (o *MigrationOrchestrator) handleCircuitBreakerReset(w http.ResponseWriter, r *http.Request) {
+func (o *MigrationOrchestrator) handleCircuitBreakerReset(c *gin.Context) {
 	if o.safetyManager == nil {
-		o.writeErrorResponse(w, http.StatusServiceUnavailable, "Safety manager not available")
+		o.writeErrorResponseGin(c, http.StatusServiceUnavailable, "Safety manager not available")
 		return
 	}
 
 	ctx := context.Background()
 	if err := o.safetyManager.ResetCircuitBreaker(ctx); err != nil {
-		o.writeErrorResponse(w, http.StatusInternalServerError, "Failed to reset circuit breaker: "+err.Error())
+		o.writeErrorResponseGin(c, http.StatusInternalServerError, "Failed to reset circuit breaker: "+err.Error())
 		return
 	}
 
@@ -524,5 +499,15 @@ func (o *MigrationOrchestrator) handleCircuitBreakerReset(w http.ResponseWriter,
 		Timestamp: time.Now(),
 	}
 
-	o.writeJSONResponse(w, response)
+	o.writeJSONResponseGin(c, response)
+}
+
+// Gin-compatible JSON response helper
+func (o *MigrationOrchestrator) writeJSONResponseGin(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusOK, data)
+}
+
+// Gin-compatible error response helper
+func (o *MigrationOrchestrator) writeErrorResponseGin(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{"error": message})
 }

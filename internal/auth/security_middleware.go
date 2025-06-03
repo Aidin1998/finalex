@@ -7,11 +7,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-// LegacySecurityMiddlewareConfig represents the legacy security middleware configuration
-type LegacySecurityMiddlewareConfig struct {
+// Note: Using TokenClaims from auth service instead of local Claims struct
+
+// ModernSecurityConfig represents the modern security middleware configuration
+type ModernSecurityConfig struct {
 	BlockHighRiskTokens        bool          `json:"block_high_risk_tokens"`
 	LogSecurityFlags           bool          `json:"log_security_flags"`
 	AlertOnElevatedPrivileges  bool          `json:"alert_on_elevated_privileges"`
@@ -23,11 +26,13 @@ type LegacySecurityMiddlewareConfig struct {
 	EnableDetailedAuditLogging bool          `json:"enable_detailed_audit_logging"`
 	LogSuccessfulAccess        bool          `json:"log_successful_access"`
 	LogSuspiciousActivity      bool          `json:"log_suspicious_activity"`
+	CSPPolicy                  string        `json:"csp_policy"`
+	HSTSMaxAge                 int           `json:"hsts_max_age"`
 }
 
-// DefaultLegacySecurityMiddlewareConfig returns secure default configuration
-func DefaultLegacySecurityMiddlewareConfig() *LegacySecurityMiddlewareConfig {
-	return &LegacySecurityMiddlewareConfig{
+// DefaultModernSecurityConfig returns secure default configuration
+func DefaultModernSecurityConfig() *ModernSecurityConfig {
+	return &ModernSecurityConfig{
 		BlockHighRiskTokens:        true,
 		LogSecurityFlags:           true,
 		AlertOnElevatedPrivileges:  true,
@@ -39,17 +44,22 @@ func DefaultLegacySecurityMiddlewareConfig() *LegacySecurityMiddlewareConfig {
 		EnableDetailedAuditLogging: true,
 		LogSuccessfulAccess:        false, // Disable to reduce log volume
 		LogSuspiciousActivity:      true,
+		CSPPolicy:                  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+		HSTSMaxAge:                 31536000, // 1 year
 	}
 }
 
-// LegacySecurityMiddleware creates enhanced security middleware that works with JWT validation
-func LegacySecurityMiddleware(logger *zap.Logger, authService AuthService, config *LegacySecurityMiddlewareConfig) gin.HandlerFunc {
+// SecurityMiddleware creates modern security middleware with enhanced security headers and validation
+func SecurityMiddleware(logger *zap.Logger, authService AuthService, config *ModernSecurityConfig) gin.HandlerFunc {
 	if config == nil {
-		config = DefaultLegacySecurityMiddlewareConfig()
+		config = DefaultModernSecurityConfig()
 	}
 
 	return func(c *gin.Context) {
 		startTime := time.Now()
+
+		// Apply comprehensive security headers
+		applySecurityHeaders(c, config)
 
 		// Skip security checks for non-authenticated endpoints
 		token := c.GetHeader("Authorization")
@@ -95,20 +105,12 @@ func LegacySecurityMiddleware(logger *zap.Logger, authService AuthService, confi
 		userRole := claims.Role
 
 		// Set comprehensive security context
-		c.Set("user_id", userID)
-		c.Set("user_role", userRole)
-		c.Set("user_email", claims.Email)
-		c.Set("user_permissions", claims.Permissions)
-		c.Set("session_id", claims.SessionID.String())
-		c.Set("token_type", claims.TokenType)
-		c.Set("client_ip", clientIP)
-		c.Set("user_agent", userAgent)
+		setSecurityContext(c, claims, clientIP, userAgent)
 
 		// Apply user-based rate limiting if enabled
 		if config.EnableUserBasedRateLimit {
-			// This would integrate with your rate limiter implementation
-			// rateLimitKey := fmt.Sprintf("user_rate_limit:%s", userID)
-			// Add rate limiting logic here
+			// Rate limiting implementation would go here
+			// This would integrate with a distributed rate limiter like Redis
 		}
 
 		// Check for elevated privileges
@@ -122,30 +124,10 @@ func LegacySecurityMiddleware(logger *zap.Logger, authService AuthService, confi
 				zap.String("user_agent", userAgent))
 		}
 
-		// Check session validity if required
-		if config.RequireActiveSession && claims.SessionID.String() != "" {
-			session, err := authService.ValidateSession(ctx, claims.SessionID)
-			if err != nil || !session.IsActive {
-				logger.Warn("Invalid or inactive session detected",
-					zap.String("user_id", userID),
-					zap.String("session_id", claims.SessionID.String()),
-					zap.String("client_ip", clientIP),
-					zap.Error(err))
-
-				c.JSON(401, gin.H{
-					"error": "Session invalid or expired",
-					"code":  "SESSION_INVALID",
-				})
-				c.Abort()
-				return
-			}
-
-			// Check for session timeout warning
-			if config.SessionTimeoutWarning > 0 {
-				timeUntilExpiry := time.Until(session.ExpiresAt)
-				if timeUntilExpiry > 0 && timeUntilExpiry < config.SessionTimeoutWarning {
-					c.Header("X-Session-Warning", fmt.Sprintf("Session expires in %v", timeUntilExpiry))
-				}
+		// Validate session if required
+		if config.RequireActiveSession {
+			if err := validateSession(ctx, authService, claims, config, logger, userID, clientIP, c); err != nil {
+				return // Session validation failed, response already sent
 			}
 		}
 
@@ -160,14 +142,75 @@ func LegacySecurityMiddleware(logger *zap.Logger, authService AuthService, confi
 				zap.Duration("processing_time", time.Since(startTime)))
 		}
 
-		// Set security headers
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
-
 		c.Next()
 	}
+}
+
+// applySecurityHeaders applies comprehensive security headers
+func applySecurityHeaders(c *gin.Context, config *ModernSecurityConfig) {
+	// Basic security headers
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("X-Frame-Options", "DENY")
+	c.Header("X-XSS-Protection", "1; mode=block")
+	c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+
+	// Content Security Policy
+	if config.CSPPolicy != "" {
+		c.Header("Content-Security-Policy", config.CSPPolicy)
+	}
+
+	// HSTS for HTTPS
+	if c.Request.TLS != nil && config.HSTSMaxAge > 0 {
+		c.Header("Strict-Transport-Security", fmt.Sprintf("max-age=%d; includeSubDomains", config.HSTSMaxAge))
+	}
+
+	// Remove server information
+	c.Header("Server", "")
+}
+
+// setSecurityContext sets comprehensive security context in Gin context
+func setSecurityContext(c *gin.Context, claims *TokenClaims, clientIP, userAgent string) {
+	c.Set("user_id", claims.UserID.String())
+	c.Set("user_role", claims.Role)
+	c.Set("user_email", claims.Email)
+	c.Set("user_permissions", claims.Permissions)
+	c.Set("session_id", claims.SessionID.String())
+	c.Set("token_type", claims.TokenType)
+	c.Set("client_ip", clientIP)
+	c.Set("user_agent", userAgent)
+}
+
+// validateSession validates user session
+func validateSession(ctx context.Context, authService AuthService, claims *TokenClaims, config *ModernSecurityConfig, logger *zap.Logger, userID, clientIP string, c *gin.Context) error {
+	if claims.SessionID == uuid.Nil {
+		return nil // No session to validate
+	}
+
+	session, err := authService.ValidateSession(ctx, claims.SessionID)
+	if err != nil || !session.IsActive {
+		logger.Warn("Invalid or inactive session detected",
+			zap.String("user_id", userID),
+			zap.String("session_id", claims.SessionID.String()),
+			zap.String("client_ip", clientIP),
+			zap.Error(err))
+
+		c.JSON(401, gin.H{
+			"error": "Session invalid or expired",
+			"code":  "SESSION_INVALID",
+		})
+		c.Abort()
+		return fmt.Errorf("session validation failed")
+	}
+
+	// Check for session timeout warning
+	if config.SessionTimeoutWarning > 0 {
+		timeUntilExpiry := time.Until(session.ExpiresAt)
+		if timeUntilExpiry > 0 && timeUntilExpiry < config.SessionTimeoutWarning {
+			c.Header("X-Session-Warning", fmt.Sprintf("Session expires in %v", timeUntilExpiry))
+		}
+	}
+
+	return nil
 }
 
 // isElevatedRole checks if a role has elevated privileges

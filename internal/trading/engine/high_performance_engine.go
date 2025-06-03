@@ -9,7 +9,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -66,13 +65,8 @@ type HighPerformanceMatchingEngine struct {
 	// Event processing control
 	eventProcessorRunning int32
 	stopEventProcessor    chan struct{}
-
 	// Persistence layer with batching
 	persistenceLayer *persistence.PersistenceLayer
-
-	// Legacy compatibility (for existing code)
-	legacyOrderBooks map[string]*orderbook.OrderBook
-	legacyMutex      sync.RWMutex
 }
 
 // NewHighPerformanceMatchingEngine creates a new high-performance matching engine
@@ -104,15 +98,11 @@ func NewHighPerformanceMatchingEngine(
 
 		// Initialize high-performance components
 		shardedMarketState: NewShardedMarketState(),
-		shardedOrderBooks:  NewShardedOrderBookManager(),
-		orderBookHandlers:  NewLockFreeEventHandlers(),
+		shardedOrderBooks:  NewShardedOrderBookManager(), orderBookHandlers: NewLockFreeEventHandlers(),
 		tradeHandlers:      NewLockFreeEventHandlers(),
 		eventRingBuffer:    NewLockFreeRingBuffer(),
 		perfCounters:       NewAtomicCounters(),
 		stopEventProcessor: make(chan struct{}),
-
-		// Legacy compatibility
-		legacyOrderBooks: make(map[string]*orderbook.OrderBook),
 	}
 
 	// Initialize worker pool based on configuration
@@ -547,45 +537,6 @@ func (hpme *HighPerformanceMatchingEngine) GetPerformanceMetrics() map[string]in
 // ResetPerformanceMetrics resets all performance counters
 func (hpme *HighPerformanceMatchingEngine) ResetPerformanceMetrics() {
 	hpme.perfCounters.Reset()
-}
-
-// =============================
-// Legacy Compatibility Methods
-// =============================
-// These methods maintain compatibility with existing code while providing high-performance alternatives
-
-// ProcessOrder provides legacy compatibility while using high-performance implementation
-func (hpme *HighPerformanceMatchingEngine) ProcessOrder(ctx context.Context, order *model.Order, source OrderSourceType) (*model.Order, []*model.Trade, []*model.Order, error) {
-	return hpme.ProcessOrderHighThroughput(ctx, order, source)
-}
-
-// PauseMarket provides legacy compatibility
-func (hpme *HighPerformanceMatchingEngine) PauseMarket(pair string) error {
-	return hpme.PauseMarketHighPerformance(pair)
-}
-
-// ResumeMarket provides legacy compatibility
-func (hpme *HighPerformanceMatchingEngine) ResumeMarket(pair string) error {
-	return hpme.ResumeMarketHighPerformance(pair)
-}
-
-// RegisterOrderBookUpdateHandler provides legacy compatibility
-func (hpme *HighPerformanceMatchingEngine) RegisterOrderBookUpdateHandler(handler OrderBookUpdateHandler) {
-	hpme.RegisterOrderBookUpdateHandlerHighPerformance(handler)
-}
-
-// RegisterTradeHandler provides legacy compatibility
-func (hpme *HighPerformanceMatchingEngine) RegisterTradeHandler(handler func(TradeEvent)) {
-	hpme.RegisterTradeHandlerHighPerformance(handler)
-}
-
-// GetOrderBook returns the orderbook for a given pair (legacy compatibility)
-func (hpme *HighPerformanceMatchingEngine) GetOrderBook(pair string) orderbook.OrderBookInterface {
-	ob := hpme.shardedOrderBooks.GetOrderBook(pair)
-	if ob != nil {
-		return ob
-	}
-	return nil
 }
 
 // =============================

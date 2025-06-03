@@ -118,11 +118,11 @@ func (s *Server) Router() *gin.Engine {
 
 	// Add enhanced security middleware for comprehensive JWT validation monitoring
 	if s.authSvc != nil {
-		securityMiddlewareConfig := auth.DefaultLegacySecurityMiddlewareConfig()
+		securityMiddlewareConfig := auth.DefaultModernSecurityConfig()
 		securityMiddlewareConfig.EnableDetailedAuditLogging = true
 		securityMiddlewareConfig.LogSuspiciousActivity = true
 		securityMiddlewareConfig.BlockHighRiskTokens = true
-		router.Use(auth.LegacySecurityMiddleware(s.logger, s.authSvc, securityMiddlewareConfig))
+		router.Use(auth.SecurityMiddleware(s.logger, s.authSvc, securityMiddlewareConfig))
 
 		// Add comprehensive audit logging middleware
 		router.Use(auth.AuditMiddleware(s.logger))

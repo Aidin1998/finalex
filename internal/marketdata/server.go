@@ -14,9 +14,9 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/redis/go-redis/v9"
 )
 
 // MessageType represents the type of market data message

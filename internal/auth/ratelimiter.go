@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/pkg/models"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // RedisRateLimiter implements rate limiting using Redis
@@ -50,13 +50,12 @@ func (rl *RedisRateLimiter) Allow(ctx context.Context, key string, limit int, wi
 	if currentCount >= int64(limit) {
 		return false, nil
 	}
-
 	// Add current request to the window
 	score := now.UnixNano()
 	member := fmt.Sprintf("%d", score)
 
 	pipe = rl.client.Pipeline()
-	pipe.ZAdd(ctx, redisKey, &redis.Z{Score: float64(score), Member: member})
+	pipe.ZAdd(ctx, redisKey, redis.Z{Score: float64(score), Member: member})
 	pipe.Expire(ctx, redisKey, window+time.Minute) // Add buffer to expiration
 
 	_, err = pipe.Exec(ctx)

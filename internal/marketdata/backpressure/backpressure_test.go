@@ -1,3 +1,6 @@
+//go:build test
+// +build test
+
 // Comprehensive tests for the backpressure management system
 package backpressure
 
@@ -8,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -311,31 +313,6 @@ func TestBackpressureManager_Unit(t *testing.T) {
 		metrics := manager.GetMetrics()
 		assert.NotNil(t, metrics, "metrics should not be nil")
 	})
-}
-
-// NewBackpressureManagerForTest creates a BackpressureManager with a dummy coordinator (no Kafka)
-func NewBackpressureManagerForTest(cfg *BackpressureConfig, logger *zap.Logger) *BackpressureManager {
-	managerCfg := &cfg.Manager
-	detector := NewClientCapabilityDetector(logger.Named("detector"))
-	rateLimiter := NewAdaptiveRateLimiter(logger.Named("rate_limiter"), detector, &cfg.RateLimiter)
-	priorityQ := NewLockFreePriorityQueue(&cfg.PriorityQueue, logger.Named("priority_queue"))
-	ctx, cancel := context.WithCancel(context.Background())
-	dummy := &CrossServiceCoordinator{logger: logger, config: &CoordinatorConfig{}, metrics: &CoordinatorMetrics{}}
-	return &BackpressureManager{
-		logger:           logger,
-		detector:         detector,
-		rateLimiter:      rateLimiter,
-		priorityQ:        priorityQ,
-		coordinator:      dummy,
-		incomingMessages: make(chan *IncomingMessage, 10000),
-		processedJobs:    make(chan *ProcessedJob, 10000),
-		workerCount:      managerCfg.WorkerCount,
-		config:           managerCfg,
-		ctx:              ctx,
-		cancel:           cancel,
-		shutdown:         make(chan struct{}),
-		metrics:          initManagerMetrics(),
-	}
 }
 
 // --- Mock coordinator for unit test ---

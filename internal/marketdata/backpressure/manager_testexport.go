@@ -31,6 +31,7 @@ func NewBackpressureManagerForTest(cfg *BackpressureConfig, logger *zap.Logger) 
 		cancel:           cancel,
 		shutdown:         make(chan struct{}),
 		metrics:          initManagerMetrics(),
+		emergencyMetrics: &EmergencyMetrics{},
 	}
 }
 

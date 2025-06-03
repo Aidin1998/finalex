@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
@@ -29,7 +29,7 @@ type MigrationOrchestrator struct {
 
 	// HTTP server
 	httpServer *http.Server
-	router     *mux.Router
+	router     *gin.Engine
 
 	// WebSocket for real-time updates
 	upgrader      websocket.Upgrader
@@ -226,8 +226,8 @@ func NewMigrationOrchestrator(
 		},
 	}
 
-	// Initialize router
-	orchestrator.router = mux.NewRouter()
+	// Initialize Gin router
+	orchestrator.router = gin.New()
 	orchestrator.setupRoutes()
 
 	// Load templates if dashboard is enabled
@@ -375,76 +375,72 @@ func (o *MigrationOrchestrator) setupRoutes() {
 	}
 
 	// Health check endpoint
-	o.router.HandleFunc("/health", o.handleHealth).Methods("GET")
+	o.router.GET("/health", o.handleHealth)
 }
 
 // setupDashboardRoutes configures dashboard routes
 func (o *MigrationOrchestrator) setupDashboardRoutes() {
-	dashboardRouter := o.router.PathPrefix(o.config.DashboardPath).Subrouter()
+	dashboardRouter := o.router.Group(o.config.DashboardPath)
 
 	// Main dashboard page
-	dashboardRouter.HandleFunc("", o.handleDashboard).Methods("GET")
-	dashboardRouter.HandleFunc("/", o.handleDashboard).Methods("GET")
+	dashboardRouter.GET("", o.handleDashboard)
+	dashboardRouter.GET("/", o.handleDashboard)
 
 	// Dashboard data endpoint
-	dashboardRouter.HandleFunc("/data", o.handleDashboardData).Methods("GET")
+	dashboardRouter.GET("/data", o.handleDashboardData)
 
 	// Static assets
 	if o.config.StaticAssetsPath != "" {
-		staticHandler := http.StripPrefix(
-			o.config.DashboardPath+"/static/",
-			http.FileServer(http.Dir(o.config.StaticAssetsPath)),
-		)
-		dashboardRouter.PathPrefix("/static/").Handler(staticHandler)
+		dashboardRouter.Static("/static", o.config.StaticAssetsPath)
 	}
 }
 
 // setupAPIRoutes configures API routes
 func (o *MigrationOrchestrator) setupAPIRoutes() {
-	apiRouter := o.router.PathPrefix(o.config.APIPrefix).Subrouter()
+	apiRouter := o.router.Group(o.config.APIPrefix)
 
 	// Migration management endpoints
-	migrationRouter := apiRouter.PathPrefix("/migrations").Subrouter()
-	migrationRouter.HandleFunc("", o.handleListMigrations).Methods("GET")
-	migrationRouter.HandleFunc("", o.handleCreateMigration).Methods("POST")
-	migrationRouter.HandleFunc("/{id}", o.handleGetMigration).Methods("GET")
-	migrationRouter.HandleFunc("/{id}/abort", o.handleAbortMigration).Methods("POST")
-	migrationRouter.HandleFunc("/{id}/resume", o.handleResumeMigration).Methods("POST")
-	migrationRouter.HandleFunc("/{id}/retry", o.handleRetryMigration).Methods("POST")
+	migrationRouter := apiRouter.Group("/migrations")
+	migrationRouter.GET("", o.handleListMigrations)
+	migrationRouter.POST("", o.handleCreateMigration)
+	migrationRouter.GET("/:id", o.handleGetMigration)
+	migrationRouter.POST("/:id/abort", o.handleAbortMigration)
+	migrationRouter.POST("/:id/resume", o.handleResumeMigration)
+	migrationRouter.POST("/:id/retry", o.handleRetryMigration)
 
 	// Participant management endpoints
-	participantRouter := apiRouter.PathPrefix("/participants").Subrouter()
-	participantRouter.HandleFunc("", o.handleListParticipants).Methods("GET")
-	participantRouter.HandleFunc("/{id}", o.handleGetParticipant).Methods("GET")
-	participantRouter.HandleFunc("/{id}/health", o.handleParticipantHealth).Methods("GET")
+	participantRouter := apiRouter.Group("/participants")
+	participantRouter.GET("", o.handleListParticipants)
+	participantRouter.GET("/:id", o.handleGetParticipant)
+	participantRouter.GET("/:id/health", o.handleParticipantHealth)
 
 	// System status endpoints
-	statusRouter := apiRouter.PathPrefix("/status").Subrouter()
-	statusRouter.HandleFunc("/health", o.handleSystemHealth).Methods("GET")
-	statusRouter.HandleFunc("/metrics", o.handleSystemMetrics).Methods("GET")
-	statusRouter.HandleFunc("/performance", o.handlePerformanceMetrics).Methods("GET")
+	statusRouter := apiRouter.Group("/status")
+	statusRouter.GET("/health", o.handleSystemHealth)
+	statusRouter.GET("/metrics", o.handleSystemMetrics)
+	statusRouter.GET("/performance", o.handlePerformanceMetrics)
 
 	// Safety endpoints
-	safetyRouter := apiRouter.PathPrefix("/safety").Subrouter()
-	safetyRouter.HandleFunc("/status", o.handleSafetyStatus).Methods("GET")
-	safetyRouter.HandleFunc("/rollback/{id}", o.handleSafetyRollback).Methods("POST")
-	safetyRouter.HandleFunc("/circuit-breaker/status", o.handleCircuitBreakerStatus).Methods("GET")
-	safetyRouter.HandleFunc("/circuit-breaker/reset", o.handleCircuitBreakerReset).Methods("POST")
+	safetyRouter := apiRouter.Group("/safety")
+	safetyRouter.GET("/status", o.handleSafetyStatus)
+	safetyRouter.POST("/rollback/:id", o.handleSafetyRollback)
+	safetyRouter.GET("/circuit-breaker/status", o.handleCircuitBreakerStatus)
+	safetyRouter.POST("/circuit-breaker/reset", o.handleCircuitBreakerReset)
 
 	// Configuration endpoints
-	configRouter := apiRouter.PathPrefix("/config").Subrouter()
-	configRouter.HandleFunc("", o.handleGetConfig).Methods("GET")
-	configRouter.HandleFunc("", o.handleUpdateConfig).Methods("PUT")
+	configRouter := apiRouter.Group("/config")
+	configRouter.GET("", o.handleGetConfig)
+	configRouter.PUT("", o.handleUpdateConfig)
 
 	// Event streaming endpoints
-	eventRouter := apiRouter.PathPrefix("/events").Subrouter()
-	eventRouter.HandleFunc("", o.handleGetEvents).Methods("GET")
-	eventRouter.HandleFunc("/stream", o.handleEventStream).Methods("GET")
+	eventRouter := apiRouter.Group("/events")
+	eventRouter.GET("", o.handleGetEvents)
+	eventRouter.GET("/stream", o.handleEventStream)
 }
 
 // setupWebSocketRoutes configures WebSocket routes
 func (o *MigrationOrchestrator) setupWebSocketRoutes() {
-	o.router.HandleFunc("/ws", o.handleWebSocket).Methods("GET")
-	o.router.HandleFunc("/ws/events", o.handleWebSocketEvents).Methods("GET")
-	o.router.HandleFunc("/ws/metrics", o.handleWebSocketMetrics).Methods("GET")
+	o.router.GET("/ws", o.handleWebSocket)
+	o.router.GET("/ws/events", o.handleWebSocketEvents)
+	o.router.GET("/ws/metrics", o.handleWebSocketMetrics)
 }

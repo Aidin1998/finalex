@@ -31,6 +31,19 @@
 
 ---
 
+## Recently Closed Gaps
+- WebSocket client integration test is now robust and passing.
+- Backpressure manager unit test is robust and passing, with all dependencies mocked or nil-safe.
+
+## Remaining Gaps
+- Advanced/edge-case scenarios for market data (e.g., high-frequency, burst, disconnect/reconnect, malformed messages).
+- Performance/benchmark tests for WebSocket and backpressure modules.
+- Scaling and consensus module tests (skeletons exist, need implementation and coverage).
+
+## Next Focus
+- Implement and run advanced/edge-case and performance tests for market data and backpressure.
+- Continue to flesh out scaling and consensus module tests.
+
 ## Next Steps
 - Prioritize writing new tests for settlement, wallet, scaling, and consensus modules.
 - Add advanced/edge-case tests for market data (backpressure, enhanced hub, FIX, Kafka fallback).

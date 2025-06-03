@@ -5,12 +5,12 @@ import (
 	"strings"
 
 	"github.com/Aidin1998/pincex_unified/common/errors"
-	"github.com/go-playground/validator"
+	"github.com/go-playground/validator/v10"
 )
 
 func NewValidator() *Validator {
-	validator := validator.New()
-	validator.RegisterTagNameFunc(func(fld reflect.StructField) string {
+	validate := validator.New()
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
 		if name == "-" {
 			return ""
@@ -18,7 +18,7 @@ func NewValidator() *Validator {
 		return name
 	})
 
-	return &Validator{validator}
+	return &Validator{validate}
 }
 
 type Validator struct {

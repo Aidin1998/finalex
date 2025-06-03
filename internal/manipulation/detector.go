@@ -114,6 +114,9 @@ type ManipulationDetector struct {
 	pumpDumpDetector    *PumpDumpDetector
 	layeringDetector    *LayeringDetector
 
+	// Consolidated pattern detection adapter
+	consolidatedAdapter *ConsolidatedDetectorAdapter
+
 	// Performance metrics
 	totalDetections      int64
 	truePositives        int64
@@ -411,22 +414,30 @@ func (md *ManipulationDetector) performPatternDetection(activity *TradingActivit
 
 	var detectedPatterns []ManipulationPattern
 
-	// Wash Trading Detection
-	if washPattern := md.washTradingDetector.Detect(activity); washPattern != nil {
-		detectedPatterns = append(detectedPatterns, *washPattern)
+	// Use consolidated wash trading detector if available
+	if md.consolidatedAdapter != nil {
+		if washPattern := md.consolidatedAdapter.DetectWashTrading(activity); washPattern != nil {
+			detectedPatterns = append(detectedPatterns, *washPattern)
+			md.logger.Infow("Consolidated wash trading pattern detected",
+				"user_id", activity.UserID,
+				"confidence", washPattern.Confidence.String())
+		}
+	} else {
+		// Fallback to legacy wash trading detector
+		if washPattern := md.washTradingDetector.Detect(activity); washPattern != nil {
+			detectedPatterns = append(detectedPatterns, *washPattern)
+		}
 	}
 
-	// Spoofing Detection
+	// Continue using existing detectors for other patterns (for now)
 	if spoofPattern := md.spoofingDetector.Detect(activity); spoofPattern != nil {
 		detectedPatterns = append(detectedPatterns, *spoofPattern)
 	}
 
-	// Pump and Dump Detection
 	if pumpDumpPattern := md.pumpDumpDetector.Detect(activity); pumpDumpPattern != nil {
 		detectedPatterns = append(detectedPatterns, *pumpDumpPattern)
 	}
 
-	// Layering Detection
 	if layeringPattern := md.layeringDetector.Detect(activity); layeringPattern != nil {
 		detectedPatterns = append(detectedPatterns, *layeringPattern)
 	}

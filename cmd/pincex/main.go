@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 
 	_ "github.com/Aidin1998/pincex_unified/docs" // Swagger docs
 

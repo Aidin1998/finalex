@@ -62,6 +62,15 @@
 - scaling_unit_test.go: [unit, scaling]
 - consensus_unit_test.go: [unit, consensus]
 
+## Passing Tests
+- websocket_client_test.go: [integration, websocket, marketdata, distribution, end-to-end]
+- backpressure_test.go: [unit, backpressure, manager, rate-limiter, capability-detector]
+
+## Test Group Coverage
+- Market Data: websocket_client_test.go, backpressure_test.go
+- Backpressure: backpressure_test.go
+- Distribution: websocket_client_test.go
+
 ---
 
-This file groups and tags all test files for selective execution and coverage analysis. Update as new tests are added or tags change.
+This file groups and tags all test files for selective execution and coverage analysis. Update as new tests are added or tags change. All core integration and unit tests for market data and backpressure are passing and robust. Ready for next round of advanced/edge-case and performance tests.
