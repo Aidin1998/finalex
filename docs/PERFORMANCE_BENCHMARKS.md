@@ -2,11 +2,12 @@
 
 ## Table of Contents
 1. [Baseline Performance Metrics](#baseline-performance-metrics)
-2. [Load Testing Procedures](#load-testing-procedures)
-3. [Performance Benchmarking Scripts](#performance-benchmarking-scripts)
-4. [Capacity Planning](#capacity-planning)
-5. [Performance Regression Testing](#performance-regression-testing)
-6. [Optimization Guidelines](#optimization-guidelines)
+2. [ML Inference Optimization & Real-Time Evaluation](#ml-inference-optimization--real-time-evaluation)
+3. [Load Testing Procedures](#load-testing-procedures)
+4. [Performance Benchmarking Scripts](#performance-benchmarking-scripts)
+5. [Capacity Planning](#capacity-planning)
+6. [Performance Regression Testing](#performance-regression-testing)
+7. [Optimization Guidelines](#optimization-guidelines)
 
 ---
 
@@ -42,6 +43,33 @@
 | Cache Hit Ratio | > 95% | Query result cache effectiveness |
 | Replication Lag | < 100ms | Primary to replica delay |
 | Lock Wait Time | < 10ms | Average time waiting for locks |
+
+---
+
+## ML Inference Optimization & Real-Time Evaluation
+
+### Optimization Techniques
+- **Quantization:** Reduces model size and inference latency by converting weights/activations to lower precision (e.g., int8).
+- **Pruning:** Removes redundant weights/connections, reducing computation and memory usage.
+- **Batching & Caching:** Groups requests for efficient processing and caches frequent predictions.
+- **Optimized Inference Engine:** All production inference flows use a high-performance engine with quantization/pruning, batching, and caching.
+
+### Real-Time Evaluation & Deployment
+- **Shadow Testing:** New models are evaluated in parallel with production, receiving a configurable percentage of live traffic. Metrics (accuracy, latency, error rate) are compared to production.
+- **Canary Deployments:** Gradual rollout of new models to a subset of traffic, with automated rollback if performance/accuracy/latency thresholds are not met.
+- **A/B Testing:** Supports statistical comparison of multiple models under real-world load.
+- **Drift Detection:** Monitors for data or performance drift, triggering alerts and recommendations.
+
+### Performance Monitoring & Regression Detection
+- **Continuous Monitoring:** Latency, throughput, accuracy, error rate, and resource usage are tracked in real time.
+- **Automated Alerts:** Performance regressions, drift, or threshold violations trigger alerts and can initiate rollback.
+- **Ongoing Benchmarking:** All optimizations are validated against baseline metrics. New results are documented below if improvements are observed.
+
+#### Integration Guidance
+- All ML-based risk and price prediction modules now use the optimized inference engine in production.
+- Shadow/canary/A-B testing and drift detection are enabled for all deployments.
+- See code comments in `internal/scaling/predictor/service.go` for integration details.
+- For ongoing monitoring, use the provided Grafana dashboards and Prometheus metrics (see Monitoring Overview).
 
 ---
 

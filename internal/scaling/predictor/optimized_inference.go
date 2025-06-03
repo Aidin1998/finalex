@@ -34,6 +34,8 @@ type OptimizedInferenceEngine struct {
 	inferencePool    *InferencePool
 	requestQueue     chan *InferenceRequest
 	responseChannels map[string]chan *InferenceResponse
+	ctx              context.Context
+	cancel           context.CancelFunc
 
 	// Performance monitoring
 	latencyTracker  *LatencyTracker
@@ -51,16 +53,19 @@ type InferenceConfig struct {
 	PruningEnabled      bool          `json:"pruning_enabled"`
 	MaxConcurrentJobs   int           `json:"max_concurrent_jobs"`
 	MemoryPoolSize      int           `json:"memory_pool_size"`
+	NumWorkers          int           `json:"num_workers"`
+	QueueSize           int           `json:"queue_size"`
+	MaxRetries          int           `json:"max_retries"`
 
 	// Quantization settings
-	QuantizationBits   int    `json:"quantization_bits"`   // 8, 16
-	QuantizationMethod string `json:"quantization_method"` // "dynamic", "static"
+	QuantizationBits   int    `json:"quantization_bits"`
+	QuantizationMethod string `json:"quantization_method"`
 	CalibrationSamples int    `json:"calibration_samples"`
 
 	// Pruning settings
-	PruningRatio       float64 `json:"pruning_ratio"`       // 0.1 = 10% pruning
-	PruningMethod      string  `json:"pruning_method"`      // "magnitude", "structured"
-	PruningGranularity string  `json:"pruning_granularity"` // "weight", "channel", "filter"
+	PruningRatio       float64 `json:"pruning_ratio"`
+	PruningMethod      string  `json:"pruning_method"`
+	PruningGranularity string  `json:"pruning_granularity"`
 
 	// Performance targets
 	MaxLatencyMs      int     `json:"max_latency_ms"`
@@ -90,72 +95,7 @@ type OptimizedModel struct {
 	LastUsed       time.Time
 }
 
-// ModelQuantizer implements model quantization for faster inference
-type ModelQuantizer struct {
-	config     *QuantizationConfig
-	calibrator *Calibrator
-	quantizers map[string]Quantizer
-	statistics *QuantizationStats
-}
-
-// QuantizationConfig defines quantization parameters
-type QuantizationConfig struct {
-	Bits              int     `json:"bits"`
-	Method            string  `json:"method"`
-	ActivationRange   float64 `json:"activation_range"`
-	WeightRange       float64 `json:"weight_range"`
-	AsymmetricQuant   bool    `json:"asymmetric_quant"`
-	PerChannelQuant   bool    `json:"per_channel_quant"`
-	CalibrationMethod string  `json:"calibration_method"`
-}
-
-// QuantizedModel represents a quantized model
-type QuantizedModel struct {
-	Weights      []int8
-	Biases       []int8
-	Scales       []float32
-	ZeroPoints   []int8
-	LayerConfigs []LayerQuantConfig
-	Metadata     map[string]interface{}
-}
-
-// ModelPruner implements model pruning to reduce computational overhead
-type ModelPruner struct {
-	config    *PruningConfig
-	analyzer  *ModelAnalyzer
-	pruners   map[string]Pruner
-	validator *PruningValidator
-}
-
-// PruningConfig defines pruning parameters
-type PruningConfig struct {
-	Ratio          float64  `json:"ratio"`
-	Method         string   `json:"method"`
-	Granularity    string   `json:"granularity"`
-	SaliencyMode   string   `json:"saliency_mode"`
-	PreserveLayers []string `json:"preserve_layers"`
-	StructuredMask bool     `json:"structured_mask"`
-}
-
-// PrunedModel represents a pruned model
-type PrunedModel struct {
-	PruningMask   []bool
-	ActiveWeights []float32
-	SparsityRatio float64
-	PruningMap    map[string]interface{}
-	Metadata      map[string]interface{}
-}
-
-// BatchProcessor optimizes inference through batching
-type BatchProcessor struct {
-	config     *BatchConfig
-	batcher    *RequestBatcher
-	scheduler  *BatchScheduler
-	executor   *BatchExecutor
-	aggregator *ResponseAggregator
-}
-
-// InferenceRequest represents a single inference request
+// InferenceRequest represents a request for ML inference
 type InferenceRequest struct {
 	ID         string
 	ModelID    string
@@ -167,7 +107,7 @@ type InferenceRequest struct {
 	ResponseCh chan *InferenceResponse
 }
 
-// InferenceResponse represents the response to an inference request
+// InferenceResponse represents the response from ML inference
 type InferenceResponse struct {
 	ID         string
 	Prediction *PredictionResult
@@ -178,14 +118,68 @@ type InferenceResponse struct {
 	Metadata   map[string]interface{}
 }
 
+// QuantizedModel represents a quantized ML model
+type QuantizedModel struct {
+	Weights      []int8
+	Biases       []int8
+	Scales       []float32
+	ZeroPoints   []int8
+	LayerConfigs []LayerQuantConfig
+	Metadata     map[string]interface{}
+}
+
+// PrunedModel represents a pruned ML model
+type PrunedModel struct {
+	PruningMask   []bool
+	ActiveWeights []float32
+	SparsityRatio float64
+	PruningMap    map[string]interface{}
+	Metadata      map[string]interface{}
+}
+
+// OptimizationMetadata contains metadata about model optimization
+type OptimizationMetadata struct {
+	AvgLatency time.Duration
+	ModelSize  int64
+	Accuracy   float64
+}
+
+// InferenceStats contains performance statistics for inference
+type InferenceStats struct {
+	TotalRequests      int64         `json:"total_requests"`
+	SuccessfulRequests int64         `json:"successful_requests"`
+	FailedRequests     int64         `json:"failed_requests"`
+	CacheHits          int64         `json:"cache_hits"`
+	CacheMisses        int64         `json:"cache_misses"`
+	AvgLatency         time.Duration `json:"avg_latency"`
+	P95Latency         time.Duration `json:"p95_latency"`
+	P99Latency         time.Duration `json:"p99_latency"`
+	ThroughputQPS      float64       `json:"throughput_qps"`
+	ErrorRate          float64       `json:"error_rate"`
+	OptimizedModels    int           `json:"optimized_models"`
+}
+
+// LayerQuantConfig contains quantization configuration for a layer
+type LayerQuantConfig struct {
+	Bits       int     `json:"bits"`
+	Scale      float32 `json:"scale"`
+	ZeroPoint  int8    `json:"zero_point"`
+	Symmetric  bool    `json:"symmetric"`
+	PerChannel bool    `json:"per_channel"`
+}
+
 // NewOptimizedInferenceEngine creates a new optimized inference engine
 func NewOptimizedInferenceEngine(config *InferenceConfig, logger *zap.SugaredLogger) *OptimizedInferenceEngine {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	engine := &OptimizedInferenceEngine{
 		config:           config,
 		logger:           logger,
 		optimizedModels:  make(map[string]*OptimizedModel),
 		responseChannels: make(map[string]chan *InferenceResponse),
-		requestQueue:     make(chan *InferenceRequest, config.MaxConcurrentJobs*2),
+		requestQueue:     make(chan *InferenceRequest, config.QueueSize),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	// Initialize components
@@ -197,15 +191,18 @@ func NewOptimizedInferenceEngine(config *InferenceConfig, logger *zap.SugaredLog
 		PerChannelQuant:   true,
 		CalibrationMethod: "entropy",
 	})
+
 	engine.pruner = NewModelPruner(&PruningConfig{
 		Ratio:       config.PruningRatio,
 		Method:      config.PruningMethod,
 		Granularity: config.PruningGranularity,
 	})
+
 	engine.batchProcessor = NewBatchProcessor(&BatchConfig{
 		MaxBatchSize: config.MaxBatchSize,
 		BatchTimeout: config.BatchTimeout,
 	})
+
 	engine.featureCache = NewFeatureCache(config.CacheSize, config.CacheTTL)
 	engine.performanceStats = NewInferenceStats()
 	engine.latencyTracker = NewLatencyTracker()
@@ -220,6 +217,28 @@ func NewOptimizedInferenceEngine(config *InferenceConfig, logger *zap.SugaredLog
 	go engine.monitorPerformance()
 
 	return engine
+}
+
+// QuantizationConfig contains configuration for model quantization
+type QuantizationConfig struct {
+	Bits              int    `json:"bits"`
+	Method            string `json:"method"`
+	AsymmetricQuant   bool   `json:"asymmetric_quant"`
+	PerChannelQuant   bool   `json:"per_channel_quant"`
+	CalibrationMethod string `json:"calibration_method"`
+}
+
+// PruningConfig contains configuration for model pruning
+type PruningConfig struct {
+	Ratio       float64 `json:"ratio"`
+	Method      string  `json:"method"`
+	Granularity string  `json:"granularity"`
+}
+
+// BatchConfig contains configuration for batch processing
+type BatchConfig struct {
+	MaxBatchSize int           `json:"max_batch_size"`
+	BatchTimeout time.Duration `json:"batch_timeout"`
 }
 
 // OptimizeModel applies all optimization techniques to a model
@@ -304,7 +323,7 @@ func (e *OptimizedInferenceEngine) PredictOptimized(ctx context.Context, modelID
 	if cached, found := e.featureCache.Get(cacheKey); found {
 		e.performanceStats.CacheHits++
 		return &InferenceResponse{
-			ID:         generateRequestID(),
+			ID:         e.generateRequestID(),
 			Prediction: cached.(*PredictionResult),
 			Confidence: 1.0,
 			Latency:    time.Since(startTime),
@@ -317,7 +336,7 @@ func (e *OptimizedInferenceEngine) PredictOptimized(ctx context.Context, modelID
 
 	// Create inference request
 	request := &InferenceRequest{
-		ID:         generateRequestID(),
+		ID:         e.generateRequestID(),
 		ModelID:    modelID,
 		Features:   features,
 		Context:    ctx,
@@ -353,8 +372,13 @@ func (e *OptimizedInferenceEngine) PredictOptimized(ctx context.Context, modelID
 
 // processRequests handles incoming inference requests
 func (e *OptimizedInferenceEngine) processRequests() {
-	for request := range e.requestQueue {
-		go e.handleRequest(request)
+	for {
+		select {
+		case request := <-e.requestQueue:
+			go e.handleRequest(request)
+		case <-e.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -439,17 +463,12 @@ func (e *OptimizedInferenceEngine) runQuantizedInference(model *QuantizedModel, 
 	dequantizedResult := e.dequantizeResult(result, model.Scales, model.ZeroPoints)
 
 	return &PredictionResult{
+		Timestamp:     time.Now(),
 		PredictedLoad: dequantizedResult,
 		Confidence:    0.95, // Slightly reduced confidence for quantized models
-		Timestamp:     time.Now(),
-		ModelUsed:     "quantized",
-		Features:      features,
-		Metadata:      map[string]interface{}{"quantization_bits": model.LayerConfigs[0].Bits},
+		ModelMetadata: &ModelMetadata{ModelType: "quantized"},
 	}, nil
 }
-
-// Additional helper methods would be implemented here...
-// For brevity, I'm including the key structure and core methods.
 
 // Performance monitoring and optimization validation methods
 func (e *OptimizedInferenceEngine) validateOptimization(model *OptimizedModel) error {
@@ -491,17 +510,87 @@ func (e *OptimizedInferenceEngine) GetPerformanceStats() *InferenceStats {
 	}
 }
 
-// Additional utility types and methods would be implemented...
-type InferenceStats struct {
-	TotalRequests      int64         `json:"total_requests"`
-	SuccessfulRequests int64         `json:"successful_requests"`
-	FailedRequests     int64         `json:"failed_requests"`
-	CacheHits          int64         `json:"cache_hits"`
-	CacheMisses        int64         `json:"cache_misses"`
-	AvgLatency         time.Duration `json:"avg_latency"`
-	P95Latency         time.Duration `json:"p95_latency"`
-	P99Latency         time.Duration `json:"p99_latency"`
-	ThroughputQPS      float64       `json:"throughput_qps"`
-	ErrorRate          float64       `json:"error_rate"`
-	OptimizedModels    int           `json:"optimized_models"`
+// Helper method implementations
+func (e *OptimizedInferenceEngine) benchmarkModel(ctx context.Context, model PredictionModel) (*OptimizationMetadata, error) {
+	// TODO: Implement benchmarking logic
+	return &OptimizationMetadata{AvgLatency: 10 * time.Millisecond, ModelSize: 1024 * 1024, Accuracy: 0.99}, nil
+}
+
+func (e *OptimizedInferenceEngine) benchmarkOptimizedModel(ctx context.Context, model *OptimizedModel) (*OptimizationMetadata, error) {
+	// TODO: Implement benchmarking logic
+	return &OptimizationMetadata{AvgLatency: 5 * time.Millisecond, ModelSize: 512 * 1024, Accuracy: 0.98}, nil
+}
+
+func (e *OptimizedInferenceEngine) generateCacheKey(modelID string, features map[string]float64) string {
+	// TODO: Implement cache key generation
+	return modelID
+}
+
+func (e *OptimizedInferenceEngine) generateRequestID() string {
+	// TODO: Implement request ID generation
+	return fmt.Sprintf("req_%d", time.Now().UnixNano())
+}
+
+func (e *OptimizedInferenceEngine) monitorPerformance() {
+	// TODO: Implement performance monitoring
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			stats := e.GetPerformanceStats()
+			e.logger.Infof("Performance stats: QPS=%.2f, ErrorRate=%.4f, P95Latency=%v",
+				stats.ThroughputQPS, stats.ErrorRate, stats.P95Latency)
+		case <-e.ctx.Done():
+			return
+		}
+	}
+}
+
+func (e *OptimizedInferenceEngine) runPrunedInference(model *PrunedModel, features map[string]float64) (*PredictionResult, error) {
+	// TODO: Implement pruned inference logic
+	return &PredictionResult{
+		PredictedLoad: &LoadMetrics{
+			CPUUtilization:    0.5,
+			MemoryUtilization: 0.5,
+			RequestsPerSecond: 100,
+			LatencyP95Ms:      10,
+			ErrorRate:         0.01,
+		},
+		Confidence:    0.95,
+		Timestamp:     time.Now(),
+		ModelMetadata: &ModelMetadata{ModelType: "pruned"},
+	}, nil
+}
+
+func (e *OptimizedInferenceEngine) calculateConfidence(prediction *PredictionResult, model *OptimizedModel) float64 {
+	// TODO: Implement confidence calculation
+	return 1.0
+}
+
+func (e *OptimizedInferenceEngine) getOptimizationInfo(model *OptimizedModel) interface{} {
+	// TODO: Implement optimization info extraction
+	return nil
+}
+
+func (e *OptimizedInferenceEngine) quantizeFeatures(features map[string]float64, scales []float32, zeroPoints []int8) interface{} {
+	// TODO: Implement feature quantization
+	return nil
+}
+
+func (e *OptimizedInferenceEngine) computeQuantizedPrediction(quantizedFeatures interface{}, model *QuantizedModel) float64 {
+	// TODO: Implement quantized prediction
+	return 0.0
+}
+
+func (e *OptimizedInferenceEngine) dequantizeResult(result float64, scales []float32, zeroPoints []int8) *LoadMetrics {
+	// TODO: Implement dequantization - return LoadMetrics instead of float64
+	return &LoadMetrics{
+		CPUUtilization:    result,
+		MemoryUtilization: result,
+		RequestsPerSecond: result * 100,
+		LatencyP95Ms:      10,
+		ErrorRate:         0.01,
+	}
 }

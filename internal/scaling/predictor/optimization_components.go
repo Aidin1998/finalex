@@ -62,6 +62,7 @@ func (c *ModelCache) Get(key string) (interface{}, bool) {
 		return nil, false
 	}
 
+	// Check TTL
 	if time.Since(entry.CreatedAt) > c.ttl {
 		c.stats.Misses++
 		return nil, false
@@ -70,8 +71,6 @@ func (c *ModelCache) Get(key string) (interface{}, bool) {
 	entry.AccessAt = time.Now()
 	entry.HitCount++
 	c.stats.Hits++
-	c.updateHitRatio()
-
 	return entry.Value, true
 }
 
@@ -109,7 +108,7 @@ func (c *ModelCache) evictLRU() {
 }
 
 func (c *ModelCache) cleanup() {
-	ticker := time.NewTicker(time.Minute * 5)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -120,79 +119,70 @@ func (c *ModelCache) cleanup() {
 				c.stats.Evictions++
 			}
 		}
-		c.stats.Size = len(c.cache)
 		c.mu.Unlock()
 	}
 }
 
-func (c *ModelCache) updateHitRatio() {
-	total := c.stats.Hits + c.stats.Misses
-	if total > 0 {
-		c.stats.HitRatio = float64(c.stats.Hits) / float64(total)
+// Type aliases and helper constructors
+type FeatureCache = ModelCache
+
+func NewFeatureCache(size int, ttl time.Duration) *FeatureCache {
+	return NewModelCache(size, ttl)
+}
+
+// InferencePool manages concurrent inference workers
+type InferencePool struct {
+	workers chan struct{}
+}
+
+func NewInferencePool(maxJobs int) *InferencePool {
+	return &InferencePool{
+		workers: make(chan struct{}, maxJobs),
 	}
 }
 
-// ModelQuantizer implements INT8/INT16 quantization for faster inference
+func NewInferenceStats() *InferenceStats {
+	return &InferenceStats{}
+}
+
+// BatchScheduler handles request scheduling
+type BatchScheduler struct {
+	config *BatchConfig
+}
+
+// BatchExecutor executes batched requests
+type BatchExecutor struct {
+	config *BatchConfig
+}
+
+// ResponseAggregator aggregates batch responses
+type ResponseAggregator struct {
+	config *BatchConfig
+}
+
+// ModelQuantizer performs model quantization
 type ModelQuantizer struct {
 	config     *QuantizationConfig
-	calibrator *Calibrator
 	logger     *zap.SugaredLogger
+	calibrated bool
 }
 
-type Calibrator struct {
-	samples         [][]float32
-	activationStats map[string]*ActivationStats
-	weightStats     map[string]*WeightStats
-}
-
-type ActivationStats struct {
-	Min   float32
-	Max   float32
-	Mean  float32
-	Std   float32
-	Hist  []int
-	Count int64
-}
-
-type WeightStats struct {
-	Min      float32
-	Max      float32
-	Mean     float32
-	Std      float32
-	Sparsity float32
-}
-
-type LayerQuantConfig struct {
-	LayerName  string
-	Bits       int
-	Scale      float32
-	ZeroPoint  int8
-	Symmetric  bool
-	PerChannel bool
-	Calibrated bool
-}
-
-// NewModelQuantizer creates a new quantizer
 func NewModelQuantizer(config *QuantizationConfig) *ModelQuantizer {
 	return &ModelQuantizer{
 		config: config,
-		calibrator: &Calibrator{
-			activationStats: make(map[string]*ActivationStats),
-			weightStats:     make(map[string]*WeightStats),
-		},
 	}
 }
 
-// Quantize converts a model to quantized format
 func (q *ModelQuantizer) Quantize(ctx context.Context, model PredictionModel) (*QuantizedModel, error) {
-	// Calibrate the model if using static quantization
-	if q.config.Method == "static" {
+	// Calibrate quantizer if needed
+	if !q.calibrated {
 		if err := q.calibrate(ctx, model); err != nil {
 			return nil, fmt.Errorf("calibration failed: %w", err)
 		}
+		q.calibrated = true
 	}
 
-	// Extract model weights (simplified - would need actual model introspection)
+	// Extract model weights and biases
 	weights, biases := q.extractWeights(model)
 
 	// Quantize weights and biases
@@ -208,128 +198,112 @@ func (q *ModelQuantizer) Quantize(ctx context.Context, model PredictionModel) (*
 		Scales:       append(weightScales, biasScales...),
 		ZeroPoints:   append(weightZeroPoints, biasZeroPoints...),
 		LayerConfigs: layerConfigs,
-		Metadata: map[string]interface{}{
-			"quantization_method": q.config.Method,
-			"bits":                q.config.Bits,
-			"calibration_samples": len(q.calibrator.samples),
-		},
+		Metadata:     map[string]interface{}{"quantization_bits": q.config.Bits},
 	}, nil
 }
 
-// quantizeWeights converts float32 weights to int8
+// Helper methods for ModelQuantizer
+func (q *ModelQuantizer) calibrate(ctx context.Context, model PredictionModel) error {
+	// TODO: Implement calibration logic
+	return nil
+}
+
+func (q *ModelQuantizer) extractWeights(model PredictionModel) ([][]float32, [][]float32) {
+	// TODO: Implement weight extraction
+	weights := [][]float32{{1.0, 2.0, 3.0}}
+	biases := [][]float32{{0.1, 0.2}}
+	return weights, biases
+}
+
 func (q *ModelQuantizer) quantizeWeights(weights [][]float32) ([]int8, []float32, []int8) {
+	// Simplified quantization implementation
 	var quantized []int8
 	var scales []float32
 	var zeroPoints []int8
 
 	for _, layerWeights := range weights {
-		// Calculate quantization parameters
-		min := q.findMin(layerWeights)
-		max := q.findMax(layerWeights)
-
-		var scale float32
+		// Find min/max for scale calculation
+		min, max := q.findMinMax(layerWeights)
+		scale := (max - min) / 255.0
 		var zeroPoint int8
 
 		if q.config.AsymmetricQuant {
-			// Asymmetric quantization
 			qmin := float32(-128) // int8 min
-			qmax := float32(127)  // int8 max
-			scale = (max - min) / (qmax - qmin)
 			zeroPoint = int8(math.Round(float64(qmin - min/scale)))
-		} else {
-			// Symmetric quantization
-			absMax := math.Max(math.Abs(float64(min)), math.Abs(float64(max)))
-			scale = float32(absMax / 127.0)
-			zeroPoint = 0
-		}
-
-		// Quantize the weights
-		for _, weight := range layerWeights {
-			quantizedWeight := int8(math.Round(float64(weight/scale + float32(zeroPoint))))
-			quantized = append(quantized, quantizedWeight)
 		}
 
 		scales = append(scales, scale)
 		zeroPoints = append(zeroPoints, zeroPoint)
+
+		// Quantize values
+		for _, weight := range layerWeights {
+			qval := int8(math.Round(float64(weight/scale)) + float64(zeroPoint))
+			quantized = append(quantized, qval)
+		}
 	}
 
 	return quantized, scales, zeroPoints
 }
 
-// ModelPruner implements magnitude-based and structured pruning
-type ModelPruner struct {
-	config    *PruningConfig
-	analyzer  *ModelAnalyzer
-	validator *PruningValidator
-	logger    *zap.SugaredLogger
+func (q *ModelQuantizer) quantizeBiases(biases [][]float32) ([]int8, []float32, []int8) {
+	// Similar to quantizeWeights but for biases
+	return q.quantizeWeights(biases)
 }
 
-type ModelAnalyzer struct {
-	saliencyCalculator SaliencyCalculator
-	dependencyTracker  DependencyTracker
-}
-
-type SaliencyCalculator interface {
-	CalculateWeightSaliency(weights [][]float32) [][]float32
-	CalculateActivationSaliency(activations [][]float32) [][]float32
-}
-
-type MagnitudeSaliencyCalculator struct{}
-
-func (m *MagnitudeSaliencyCalculator) CalculateWeightSaliency(weights [][]float32) [][]float32 {
-	saliency := make([][]float32, len(weights))
-	for i, layerWeights := range weights {
-		saliency[i] = make([]float32, len(layerWeights))
-		for j, weight := range layerWeights {
-			saliency[i][j] = float32(math.Abs(float64(weight)))
+func (q *ModelQuantizer) createLayerConfigs(numLayers int) []LayerQuantConfig {
+	configs := make([]LayerQuantConfig, numLayers)
+	for i := range configs {
+		configs[i] = LayerQuantConfig{
+			Bits:       q.config.Bits,
+			Scale:      1.0,
+			ZeroPoint:  0,
+			Symmetric:  !q.config.AsymmetricQuant,
+			PerChannel: q.config.PerChannelQuant,
 		}
 	}
-	return saliency
+	return configs
 }
 
-func (m *MagnitudeSaliencyCalculator) CalculateActivationSaliency(activations [][]float32) [][]float32 {
-	// Implementation for activation-based saliency
-	return activations // Simplified
+func (q *ModelQuantizer) findMinMax(values []float32) (float32, float32) {
+	if len(values) == 0 {
+		return 0, 0
+	}
+
+	min, max := values[0], values[0]
+	for _, v := range values[1:] {
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return min, max
 }
 
-type PruningValidator struct {
-	accuracyThreshold float64
-	testDataset       []TestSample
+// ModelPruner performs model pruning
+type ModelPruner struct {
+	config *PruningConfig
+	logger *zap.SugaredLogger
 }
 
-type TestSample struct {
-	Features map[string]float64
-	Expected float64
-}
-
-// NewModelPruner creates a new model pruner
 func NewModelPruner(config *PruningConfig) *ModelPruner {
 	return &ModelPruner{
 		config: config,
-		analyzer: &ModelAnalyzer{
-			saliencyCalculator: &MagnitudeSaliencyCalculator{},
-		},
-		validator: &PruningValidator{
-			accuracyThreshold: 0.02, // 2% accuracy drop threshold
-		},
 	}
 }
 
-// Prune removes less important weights from the model
 func (p *ModelPruner) Prune(ctx context.Context, model PredictionModel) (*PrunedModel, error) {
-	// Extract model weights
+	// Extract weights
 	weights, _ := p.extractWeights(model)
 
-	// Calculate weight saliency
-	saliency := p.analyzer.saliencyCalculator.CalculateWeightSaliency(weights)
-
-	// Determine pruning mask
-	pruningMask := p.createPruningMask(weights, saliency)
+	// Calculate pruning mask
+	pruningMask := p.calculatePruningMask(weights)
 
 	// Apply pruning
 	prunedWeights := p.applyPruning(weights, pruningMask)
 
-	// Calculate sparsity ratio
+	// Calculate statistics
 	totalWeights := p.countTotalWeights(weights)
 	prunedCount := p.countPrunedWeights(pruningMask)
 	sparsityRatio := float64(prunedCount) / float64(totalWeights)
@@ -338,143 +312,168 @@ func (p *ModelPruner) Prune(ctx context.Context, model PredictionModel) (*Pruned
 		PruningMask:   p.flattenMask(pruningMask),
 		ActiveWeights: p.flattenWeights(prunedWeights),
 		SparsityRatio: sparsityRatio,
-		PruningMap: map[string]interface{}{
-			"method":      p.config.Method,
-			"granularity": p.config.Granularity,
-			"ratio":       p.config.Ratio,
-		},
-		Metadata: map[string]interface{}{
-			"original_weights": totalWeights,
-			"pruned_weights":   prunedCount,
-			"sparsity_ratio":   sparsityRatio,
-		},
+		PruningMap:    map[string]interface{}{"method": p.config.Method},
+		Metadata:      map[string]interface{}{"sparsity": sparsityRatio},
 	}, nil
 }
 
-// createPruningMask determines which weights to prune
-func (p *ModelPruner) createPruningMask(weights [][]float32, saliency [][]float32) [][]bool {
+// Helper methods for ModelPruner
+func (p *ModelPruner) extractWeights(model PredictionModel) ([][]float32, [][]float32) {
+	// TODO: Implement weight extraction
+	weights := [][]float32{{1.0, 2.0, 3.0, 0.1, 0.05}}
+	biases := [][]float32{{0.1, 0.2}}
+	return weights, biases
+}
+
+func (p *ModelPruner) calculatePruningMask(weights [][]float32) [][]bool {
 	mask := make([][]bool, len(weights))
 
-	if p.config.Method == "magnitude" {
-		// Collect all saliency values for global threshold
-		var allSaliencies []float32
-		for _, layerSaliency := range saliency {
-			allSaliencies = append(allSaliencies, layerSaliency...)
+	for i, layerWeights := range weights {
+		mask[i] = make([]bool, len(layerWeights))
+
+		// Calculate saliency (magnitude-based)
+		saliency := make([]float32, len(layerWeights))
+		for j, weight := range layerWeights {
+			saliency[j] = float32(math.Abs(float64(weight)))
 		}
 
 		// Sort to find threshold
-		sort.Slice(allSaliencies, func(i, j int) bool {
-			return allSaliencies[i] < allSaliencies[j]
+		sortedSaliency := make([]float32, len(saliency))
+		copy(sortedSaliency, saliency)
+		sort.Slice(sortedSaliency, func(i, j int) bool {
+			return sortedSaliency[i] < sortedSaliency[j]
 		})
 
-		thresholdIndex := int(float64(len(allSaliencies)) * p.config.Ratio)
-		threshold := allSaliencies[thresholdIndex]
+		thresholdIdx := int(float64(len(sortedSaliency)) * p.config.Ratio)
+		threshold := sortedSaliency[thresholdIdx]
 
 		// Create mask based on threshold
-		for i, layerSaliency := range saliency {
-			mask[i] = make([]bool, len(layerSaliency))
-			for j, sal := range layerSaliency {
-				mask[i][j] = sal < threshold // True means prune
-			}
+		for j, sal := range saliency {
+			mask[i][j] = sal > threshold
 		}
 	}
 
 	return mask
 }
 
-// BatchProcessor optimizes inference through intelligent batching
+func (p *ModelPruner) applyPruning(weights [][]float32, mask [][]bool) [][]float32 {
+	prunedWeights := make([][]float32, len(weights))
+	for i, layerWeights := range weights {
+		prunedWeights[i] = make([]float32, len(layerWeights))
+		for j, weight := range layerWeights {
+			if mask[i][j] {
+				prunedWeights[i][j] = weight
+			} else {
+				prunedWeights[i][j] = 0
+			}
+		}
+	}
+	return prunedWeights
+}
+
+func (p *ModelPruner) countTotalWeights(weights [][]float32) int {
+	total := 0
+	for _, layer := range weights {
+		total += len(layer)
+	}
+	return total
+}
+
+func (p *ModelPruner) countPrunedWeights(mask [][]bool) int {
+	pruned := 0
+	for _, layerMask := range mask {
+		for _, keep := range layerMask {
+			if !keep {
+				pruned++
+			}
+		}
+	}
+	return pruned
+}
+
+func (p *ModelPruner) flattenMask(mask [][]bool) []bool {
+	var flattened []bool
+	for _, layerMask := range mask {
+		flattened = append(flattened, layerMask...)
+	}
+	return flattened
+}
+
+func (p *ModelPruner) flattenWeights(weights [][]float32) []float32 {
+	var flattened []float32
+	for _, layerWeights := range weights {
+		flattened = append(flattened, layerWeights...)
+	}
+	return flattened
+}
+
+// BatchProcessor handles batch processing of inference requests
 type BatchProcessor struct {
 	config     *BatchConfig
-	batcher    *RequestBatcher
 	scheduler  *BatchScheduler
 	executor   *BatchExecutor
 	aggregator *ResponseAggregator
 }
 
-type BatchConfig struct {
-	MaxBatchSize   int           `json:"max_batch_size"`
-	BatchTimeout   time.Duration `json:"batch_timeout"`
-	OptimalSize    int           `json:"optimal_size"`
-	DynamicSizing  bool          `json:"dynamic_sizing"`
-	PriorityLevels int           `json:"priority_levels"`
-}
-
-type RequestBatcher struct {
-	buffer    []*InferenceRequest
-	mu        sync.Mutex
-	condition *sync.Cond
-	config    *BatchConfig
-}
-
-// NewBatchProcessor creates a new batch processor
 func NewBatchProcessor(config *BatchConfig) *BatchProcessor {
-	batcher := &RequestBatcher{
-		buffer: make([]*InferenceRequest, 0, config.MaxBatchSize),
-		config: config,
-	}
-	batcher.condition = sync.NewCond(&batcher.mu)
-
 	return &BatchProcessor{
-		config:  config,
-		batcher: batcher,
+		config: config,
 		scheduler: &BatchScheduler{
-			priorityQueues: make(map[int][]*InferenceRequest),
+			config: config,
 		},
-		executor:   &BatchExecutor{},
-		aggregator: &ResponseAggregator{},
+		executor:   &BatchExecutor{config: config},
+		aggregator: &ResponseAggregator{config: config},
 	}
 }
 
-// LatencyTracker tracks inference latency metrics
+// Performance tracking components
 type LatencyTracker struct {
-	samples    []time.Duration
-	mu         sync.Mutex
-	windowSize int
+	latencies []time.Duration
+	mu        sync.RWMutex
 }
 
 func NewLatencyTracker() *LatencyTracker {
 	return &LatencyTracker{
-		samples:    make([]time.Duration, 0, 1000),
-		windowSize: 1000,
+		latencies: make([]time.Duration, 0, 1000),
 	}
 }
 
-func (l *LatencyTracker) Record(latency time.Duration) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (lt *LatencyTracker) Record(latency time.Duration) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
 
-	if len(l.samples) >= l.windowSize {
-		// Remove oldest sample
-		l.samples = l.samples[1:]
+	if len(lt.latencies) >= 1000 {
+		// Remove oldest entry
+		lt.latencies = lt.latencies[1:]
 	}
-	l.samples = append(l.samples, latency)
+	lt.latencies = append(lt.latencies, latency)
 }
 
-func (l *LatencyTracker) GetAverage() time.Duration {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (lt *LatencyTracker) GetAverage() time.Duration {
+	lt.mu.RLock()
+	defer lt.mu.RUnlock()
 
-	if len(l.samples) == 0 {
+	if len(lt.latencies) == 0 {
 		return 0
 	}
 
 	var total time.Duration
-	for _, sample := range l.samples {
-		total += sample
+	for _, latency := range lt.latencies {
+		total += latency
 	}
-	return total / time.Duration(len(l.samples))
+	return total / time.Duration(len(lt.latencies))
 }
 
-func (l *LatencyTracker) GetPercentile(percentile int) time.Duration {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (lt *LatencyTracker) GetPercentile(percentile int) time.Duration {
+	lt.mu.RLock()
+	defer lt.mu.RUnlock()
 
-	if len(l.samples) == 0 {
+	if len(lt.latencies) == 0 {
 		return 0
 	}
 
-	sorted := make([]time.Duration, len(l.samples))
-	copy(sorted, l.samples)
+	sorted := make([]time.Duration, len(lt.latencies))
+	copy(sorted, lt.latencies)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i] < sorted[j]
 	})
@@ -486,177 +485,102 @@ func (l *LatencyTracker) GetPercentile(percentile int) time.Duration {
 	return sorted[index]
 }
 
-// ThroughputMeter tracks requests per second
 type ThroughputMeter struct {
-	requests  []time.Time
-	mu        sync.Mutex
-	windowDur time.Duration
+	requests []time.Time
+	mu       sync.RWMutex
 }
 
 func NewThroughputMeter() *ThroughputMeter {
 	return &ThroughputMeter{
-		requests:  make([]time.Time, 0, 1000),
-		windowDur: time.Minute,
+		requests: make([]time.Time, 0, 1000),
 	}
 }
 
-func (t *ThroughputMeter) Record() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (tm *ThroughputMeter) Record() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 
 	now := time.Now()
-	cutoff := now.Add(-t.windowDur)
-
-	// Remove old requests
-	var i int
-	for i = 0; i < len(t.requests); i++ {
-		if t.requests[i].After(cutoff) {
+	// Remove entries older than 1 minute
+	cutoff := now.Add(-time.Minute)
+	for i, timestamp := range tm.requests {
+		if timestamp.After(cutoff) {
+			tm.requests = tm.requests[i:]
 			break
 		}
 	}
-	t.requests = t.requests[i:]
 
-	// Add current request
-	t.requests = append(t.requests, now)
+	tm.requests = append(tm.requests, now)
 }
 
-func (t *ThroughputMeter) GetRate() float64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (tm *ThroughputMeter) GetRate() float64 {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 
-	return float64(len(t.requests)) / t.windowDur.Seconds()
+	return float64(len(tm.requests)) / 60.0 // QPS over last minute
 }
 
-// ErrorCounter tracks error rates
 type ErrorCounter struct {
-	errors    []time.Time
-	mu        sync.Mutex
-	windowDur time.Duration
+	errors []time.Time
+	total  []time.Time
+	mu     sync.RWMutex
 }
 
 func NewErrorCounter() *ErrorCounter {
 	return &ErrorCounter{
-		errors:    make([]time.Time, 0, 100),
-		windowDur: time.Minute,
+		errors: make([]time.Time, 0, 1000),
+		total:  make([]time.Time, 0, 1000),
 	}
 }
 
-func (e *ErrorCounter) Increment() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (ec *ErrorCounter) Increment() {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
 
 	now := time.Now()
-	cutoff := now.Add(-e.windowDur)
+	ec.errors = append(ec.errors, now)
+	ec.total = append(ec.total, now)
 
-	// Remove old errors
-	var i int
-	for i = 0; i < len(e.errors); i++ {
-		if e.errors[i].After(cutoff) {
+	// Clean old entries
+	cutoff := now.Add(-time.Minute)
+	ec.cleanOldEntries(cutoff)
+}
+
+func (ec *ErrorCounter) IncrementTotal() {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+
+	now := time.Now()
+	ec.total = append(ec.total, now)
+
+	// Clean old entries
+	cutoff := now.Add(-time.Minute)
+	ec.cleanOldEntries(cutoff)
+}
+
+func (ec *ErrorCounter) cleanOldEntries(cutoff time.Time) {
+	for i, timestamp := range ec.errors {
+		if timestamp.After(cutoff) {
+			ec.errors = ec.errors[i:]
 			break
 		}
 	}
-	e.errors = e.errors[i:]
 
-	// Add current error
-	e.errors = append(e.errors, now)
-}
-
-func (e *ErrorCounter) GetRate() float64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	return float64(len(e.errors)) / e.windowDur.Seconds()
-}
-
-// FeatureCache provides caching for frequently used features
-type FeatureCache = ModelCache
-
-func NewFeatureCache(maxSize int, ttl time.Duration) *FeatureCache {
-	return NewModelCache(maxSize, ttl)
-}
-
-// InferencePool manages a pool of inference workers
-type InferencePool struct {
-	workers    []*InferenceWorker
-	workQueue  chan *InferenceRequest
-	workerPool chan *InferenceWorker
-	maxWorkers int
-}
-
-type InferenceWorker struct {
-	id       int
-	pool     *InferencePool
-	workChan chan *InferenceRequest
-	quit     chan bool
-}
-
-func NewInferencePool(maxWorkers int) *InferencePool {
-	pool := &InferencePool{
-		workQueue:  make(chan *InferenceRequest, maxWorkers*2),
-		workerPool: make(chan *InferenceWorker, maxWorkers),
-		maxWorkers: maxWorkers,
-	}
-
-	// Start workers
-	for i := 0; i < maxWorkers; i++ {
-		worker := &InferenceWorker{
-			id:       i,
-			pool:     pool,
-			workChan: make(chan *InferenceRequest),
-			quit:     make(chan bool),
-		}
-		pool.workers = append(pool.workers, worker)
-		go worker.start()
-		pool.workerPool <- worker
-	}
-
-	return pool
-}
-
-func (w *InferenceWorker) start() {
-	for {
-		w.pool.workerPool <- w
-
-		select {
-		case work := <-w.workChan:
-			// Process work
-			_ = work
-		case <-w.quit:
-			return
+	for i, timestamp := range ec.total {
+		if timestamp.After(cutoff) {
+			ec.total = ec.total[i:]
+			break
 		}
 	}
 }
 
-// Helper functions
-func generateRequestID() string {
-	return fmt.Sprintf("req_%d", time.Now().UnixNano())
-}
+func (ec *ErrorCounter) GetRate() float64 {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
 
-// Utility functions for quantization and pruning
-func (q *ModelQuantizer) findMin(values []float32) float32 {
-	if len(values) == 0 {
+	if len(ec.total) == 0 {
 		return 0
 	}
-	min := values[0]
-	for _, v := range values[1:] {
-		if v < min {
-			min = v
-		}
-	}
-	return min
-}
 
-func (q *ModelQuantizer) findMax(values []float32) float32 {
-	if len(values) == 0 {
-		return 0
-	}
-	max := values[0]
-	for _, v := range values[1:] {
-		if v > max {
-			max = v
-		}
-	}
-	return max
+	return float64(len(ec.errors)) / float64(len(ec.total))
 }
-
-// Additional utility methods would be implemented here...

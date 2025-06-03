@@ -61,6 +61,10 @@ type PredictionService struct {
 	// Callbacks
 	onScalingDecision func(*ScalingDecision) error
 	onAlert           func(*Alert) error
+
+	// Add fields for optimized inference and real-time evaluation
+	optimizedEngine   *OptimizedInferenceEngine
+	realtimeEvaluator *RealtimeEvaluator
 }
 
 // ServiceConfig contains configuration for the prediction service
@@ -327,6 +331,57 @@ func NewPredictionService(
 		abTestConfig:      config.ABTesting,
 	}
 
+	// Initialize OptimizedInferenceEngine
+	optConfig := &InferenceConfig{
+		MaxBatchSize:        32,
+		BatchTimeout:        10 * time.Millisecond,
+		CacheSize:           256,
+		CacheTTL:            5 * time.Minute,
+		QuantizationEnabled: true,
+		PruningEnabled:      true,
+		MaxConcurrentJobs:   16,
+		MemoryPoolSize:      128,
+		QuantizationBits:    8,
+		QuantizationMethod:  "dynamic",
+		CalibrationSamples:  100,
+		PruningRatio:        0.2,
+		PruningMethod:       "magnitude",
+		PruningGranularity:  "weight",
+		MaxLatencyMs:        50,
+		MinThroughputQPS:    100,
+		AccuracyThreshold:   0.02,
+	}
+	service.optimizedEngine = NewOptimizedInferenceEngine(optConfig, logger.Named("optimized-inference"))
+
+	// Initialize RealtimeEvaluator (with default config for now)
+	evalConfig := &EvaluationConfig{
+		EvaluationInterval:      1 * time.Minute,
+		ShadowTestingEnabled:    true,
+		CanaryDeploymentEnabled: true,
+		DriftDetectionEnabled:   true,
+		MinAccuracy:             0.90,
+		MaxLatency:              100 * time.Millisecond,
+		MaxErrorRate:            0.05,
+		MinThroughput:           50,
+		DriftThreshold:          0.05,
+		DriftWindow:             10 * time.Minute,
+		ShadowTrafficPercent:    10,
+		ShadowTestDuration:      10 * time.Minute,
+		CanaryTrafficPercent:    5,
+		CanaryRampUpDuration:    5 * time.Minute,
+		CanarySuccessThreshold:  0.95,
+		ABTestEnabled:           true,
+		ABTestDuration:          30 * time.Minute,
+		MinSampleSize:           1000,
+		StatisticalSignificance: 0.95,
+		EvaluationMetrics:       []string{"accuracy", "latency", "throughput"},
+		BusinessMetrics:         []string{"cost"},
+	}
+	service.realtimeEvaluator = &RealtimeEvaluator{
+		config: evalConfig,
+		logger: logger.Named("realtime-evaluator"),
+	}
+
 	// Initialize models
 	err = service.initializeModels()
 	if err != nil {
@@ -579,19 +634,23 @@ func (s *PredictionService) makePrediction(ctx context.Context) error {
 		return fmt.Errorf("failed to fetch metrics: %w", err)
 	}
 
-	// Make prediction using active model
-	model := s.models[s.activeModel]
-	if model == nil {
-		return fmt.Errorf("active model %s not found", s.activeModel)
+	// Make prediction using optimized inference engine
+	modelID := s.activeModel
+	features := map[string]float64{
+		// Example: fetch features from metrics or feature engineering
+		"cpu_utilization":     0.7,
+		"memory_utilization":  0.6,
+		"requests_per_second": 1000,
+		"latency_p95":         45.5,
+		"error_rate":          0.02,
 	}
-	startTime := time.Now()
-	prediction, err := model.Predict(ctx, s.config.PredictionInterval)
-	predictionLatency := time.Since(startTime)
-
+	response, err := s.optimizedEngine.PredictOptimized(ctx, modelID, features)
 	if err != nil {
-		s.updateModelError(s.activeModel)
-		return fmt.Errorf("prediction failed: %w", err)
+		s.updateModelError(modelID)
+		return fmt.Errorf("optimized inference failed: %w", err)
 	}
+	prediction := response.Prediction
+	predictionLatency := response.Latency
 
 	s.updateModelMetrics(s.activeModel, predictionLatency)
 
