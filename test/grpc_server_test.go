@@ -9,6 +9,8 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/marketdata/distribution"
 	clientSDK "github.com/Aidin1998/pincex_unified/pkg/marketdata/client"
 	"google.golang.org/grpc"
+
+	transportGRPC "github.com/Aidin1998/pincex_unified/internal/marketdata/distribution/transport"
 )
 
 func TestGRPCServer_SubscribeAndReceive(t *testing.T) {
@@ -23,7 +25,7 @@ func TestGRPCServer_SubscribeAndReceive(t *testing.T) {
 		t.Fatalf("failed to listen: %v", err)
 	}
 	grpcServer := grpc.NewServer()
-	server := NewGRPCServer(d, sm)
+	server := transportGRPC.NewGRPCServer(d, sm)
 	pb.RegisterMarketDataServer(grpcServer, server)
 	go grpcServer.Serve(lis)
 	defer grpcServer.Stop()

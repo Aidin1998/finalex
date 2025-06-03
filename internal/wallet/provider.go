@@ -84,6 +84,10 @@ func (c *DummyCustodyProvider) GetTransactionStatus(txID string) (string, error)
 	return "confirmed", nil
 }
 
+func (c *DummyCustodyProvider) Balances() map[string]float64 {
+	return c.balances
+}
+
 // HSMKeyManager is a stub for a real HSM-backed key manager (for production)
 type HSMKeyManager struct {
 	// Add HSM/TSS client fields here (e.g., PKCS#11, cloud HSM, TSS client)

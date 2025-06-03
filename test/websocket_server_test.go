@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/marketdata/distribution"
+	transportWS "github.com/Aidin1998/pincex_unified/internal/marketdata/distribution/transport"
 	"github.com/gorilla/websocket"
 )
 
@@ -13,7 +14,7 @@ func TestWebSocketServer_SubscribeAndReceive(t *testing.T) {
 	sm := distribution.NewSubscriptionManager()
 	d := distribution.NewDistributor(sm, 50*time.Millisecond)
 	go d.Run()
-	server := NewWebSocketServer(d, sm)
+	server := transportWS.NewWebSocketServer(d, sm)
 	ts := httptest.NewServer(server)
 	defer ts.Close()
 

@@ -214,6 +214,11 @@ func NewSanctionsScreener(logger *zap.SugaredLogger) *SanctionsScreener {
 	return screener
 }
 
+// RebuildIndexes is a public wrapper for rebuildIndexes for testability
+func (ss *SanctionsScreener) RebuildIndexes() {
+	ss.rebuildIndexes()
+}
+
 // rebuildIndexes rebuilds performance indexes for fast lookups
 func (ss *SanctionsScreener) rebuildIndexes() {
 	ss.mu.Lock()
@@ -728,4 +733,11 @@ func (ss *SanctionsScreener) UpdateSanctionsList(ctx context.Context, listID str
 	)
 
 	return nil
+}
+
+// GetSanctionsList returns a sanctions list by its ID, or nil if not found
+func (ss *SanctionsScreener) GetSanctionsList(listID string) *SanctionsList {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	return ss.sanctionsLists[listID]
 }

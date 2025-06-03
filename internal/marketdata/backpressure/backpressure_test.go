@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -286,6 +287,63 @@ func BenchmarkBackpressureSystem(b *testing.B) {
 		}
 	})
 }
+
+// TestBackpressureManager_Unit is a unit test for the BackpressureManager
+func TestBackpressureManager_Unit(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	config := getDefaultBackpressureConfig()
+
+	manager := NewBackpressureManagerForTest(config, logger)
+	require.NotNil(t, manager)
+
+	// Register a test client (no real websocket needed)
+	clientID := "test_client_1"
+	err := manager.RegisterClient(clientID, nil)
+	require.NoError(t, err)
+
+	// Simulate message distribution
+	t.Run("BasicMessageDistribution", func(t *testing.T) {
+		testData := []byte(`{"test": "message"}`)
+		err := manager.DistributeMessage(PriorityHigh, testData, []string{clientID})
+		assert.NoError(t, err, "distribute message should not fail")
+
+		// Simulate metrics update
+		metrics := manager.GetMetrics()
+		assert.NotNil(t, metrics, "metrics should not be nil")
+	})
+}
+
+// NewBackpressureManagerForTest creates a BackpressureManager with a dummy coordinator (no Kafka)
+func NewBackpressureManagerForTest(cfg *BackpressureConfig, logger *zap.Logger) *BackpressureManager {
+	managerCfg := &cfg.Manager
+	detector := NewClientCapabilityDetector(logger.Named("detector"))
+	rateLimiter := NewAdaptiveRateLimiter(logger.Named("rate_limiter"), detector, &cfg.RateLimiter)
+	priorityQ := NewLockFreePriorityQueue(&cfg.PriorityQueue, logger.Named("priority_queue"))
+	ctx, cancel := context.WithCancel(context.Background())
+	dummy := &CrossServiceCoordinator{logger: logger, config: &CoordinatorConfig{}, metrics: &CoordinatorMetrics{}}
+	return &BackpressureManager{
+		logger:           logger,
+		detector:         detector,
+		rateLimiter:      rateLimiter,
+		priorityQ:        priorityQ,
+		coordinator:      dummy,
+		incomingMessages: make(chan *IncomingMessage, 10000),
+		processedJobs:    make(chan *ProcessedJob, 10000),
+		workerCount:      managerCfg.WorkerCount,
+		config:           managerCfg,
+		ctx:              ctx,
+		cancel:           cancel,
+		shutdown:         make(chan struct{}),
+		metrics:          initManagerMetrics(),
+	}
+}
+
+// --- Mock coordinator for unit test ---
+type mockCoordinator struct {
+	*CrossServiceCoordinator
+}
+
+func (m *mockCoordinator) GetMetrics() map[string]interface{} { return map[string]interface{}{} }
 
 // Helper functions for tests
 func getDefaultBackpressureConfig() *BackpressureConfig {

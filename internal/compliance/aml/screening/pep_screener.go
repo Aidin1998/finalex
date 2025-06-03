@@ -250,3 +250,32 @@ func (ps *PEPScreener) calculatePEPConfidence(matches []PEPMatch) float64 {
 
 	return totalScore / float64(len(matches))
 }
+
+// LoadPEPList adds or updates a PEP list in the screener
+func (ps *PEPScreener) LoadPEPList(list *PEPList) error {
+	if list == nil || list.ID == "" {
+		return nil // or return an error if you want stricter validation
+	}
+	ps.lists[list.ID] = list
+	return nil
+}
+
+// RemovePEPList removes a PEP list by ID
+func (ps *PEPScreener) RemovePEPList(listID string) error {
+	delete(ps.lists, listID)
+	return nil
+}
+
+// GetPEPListStatus returns the current loaded PEP lists as a slice
+func (ps *PEPScreener) GetPEPListStatus() []*PEPList {
+	status := make([]*PEPList, 0, len(ps.lists))
+	for _, list := range ps.lists {
+		status = append(status, list)
+	}
+	return status
+}
+
+// GetConfig returns the PEPConfig for the screener
+func (ps *PEPScreener) GetConfig() PEPConfig {
+	return ps.config
+}

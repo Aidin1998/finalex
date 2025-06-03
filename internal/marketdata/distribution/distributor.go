@@ -2,6 +2,7 @@
 package distribution
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -70,8 +71,10 @@ func (d *Distributor) flushAll() {
 	d.buffersMu.Unlock()
 
 	for symbol, updates := range buffersCopy {
+		log.Printf("[Distributor] Flushing %d updates for symbol %s", len(updates), symbol)
 		// get subscribers for symbol
 		subs := d.sm.GetSubscriptions(symbol)
+		log.Printf("[Distributor] Found %d subscribers for symbol %s", len(subs), symbol)
 		if len(subs) == 0 {
 			continue
 		}
@@ -83,6 +86,7 @@ func (d *Distributor) flushAll() {
 			}
 			// apply delta compression if enabled
 			msg := d.compressIfNeeded(filtered, sub)
+			log.Printf("[Distributor] Sending to client %s: %+v", sub.ClientID, msg)
 			d.sendToClient(sub.ClientID, symbol, msg)
 		}
 	}
@@ -104,7 +108,12 @@ func (d *Distributor) RegisterClient(clientID string, ch chan interface{}) {
 func (d *Distributor) UnregisterClient(clientID string) {
 	d.clientsMu.Lock()
 	defer d.clientsMu.Unlock()
-	delete(d.clientChans, clientID)
+	if ch, ok := d.clientChans[clientID]; ok {
+		close(ch)
+		delete(d.clientChans, clientID)
+	}
+	// Also remove from lastSent tracking
+	delete(d.lastSent, clientID)
 }
 
 // filterUpdates returns only updates matching the subscription's price levels and frequency
@@ -125,6 +134,9 @@ func filterUpdates(updates []Update, sub *Subscription) []Update {
 // compressIfNeeded compresses updates into a delta payload based on lastSent state
 func (d *Distributor) compressIfNeeded(updates []Update, sub *Subscription) interface{} {
 	if !sub.Compression {
+		if len(updates) == 1 {
+			return updates[0]
+		}
 		return updates
 	}
 	var deltas []Update
@@ -149,10 +161,14 @@ func (d *Distributor) sendToClient(clientID, symbol string, msg interface{}) {
 	ch, ok := d.clientChans[clientID]
 	d.clientsMu.RUnlock()
 	if ok {
+		log.Printf("[Distributor] sendToClient: sending to %s", clientID)
 		select {
 		case ch <- msg:
+			log.Printf("[Distributor] sendToClient: sent to %s", clientID)
 		default:
-			// drop if client channel is full
+			log.Printf("[Distributor] sendToClient: channel full for %s", clientID)
 		}
+	} else {
+		log.Printf("[Distributor] sendToClient: client %s not found", clientID)
 	}
 }

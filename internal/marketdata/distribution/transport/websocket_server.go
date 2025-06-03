@@ -2,6 +2,7 @@
 package transport
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -34,16 +35,18 @@ func (s *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-
 	// Parse query parameters for subscription
 	symbol := r.URL.Query().Get("symbol")
 	levels := []int{0} // TODO: parse levels
 	clientID := conn.RemoteAddr().String()
-	sub := &distribution.Subscription{ClientID: clientID, Symbol: symbol, PriceLevels: levels, Frequency: time.Second, Compression: true}
+	sub := &distribution.Subscription{ClientID: clientID, Symbol: symbol, PriceLevels: levels, Frequency: time.Second, Compression: false}
 	s.sm.Subscribe(sub)
 	ch := make(chan interface{}, 100)
 	s.dist.RegisterClient(clientID, ch)
-	defer s.dist.UnregisterClient(clientID)
+	defer func() {
+		s.sm.Unsubscribe(clientID)
+		s.dist.UnregisterClient(clientID)
+	}()
 
 	// Read loop for client messages (e.g., change subscription)
 	go func() {
@@ -59,9 +62,12 @@ func (s *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Write loop
 	for msg := range ch {
+		log.Printf("[WebSocketServer] Writing to client %s: %+v", clientID, msg)
 		err := conn.WriteJSON(msg)
 		if err != nil {
+			log.Printf("[WebSocketServer] Write error for client %s: %v", clientID, err)
 			return
 		}
 	}
+	log.Printf("[WebSocketServer] Channel closed for client %s", clientID)
 }

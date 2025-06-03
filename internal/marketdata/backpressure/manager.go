@@ -409,8 +409,8 @@ func (m *BackpressureManager) GetMetrics() map[string]interface{} {
 				"processed": len(m.processedJobs),
 			},
 		},
-		"detector":     detectorMetrics,
-		"rate_limiter": rateLimiterMetrics,
+		"detector":     map[string]interface{}{"metrics": detectorMetrics},
+		"rate_limiter": map[string]interface{}{"metrics": rateLimiterMetrics},
 		"coordinator":  coordinatorMetrics,
 		"timestamp":    time.Now(),
 	}

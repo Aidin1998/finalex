@@ -161,8 +161,13 @@ func (s *WalletService) BroadcastWithdrawal(ctx context.Context, requestID uuid.
 	if wr.Status != "approved" {
 		return "", errors.New("not enough approvals")
 	}
-	// Call custody provider to create withdrawal
-	txid, err := s.custodyProvider.CreateWithdrawal(wr.WalletID, wr.ToAddress, wr.Amount)
+	// Lookup wallet to get address
+	var wallet models.Wallet
+	if err := s.db.WithContext(ctx).First(&wallet, "id = ?", wr.WalletID).Error; err != nil {
+		return "", err
+	}
+	// Call custody provider to create withdrawal using wallet address as key
+	txid, err := s.custodyProvider.CreateWithdrawal(wallet.Address, wr.ToAddress, wr.Amount)
 	if err != nil {
 		return "", err
 	}

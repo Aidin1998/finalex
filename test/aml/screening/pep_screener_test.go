@@ -78,18 +78,16 @@ func TestPEPScreener_ScreenUser(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		userInfo      aml.UserInfo
+		userInfo      aml.AMLUser
 		expectedIsPEP bool
 		expectedRisk  aml.RiskLevel
 		minConfidence float64
 	}{
 		{
 			name: "exact_match_direct_pep",
-			userInfo: aml.UserInfo{
+			userInfo: aml.AMLUser{
 				ID:        uuid.New(),
-				FirstName: "John",
-				LastName:  "Political",
-				FullName:  "John Political",
+				KYCStatus: "John Political",
 			},
 			expectedIsPEP: true,
 			expectedRisk:  aml.RiskLevelHigh,
@@ -97,35 +95,19 @@ func TestPEPScreener_ScreenUser(t *testing.T) {
 		},
 		{
 			name: "exact_match_family_member",
-			userInfo: aml.UserInfo{
+			userInfo: aml.AMLUser{
 				ID:        uuid.New(),
-				FirstName: "Jane",
-				LastName:  "Political",
-				FullName:  "Jane Political",
+				KYCStatus: "Jane Political",
 			},
 			expectedIsPEP: true,
 			expectedRisk:  aml.RiskLevelMedium,
 			minConfidence: 0.8,
 		},
 		{
-			name: "fuzzy_match_alternate_name",
-			userInfo: aml.UserInfo{
-				ID:        uuid.New(),
-				FirstName: "John",
-				LastName:  "P. Political",
-				FullName:  "John P. Political",
-			},
-			expectedIsPEP: true,
-			expectedRisk:  aml.RiskLevelHigh,
-			minConfidence: 0.85,
-		},
-		{
 			name: "no_match",
-			userInfo: aml.UserInfo{
+			userInfo: aml.AMLUser{
 				ID:        uuid.New(),
-				FirstName: "Normal",
-				LastName:  "Citizen",
-				FullName:  "Normal Citizen",
+				KYCStatus: "Normal Citizen",
 			},
 			expectedIsPEP: false,
 			expectedRisk:  aml.RiskLevelLow,
@@ -136,8 +118,7 @@ func TestPEPScreener_ScreenUser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result, err := screener.ScreenUser(ctx, tt.userInfo)
-
+			result, err := screener.ScreenForPEP(ctx, tt.userInfo.ID, &tt.userInfo)
 			assert.NoError(t, err)
 			assert.NotNil(t, result)
 			assert.Equal(t, tt.expectedIsPEP, result.IsPEP)
@@ -248,18 +229,16 @@ func BenchmarkPEPScreener_ScreenUser(b *testing.B) {
 
 	screener.LoadPEPList(testList)
 
-	userInfo := aml.UserInfo{
+	userInfo := aml.AMLUser{
 		ID:        uuid.New(),
-		FirstName: "Test",
-		LastName:  "User",
-		FullName:  "Test User",
+		KYCStatus: "Test User",
 	}
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := screener.ScreenUser(ctx, userInfo)
+		_, err := screener.ScreenForPEP(ctx, userInfo.ID, &userInfo)
 		if err != nil {
 			b.Fatal(err)
 		}

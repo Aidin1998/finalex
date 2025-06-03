@@ -63,14 +63,26 @@ func (c *WSClient) run() {
 			// read loop
 			for {
 				var upd distribution.Update
+				var upds []distribution.Update
 				err := conn.ReadJSON(&upd)
-				if err != nil {
+				if err == nil {
+					select {
+					case c.recvCh <- upd:
+					default:
+					}
+					continue
+				}
+				// Try as slice
+				_ = conn.ReadJSON(&upds)
+				for _, u := range upds {
+					select {
+					case c.recvCh <- u:
+					default:
+					}
+				}
+				if len(upds) == 0 {
 					conn.Close()
 					break
-				}
-				select {
-				case c.recvCh <- upd:
-				default:
 				}
 			}
 		}

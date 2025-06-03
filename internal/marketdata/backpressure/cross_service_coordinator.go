@@ -804,25 +804,28 @@ func (csc *CrossServiceCoordinator) IsEmergencyMode() bool {
 	return atomic.LoadInt64(&csc.emergencyMode) == 1
 }
 
-// GetMetrics returns current coordination metrics
-func (csc *CrossServiceCoordinator) GetMetrics() CoordinatorMetrics {
-	return CoordinatorMetrics{
-		SignalsSent:      atomic.LoadInt64(&csc.metrics.SignalsSent),
-		SignalsReceived:  atomic.LoadInt64(&csc.metrics.SignalsReceived),
-		SignalsProcessed: atomic.LoadInt64(&csc.metrics.SignalsProcessed),
-		SignalErrors:     atomic.LoadInt64(&csc.metrics.SignalErrors),
+// GetMetrics returns coordinator metrics (nil-safe for tests)
+func (c *CrossServiceCoordinator) GetMetrics() map[string]interface{} {
+	if c == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"signals_sent":      atomic.LoadInt64(&c.metrics.SignalsSent),
+		"signals_received":  atomic.LoadInt64(&c.metrics.SignalsReceived),
+		"signals_processed": atomic.LoadInt64(&c.metrics.SignalsProcessed),
+		"signal_errors":     atomic.LoadInt64(&c.metrics.SignalErrors),
 
-		HealthyServices:   atomic.LoadInt64(&csc.metrics.HealthyServices),
-		UnhealthyServices: atomic.LoadInt64(&csc.metrics.UnhealthyServices),
-		CriticalServices:  atomic.LoadInt64(&csc.metrics.CriticalServices),
+		"healthy_services":   atomic.LoadInt64(&c.metrics.HealthyServices),
+		"unhealthy_services": atomic.LoadInt64(&c.metrics.UnhealthyServices),
+		"critical_services":  atomic.LoadInt64(&c.metrics.CriticalServices),
 
-		LoadSheddingEvents: atomic.LoadInt64(&csc.metrics.LoadSheddingEvents),
-		ThrottlingEvents:   atomic.LoadInt64(&csc.metrics.ThrottlingEvents),
-		EmergencyStops:     atomic.LoadInt64(&csc.metrics.EmergencyStops),
-		RecoveryEvents:     atomic.LoadInt64(&csc.metrics.RecoveryEvents),
+		"load_shedding_events": atomic.LoadInt64(&c.metrics.LoadSheddingEvents),
+		"throttling_events":    atomic.LoadInt64(&c.metrics.ThrottlingEvents),
+		"emergency_stops":      atomic.LoadInt64(&c.metrics.EmergencyStops),
+		"recovery_events":      atomic.LoadInt64(&c.metrics.RecoveryEvents),
 
-		GlobalBackpressureLevel: atomic.LoadInt64(&csc.metrics.GlobalBackpressureLevel),
-		ServicesInBackpressure:  atomic.LoadInt64(&csc.metrics.ServicesInBackpressure),
+		"global_backpressure_level": atomic.LoadInt64(&c.metrics.GlobalBackpressureLevel),
+		"services_in_backpressure":  atomic.LoadInt64(&c.metrics.ServicesInBackpressure),
 	}
 }
 

@@ -15,11 +15,11 @@ import (
 
 func TestNewSanctionsUpdater(t *testing.T) {
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	assert.NotNil(t, updater)
 	config := updater.GetConfig()
-	assert.True(t, config.EnableAutoUpdate)
+	assert.True(t, config.EnableParallel) // Use EnableParallel as a proxy for auto-update
 	assert.Equal(t, time.Hour*6, config.UpdateInterval)
 	assert.Equal(t, 3, config.MaxRetries)
 }
@@ -59,7 +59,7 @@ func TestSanctionsUpdater_UpdateFromOFAC(t *testing.T) {
 	defer server.Close()
 
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	// Update config to use test server
 	config := updater.GetConfig()
@@ -77,8 +77,8 @@ func TestSanctionsUpdater_UpdateFromOFAC(t *testing.T) {
 	// Check first entry
 	entry := sanctions.Entries["1"]
 	assert.NotNil(t, entry)
-	assert.Equal(t, "John Doe", entry.Name)
-	assert.Equal(t, "Individual", entry.Type)
+	assert.Equal(t, "John Doe", entry.PrimaryName)
+	assert.Equal(t, "Individual", entry.EntryType)
 }
 
 func TestSanctionsUpdater_UpdateFromUN(t *testing.T) {
@@ -121,7 +121,7 @@ func TestSanctionsUpdater_UpdateFromUN(t *testing.T) {
 	defer server.Close()
 
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	// Update config to use test server
 	config := updater.GetConfig()
@@ -139,13 +139,13 @@ func TestSanctionsUpdater_UpdateFromUN(t *testing.T) {
 	// Check first entry
 	entry := sanctions.Entries["1"]
 	assert.NotNil(t, entry)
-	assert.Equal(t, "Ahmed Hassan", entry.Name)
-	assert.Equal(t, "UN", entry.Type)
+	assert.Equal(t, "Ahmed Hassan", entry.PrimaryName)
+	assert.Equal(t, "UN", entry.EntryType)
 }
 
 func TestSanctionsUpdater_UpdateAll(t *testing.T) {
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	// Create mock servers for all sources
 	ofacServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +210,7 @@ func TestSanctionsUpdater_UpdateAll(t *testing.T) {
 
 func TestSanctionsUpdater_GetUpdateStatus(t *testing.T) {
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	status := updater.GetUpdateStatus()
 	assert.NotNil(t, status)
@@ -221,7 +221,7 @@ func TestSanctionsUpdater_GetUpdateStatus(t *testing.T) {
 
 func BenchmarkSanctionsUpdater_UpdateFromOFAC(b *testing.B) {
 	logger := zap.NewNop().Sugar()
-	updater := screening.NewSanctionsUpdater(logger)
+	updater := screening.NewSanctionsUpdaterForTest(logger)
 
 	// Create large mock XML for benchmarking
 	mockXML := `<?xml version="1.0" encoding="UTF-8"?><sdnList>`

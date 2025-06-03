@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -135,6 +136,24 @@ func (m *MockBookkeeperService) LockFunds(ctx context.Context, userID, currency 
 
 func (m *MockBookkeeperService) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
 	return nil
+}
+
+// BatchGetAccounts is a stub to satisfy the BookkeeperService interface for tests
+func (m *MockBookkeeperService) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	result := make(map[string]map[string]*models.Account)
+	for _, userID := range userIDs {
+		result[userID] = make(map[string]*models.Account)
+		for _, currency := range currencies {
+			result[userID][currency] = &models.Account{
+				UserID:    uuid.MustParse(userID),
+				Currency:  currency,
+				Balance:   10000.0,
+				Available: 10000.0,
+				Locked:    0,
+			}
+		}
+	}
+	return result, nil
 }
 
 // MigrationEvent tracks migration-related events during testing
@@ -825,4 +844,22 @@ func (suite *AdaptiveTradingTestSuite) monitorMigrationProgress(pair string, dur
 			return
 		}
 	}
+}
+
+// BatchLockFunds is a stub to satisfy the BookkeeperService interface for tests
+func (m *MockBookkeeperService) BatchLockFunds(ctx context.Context, ops []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{
+		SuccessCount: len(ops),
+		FailedItems:  make(map[string]error),
+		Duration:     0,
+	}, nil
+}
+
+// BatchUnlockFunds is a stub to satisfy the BookkeeperService interface for tests
+func (m *MockBookkeeperService) BatchUnlockFunds(ctx context.Context, ops []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{
+		SuccessCount: len(ops),
+		FailedItems:  make(map[string]error),
+		Duration:     0,
+	}, nil
 }
