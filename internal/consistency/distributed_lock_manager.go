@@ -341,6 +341,32 @@ func (dlm *DistributedLockManager) GetActiveLocks() []*DistributedLock {
 	return locks
 }
 
+// IsHealthy checks if the distributed lock manager is healthy
+func (dlm *DistributedLockManager) IsHealthy() bool {
+	// Check if the manager is running
+	select {
+	case <-dlm.ctx.Done():
+		return false
+	default:
+	}
+
+	// Check if Raft coordinator is healthy
+	if dlm.raftCoordinator != nil && !dlm.raftCoordinator.IsHealthy() {
+		return false
+	}
+	// Check metrics for any concerning patterns
+	metrics := dlm.GetMetrics()
+	if metrics != nil {
+		// If we have too many failed lock acquisitions, consider unhealthy
+		if metrics.LockAcquisitionFailed > 100 &&
+			time.Since(metrics.LastUpdate) < 5*time.Minute {
+			return false
+		}
+	}
+
+	return true
+}
+
 // acquireWithConsensus acquires a lock with consensus approval
 func (dlm *DistributedLockManager) acquireWithConsensus(ctx context.Context, lock *DistributedLock) error {
 	operation := consensus.Operation{

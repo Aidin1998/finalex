@@ -17,6 +17,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// Trade represents a trade for coordination purposes
+type Trade struct {
+	ID        uuid.UUID       `json:"id"`
+	BuyerID   uuid.UUID       `json:"buyer_id"`
+	SellerID  uuid.UUID       `json:"seller_id"`
+	Symbol    string          `json:"symbol"`
+	Quantity  decimal.Decimal `json:"quantity"`
+	Price     decimal.Decimal `json:"price"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
 // StrongConsistencySettlementCoordinator provides settlement with strong consistency guarantees
 type StrongConsistencySettlementCoordinator struct {
 	logger           *zap.Logger
@@ -702,4 +713,109 @@ func (sc *StrongConsistencySettlementCoordinator) Stop(ctx context.Context) erro
 	sc.workersWg.Wait()
 
 	return nil
+}
+
+// IsHealthy checks if the settlement coordinator is healthy
+func (sc *StrongConsistencySettlementCoordinator) IsHealthy() bool {
+	// Check if workers are running
+	if sc.shutdownCh == nil {
+		return false
+	}
+
+	select {
+	case <-sc.shutdownCh:
+		return false
+	default:
+	}
+
+	// Check if consensus coordinator is healthy
+	if sc.consensusCoord != nil && !sc.consensusCoord.IsHealthy() {
+		return false
+	}
+
+	// Check if balance manager is healthy
+	if sc.balanceManager != nil && !sc.balanceManager.IsHealthy() {
+		return false
+	}
+
+	// Check metrics for concerning patterns
+	sc.metrics.mu.RLock()
+	failureRate := float64(sc.metrics.FailedBatches) / float64(sc.metrics.TotalBatches+1)
+	sc.metrics.mu.RUnlock()
+
+	// If failure rate is too high, consider unhealthy
+	if failureRate > 0.1 { // 10% failure rate threshold
+		return false
+	}
+
+	return true
+}
+
+// ProcessTradeBatch processes a batch of trades for settlement
+func (sc *StrongConsistencySettlementCoordinator) ProcessTradeBatch(ctx context.Context, trades []Trade) error {
+	if len(trades) == 0 {
+		return nil
+	}
+
+	sc.logger.Info("Processing trade batch for settlement", zap.Int("count", len(trades)))
+
+	// Create settlement batch
+	batchID := uuid.New().String()
+	batch := &SettlementBatch{
+		ID:        batchID,
+		Trades:    convertTradesToSettlementRequests(trades),
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	// Add to active settlements
+	sc.globalLock.Lock()
+	sc.activeSettlements[batchID] = batch
+	sc.settlementLocks[batchID] = &sync.RWMutex{}
+	sc.globalLock.Unlock()
+	// Process the batch using existing settlement logic
+	sc.createAndSubmitBatch(batch.Trades)
+
+	sc.logger.Info("Trade batch processed successfully",
+		zap.String("batch_id", batchID),
+		zap.Int("trades_count", len(trades)))
+
+	return nil
+}
+
+// GetPendingBatchCount returns the number of pending settlement batches
+func (sc *StrongConsistencySettlementCoordinator) GetPendingBatchCount() int {
+	sc.globalLock.RLock()
+	defer sc.globalLock.RUnlock()
+
+	pendingCount := 0
+	for _, batch := range sc.activeSettlements {
+		if batch.Status == "pending" || batch.Status == "processing" {
+			pendingCount++
+		}
+	}
+
+	return pendingCount
+}
+
+// Helper function to convert coordination.Trade to settlement requests
+func convertTradesToSettlementRequests(trades []Trade) []*TradeSettlementRequest {
+	requests := make([]*TradeSettlementRequest, len(trades))
+	for i, trade := range trades {
+		requests[i] = &TradeSettlementRequest{
+			TradeID:       trade.ID,
+			OrderID:       uuid.New(), // Generate order ID if not available
+			BuyUserID:     trade.BuyerID,
+			SellUserID:    trade.SellerID,
+			Symbol:        trade.Symbol,
+			Quantity:      trade.Quantity,
+			Price:         trade.Price,
+			TakerSide:     "buy",            // Default to buy side
+			BaseCurrency:  trade.Symbol[:3], // Extract base currency from symbol
+			QuoteCurrency: trade.Symbol[3:], // Extract quote currency from symbol
+			Timestamp:     trade.Timestamp,
+			Priority:      1, // Default priority
+		}
+	}
+	return requests
 }

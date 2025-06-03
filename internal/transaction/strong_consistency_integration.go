@@ -11,6 +11,7 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/consistency"
 	"github.com/Aidin1998/pincex_unified/internal/coordination"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -90,14 +91,11 @@ func NewStrongConsistencyTransactionManager(
 	}
 
 	// Initialize consensus coordinator
-	raftCoordinator, err := consensus.NewRaftCoordinator(
+	raftCoordinator := consensus.NewRaftCoordinator(
 		"node-1",                               // This should be configurable
 		[]string{"node-1", "node-2", "node-3"}, // This should be configurable
 		logger,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create raft coordinator: %w", err)
-	}
 	// Initialize balance consistency manager
 	// First we need a bookkeeper service - let's create a simple one or get it from baseSuite
 	var bookkeeperSvc bookkeeper.BookkeeperService
@@ -245,7 +243,7 @@ func (sctm *StrongConsistencyTransactionManager) executeStrongConsistencyTransac
 		approved, err := sctm.raftCoordinator.ProposeGenericOperation(consensusCtx, consensus.Operation{
 			ID:        txnID,
 			Type:      consensus.OperationTypeTransaction,
-			Data:      criticalOps,
+			Data:      map[string]interface{}{"operations": criticalOps},
 			Timestamp: startTime,
 		})
 
@@ -342,11 +340,6 @@ func (sctm *StrongConsistencyTransactionManager) executeOperationsWithConsistenc
 		Status:        "committed",
 		Operations:    operations,
 		Timestamp:     time.Now(),
-		Metadata: map[string]interface{}{
-			"strong_consistency": true,
-			"consensus_required": sctm.requiresConsensus(operations),
-			"transaction_id":     txnID,
-		},
 	}, nil
 }
 
@@ -405,14 +398,13 @@ func (sctm *StrongConsistencyTransactionManager) executeBalanceOperationsWithCon
 			toUserID := op.Parameters["to_user_id"].(string)
 			currency := op.Parameters["currency"].(string)
 			amount := op.Parameters["amount"].(float64)
-			description := op.Parameters["description"].(string)
 
 			transfer := consistency.BalanceTransfer{
-				FromUserID:  fromUserID,
-				ToUserID:    toUserID,
-				Currency:    currency,
-				Amount:      amount,
-				Description: description,
+				FromUserID: fromUserID,
+				ToUserID:   toUserID,
+				Currency:   currency,
+				Amount:     decimal.NewFromFloat(amount),
+				Reference:  "",
 			}
 
 			if err := sctm.balanceManager.ExecuteAtomicTransfer(ctx, transfer); err != nil {
@@ -446,12 +438,10 @@ func (sctm *StrongConsistencyTransactionManager) executeSettlementOperationsWith
 	for _, op := range operations {
 		if op.Service == "settlement" && op.Operation == "settle_trade" {
 			trade := coordination.Trade{
-				ID:        op.Parameters["trade_id"].(string),
-				UserID:    op.Parameters["user_id"].(string),
+				ID:        uuid.MustParse(op.Parameters["trade_id"].(string)),
 				Symbol:    op.Parameters["symbol"].(string),
-				Side:      op.Parameters["side"].(string),
-				Quantity:  op.Parameters["quantity"].(float64),
-				Price:     op.Parameters["price"].(float64),
+				Quantity:  decimal.NewFromFloat(op.Parameters["quantity"].(float64)),
+				Price:     decimal.NewFromFloat(op.Parameters["price"].(float64)),
 				Timestamp: time.Now(),
 			}
 			trades = append(trades, trade)
@@ -566,6 +556,39 @@ func (sctm *StrongConsistencyTransactionManager) GetHealthCheck() map[string]int
 	result["strong_consistency"] = consistencyHealth
 
 	return result
+}
+
+// IsHealthy returns true if all strong consistency components are healthy
+func (sctm *StrongConsistencyTransactionManager) IsHealthy() bool {
+	sctm.mutex.RLock()
+	defer sctm.mutex.RUnlock()
+
+	// Check base transaction manager health
+	if sctm.TransactionManagerSuite != nil {
+		if healthData := sctm.TransactionManagerSuite.GetHealthCheck(); healthData != nil {
+			if status, ok := healthData["status"].(string); ok && status != "healthy" {
+				return false
+			}
+		}
+	}
+
+	// Check consensus coordinator health
+	if sctm.raftCoordinator == nil {
+		return false
+	}
+
+	// Check balance manager health
+	if sctm.balanceManager == nil {
+		return false
+	}
+
+	// Check settlement coordinator health
+	if sctm.settlementCoordinator == nil {
+		return false
+	}
+
+	// All components are present and healthy
+	return true
 }
 
 // DefaultStrongConsistencyConfig returns default configuration

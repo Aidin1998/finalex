@@ -64,8 +64,8 @@ func (bxa *BookkeeperXAResource) GetResourceName() string {
 	return "bookkeeper"
 }
 
-// Start begins a new bookkeeper transaction
-func (bxa *BookkeeperXAResource) Start(xid XID) error {
+// Start begins a new bookkeeper transaction (XA specific)
+func (bxa *BookkeeperXAResource) StartXA(xid XID) error {
 	bxa.mu.Lock()
 	defer bxa.mu.Unlock()
 
@@ -95,8 +95,8 @@ func (bxa *BookkeeperXAResource) Start(xid XID) error {
 	return nil
 }
 
-// LockFunds locks funds within the XA transaction
-func (bxa *BookkeeperXAResource) LockFunds(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+// LockFundsXA locks funds within the XA transaction
+func (bxa *BookkeeperXAResource) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
 	bxa.mu.Lock()
 	defer bxa.mu.Unlock()
 
@@ -157,8 +157,8 @@ func (bxa *BookkeeperXAResource) LockFunds(ctx context.Context, xid XID, userID,
 	return nil
 }
 
-// UnlockFunds unlocks funds within the XA transaction
-func (bxa *BookkeeperXAResource) UnlockFunds(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+// UnlockFundsXA unlocks funds within the XA transaction
+func (bxa *BookkeeperXAResource) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
 	bxa.mu.Lock()
 	defer bxa.mu.Unlock()
 
@@ -518,3 +518,79 @@ func (bxa *BookkeeperXAResource) GetTransactionState(xid XID) (string, bool) {
 
 	return txn.State, true
 }
+
+// BatchGetAccounts implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	// Delegate to the underlying bookkeeper service
+	return bxa.bookkeeper.BatchGetAccounts(ctx, userIDs, currencies)
+}
+
+// Implement missing BookkeeperService methods by delegating to the underlying service
+
+// Start implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) Start() error {
+	return bxa.bookkeeper.Start()
+}
+
+// Stop implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) Stop() error {
+	return bxa.bookkeeper.Stop()
+}
+
+// GetAccounts implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) GetAccounts(ctx context.Context, userID string) ([]*models.Account, error) {
+	return bxa.bookkeeper.GetAccounts(ctx, userID)
+}
+
+// GetAccount implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) GetAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return bxa.bookkeeper.GetAccount(ctx, userID, currency)
+}
+
+// CreateAccount implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) CreateAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return bxa.bookkeeper.CreateAccount(ctx, userID, currency)
+}
+
+// GetAccountTransactions implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) GetAccountTransactions(ctx context.Context, userID, currency string, limit, offset int) ([]*models.Transaction, int64, error) {
+	return bxa.bookkeeper.GetAccountTransactions(ctx, userID, currency, limit, offset)
+}
+
+// CreateTransaction implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+	return bxa.bookkeeper.CreateTransaction(ctx, userID, transactionType, amount, currency, reference, description)
+}
+
+// CompleteTransaction implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) CompleteTransaction(ctx context.Context, transactionID string) error {
+	return bxa.bookkeeper.CompleteTransaction(ctx, transactionID)
+}
+
+// FailTransaction implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) FailTransaction(ctx context.Context, transactionID string) error {
+	return bxa.bookkeeper.FailTransaction(ctx, transactionID)
+}
+
+// LockFunds implements the BookkeeperService interface (non-XA version)
+func (bxa *BookkeeperXAResource) LockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return bxa.bookkeeper.LockFunds(ctx, userID, currency, amount)
+}
+
+// UnlockFunds implements the BookkeeperService interface (non-XA version)
+func (bxa *BookkeeperXAResource) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return bxa.bookkeeper.UnlockFunds(ctx, userID, currency, amount)
+}
+
+// BatchLockFunds implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) BatchLockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return bxa.bookkeeper.BatchLockFunds(ctx, operations)
+}
+
+// BatchUnlockFunds implements the BookkeeperService interface
+func (bxa *BookkeeperXAResource) BatchUnlockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return bxa.bookkeeper.BatchUnlockFunds(ctx, operations)
+}
+
+// Ensure BookkeeperXAResource implements BookkeeperService interface
+var _ bookkeeper.BookkeeperService = (*BookkeeperXAResource)(nil)

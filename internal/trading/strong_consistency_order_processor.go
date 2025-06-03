@@ -628,3 +628,34 @@ func DefaultOrderProcessingConfig() *OrderProcessingConfig {
 		BatchTimeout:                   5 * time.Second,
 	}
 }
+
+// IsHealthy checks if the order processor is healthy
+func (scop *StrongConsistencyOrderProcessor) IsHealthy() bool {
+	// Check if the processor is running
+	select {
+	case <-scop.ctx.Done():
+		return false
+	default:
+	}
+
+	// Check if Raft coordinator is healthy
+	if scop.raftCoordinator != nil && !scop.raftCoordinator.IsHealthy() {
+		return false
+	}
+
+	// Check if balance manager is healthy
+	if scop.balanceManager != nil && !scop.balanceManager.IsHealthy() {
+		return false
+	}
+	// Check metrics for concerning patterns
+	metrics := scop.GetMetrics()
+	if metrics != nil {
+		// If we have too many rejected orders, consider unhealthy
+		if metrics.OrdersRejected > 100 &&
+			time.Since(metrics.LastUpdate) < 5*time.Minute {
+			return false
+		}
+	}
+
+	return true
+}

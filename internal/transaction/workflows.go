@@ -121,13 +121,14 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 	var reserveAmount float64
 	if orderRequest.Side == "BUY" {
 		reserveAmount = orderRequest.Quantity * orderRequest.Price
-		if err := bookkeeperXA.LockFunds(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
+		// Fix: Use LockFundsXA for XA transactions
+		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
 			return nil, fmt.Errorf("failed to reserve funds: %w", err)
 		}
 	} else {
 		reserveAmount = orderRequest.Quantity
-		if err := bookkeeperXA.LockFunds(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
+		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
 			return nil, fmt.Errorf("failed to reserve funds: %w", err)
 		}
@@ -313,7 +314,7 @@ func (dto *DistributedTransactionOrchestrator) CryptoWithdrawalWorkflow(
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to enlist bookkeeper resource: %w", err)
 			}
-			if err := bookkeeperXA.LockFunds(ctx, xaTx.XID, userID, asset, amount); err != nil {
+			if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, asset, amount); err != nil {
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to lock funds: %w", err)
 			}
@@ -338,7 +339,7 @@ func (dto *DistributedTransactionOrchestrator) CryptoWithdrawalWorkflow(
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to enlist bookkeeper resource for compensation: %w", err)
 			}
-			if err := bookkeeperXA.UnlockFunds(ctx, xaTx.XID, userID, asset, amount); err != nil {
+			if err := bookkeeperXA.UnlockFundsXA(ctx, xaTx.XID, userID, asset, amount); err != nil {
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to unlock funds in compensation: %w", err)
 			}
@@ -456,7 +457,7 @@ func (dto *DistributedTransactionOrchestrator) CrossServiceTransferWorkflow(
 			dto.xaManager.Abort(ctx, xaTx)
 			return fmt.Errorf("failed to enlist fiat resource: %w", err)
 		}
-		if err := bookkeeperXA.LockFunds(ctx, xaTx.XID, fromUserID, currency, amount); err != nil {
+		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, fromUserID, currency, amount); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
 			return fmt.Errorf("failed to lock source funds: %w", err)
 		}

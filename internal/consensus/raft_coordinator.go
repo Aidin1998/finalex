@@ -598,6 +598,34 @@ func (rc *RaftCoordinator) Stop(ctx context.Context) error {
 	return nil
 }
 
+// IsHealthy returns whether the coordinator is healthy and operational
+func (rc *RaftCoordinator) IsHealthy() bool {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+
+	// Check if we have quorum and are not partitioned
+	return rc.HasQuorum() && !rc.IsPartitioned()
+}
+
+// GetNodes returns the list of cluster nodes
+func (rc *RaftCoordinator) GetNodes() []string {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+
+	// Return a copy to prevent external modification
+	nodes := make([]string, len(rc.cluster))
+	copy(nodes, rc.cluster)
+	return nodes
+}
+
+// HasQuorum returns whether the current partition has quorum
+func (rc *RaftCoordinator) HasQuorum() bool {
+	if rc.recoveryManager == nil || rc.recoveryManager.partitionDetector == nil {
+		return true
+	}
+	return rc.recoveryManager.partitionDetector.HasQuorum(len(rc.cluster))
+}
+
 // getConnectedNodes returns the list of currently connected nodes
 func (rc *RaftCoordinator) getConnectedNodes() []string {
 	if rc.recoveryManager == nil || rc.recoveryManager.partitionDetector == nil {
@@ -678,12 +706,4 @@ func (rc *RaftCoordinator) IsPartitioned() bool {
 		return false
 	}
 	return rc.recoveryManager.partitionDetector.IsPartitioned()
-}
-
-// HasQuorum returns whether the current partition has quorum
-func (rc *RaftCoordinator) HasQuorum() bool {
-	if rc.recoveryManager == nil || rc.recoveryManager.partitionDetector == nil {
-		return true
-	}
-	return rc.recoveryManager.partitionDetector.HasQuorum(len(rc.cluster))
 }

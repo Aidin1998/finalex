@@ -284,7 +284,8 @@ func (tms *TransactionManagerSuite) executeBookkeeperOperation(ctx context.Conte
 		userID := op.Parameters["user_id"].(string)
 		currency := op.Parameters["currency"].(string)
 		amount := op.Parameters["amount"].(float64)
-		return tms.BookkeeperXA.LockFunds(ctx, txn.XID, userID, currency, amount)
+		// Fix: Use LockFundsXA for XA transactions
+		return tms.BookkeeperXA.LockFundsXA(ctx, txn.XID, userID, currency, amount)
 	case "transfer_funds":
 		fromUserID := op.Parameters["from_user_id"].(string)
 		toUserID := op.Parameters["to_user_id"].(string)
