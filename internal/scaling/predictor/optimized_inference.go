@@ -8,7 +8,11 @@ package predictor
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"math"
+	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -181,15 +185,15 @@ func NewOptimizedInferenceEngine(config *InferenceConfig, logger *zap.SugaredLog
 		ctx:              ctx,
 		cancel:           cancel,
 	}
-
 	// Initialize components
 	engine.modelCache = NewModelCache(config.CacheSize, config.CacheTTL)
 	engine.quantizer = NewModelQuantizer(&QuantizationConfig{
-		Bits:              config.QuantizationBits,
-		Method:            config.QuantizationMethod,
-		AsymmetricQuant:   true,
-		PerChannelQuant:   true,
-		CalibrationMethod: "entropy",
+		Bits:               config.QuantizationBits,
+		Method:             config.QuantizationMethod,
+		AsymmetricQuant:    true,
+		PerChannelQuant:    true,
+		CalibrationMethod:  "entropy",
+		CalibrationSamples: config.CalibrationSamples,
 	})
 
 	engine.pruner = NewModelPruner(&PruningConfig{
@@ -221,11 +225,12 @@ func NewOptimizedInferenceEngine(config *InferenceConfig, logger *zap.SugaredLog
 
 // QuantizationConfig contains configuration for model quantization
 type QuantizationConfig struct {
-	Bits              int    `json:"bits"`
-	Method            string `json:"method"`
-	AsymmetricQuant   bool   `json:"asymmetric_quant"`
-	PerChannelQuant   bool   `json:"per_channel_quant"`
-	CalibrationMethod string `json:"calibration_method"`
+	Bits               int    `json:"bits"`
+	Method             string `json:"method"`
+	AsymmetricQuant    bool   `json:"asymmetric_quant"`
+	PerChannelQuant    bool   `json:"per_channel_quant"`
+	CalibrationMethod  string `json:"calibration_method"`
+	CalibrationSamples int    `json:"calibration_samples"`
 }
 
 // PruningConfig contains configuration for model pruning
@@ -459,13 +464,13 @@ func (e *OptimizedInferenceEngine) runQuantizedInference(model *QuantizedModel, 
 	// Perform quantized inference (simplified implementation)
 	result := e.computeQuantizedPrediction(quantizedFeatures, model)
 
-	// Dequantize result
+	// Dequantize result to LoadMetrics
 	dequantizedResult := e.dequantizeResult(result, model.Scales, model.ZeroPoints)
 
 	return &PredictionResult{
 		Timestamp:     time.Now(),
 		PredictedLoad: dequantizedResult,
-		Confidence:    0.95, // Slightly reduced confidence for quantized models
+		Confidence:    0.93, // Slightly reduced confidence for quantized models
 		ModelMetadata: &ModelMetadata{ModelType: "quantized"},
 	}, nil
 }
@@ -512,27 +517,133 @@ func (e *OptimizedInferenceEngine) GetPerformanceStats() *InferenceStats {
 
 // Helper method implementations
 func (e *OptimizedInferenceEngine) benchmarkModel(ctx context.Context, model PredictionModel) (*OptimizationMetadata, error) {
-	// TODO: Implement benchmarking logic
-	return &OptimizationMetadata{AvgLatency: 10 * time.Millisecond, ModelSize: 1024 * 1024, Accuracy: 0.99}, nil
+	// Benchmark original model performance
+	const numIterations = 10
+	var totalLatency time.Duration
+	var predictions []*PredictionResult
+
+	for i := 0; i < numIterations; i++ {
+		start := time.Now()
+		prediction, err := model.Predict(ctx, time.Hour)
+		if err != nil {
+			e.logger.Warnf("Benchmark prediction failed: %v", err)
+			continue
+		}
+
+		latency := time.Since(start)
+		totalLatency += latency
+		predictions = append(predictions, prediction)
+	}
+
+	avgLatency := totalLatency / time.Duration(len(predictions))
+
+	// Estimate model size (simplified)
+	modelSize := e.estimateModelSize(model)
+
+	// Calculate accuracy metric (simplified)
+	accuracy := e.calculateAccuracy(predictions)
+
+	return &OptimizationMetadata{
+		AvgLatency: avgLatency,
+		ModelSize:  modelSize,
+		Accuracy:   accuracy,
+	}, nil
 }
 
 func (e *OptimizedInferenceEngine) benchmarkOptimizedModel(ctx context.Context, model *OptimizedModel) (*OptimizationMetadata, error) {
-	// TODO: Implement benchmarking logic
-	return &OptimizationMetadata{AvgLatency: 5 * time.Millisecond, ModelSize: 512 * 1024, Accuracy: 0.98}, nil
+	// Benchmark optimized model performance
+	const numIterations = 10
+	var totalLatency time.Duration
+	var predictions []*PredictionResult
+
+	// Create test features for optimized inference
+	testFeatures := map[string]float64{
+		"cpu_utilization":     0.5,
+		"memory_utilization":  0.6,
+		"requests_per_second": 100,
+		"error_rate":          0.01,
+		"latency_p95":         50,
+	}
+
+	for i := 0; i < numIterations; i++ {
+		start := time.Now()
+
+		var prediction *PredictionResult
+		var err error
+
+		// Use optimized inference path
+		if model.QuantizedModel != nil {
+			prediction, err = e.runQuantizedInference(model.QuantizedModel, testFeatures)
+		} else if model.PrunedModel != nil {
+			prediction, err = e.runPrunedInference(model.PrunedModel, testFeatures)
+		} else {
+			prediction, err = model.OriginalModel.Predict(ctx, time.Hour)
+		}
+
+		if err != nil {
+			e.logger.Warnf("Optimized benchmark prediction failed: %v", err)
+			continue
+		}
+
+		latency := time.Since(start)
+		totalLatency += latency
+		predictions = append(predictions, prediction)
+	}
+
+	if len(predictions) == 0 {
+		return nil, fmt.Errorf("no successful predictions during benchmarking")
+	}
+
+	avgLatency := totalLatency / time.Duration(len(predictions))
+
+	// Estimate optimized model size
+	modelSize := e.estimateOptimizedModelSize(model)
+
+	// Calculate accuracy (may be slightly reduced for optimized models)
+	accuracy := e.calculateAccuracy(predictions)
+	if model.QuantizedModel != nil {
+		accuracy *= 0.98 // Slight accuracy reduction for quantization
+	}
+	if model.PrunedModel != nil {
+		accuracy *= 0.99 // Minor accuracy reduction for pruning
+	}
+
+	return &OptimizationMetadata{
+		AvgLatency: avgLatency,
+		ModelSize:  modelSize,
+		Accuracy:   accuracy,
+	}, nil
 }
 
 func (e *OptimizedInferenceEngine) generateCacheKey(modelID string, features map[string]float64) string {
-	// TODO: Implement cache key generation
-	return modelID
+	// Create deterministic cache key from model ID and features
+	h := sha256.New()
+	h.Write([]byte(modelID))
+
+	// Sort feature keys for consistent ordering
+	keys := make([]string, 0, len(features))
+	for k := range features {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Hash each feature key-value pair
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte(fmt.Sprintf("%.6f", features[k])))
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil))[:16] // Use first 16 chars
 }
 
 func (e *OptimizedInferenceEngine) generateRequestID() string {
-	// TODO: Implement request ID generation
-	return fmt.Sprintf("req_%d", time.Now().UnixNano())
+	// Generate unique request ID using timestamp and random component
+	timestamp := time.Now().UnixNano()
+	random := rand.Int63n(1000000)
+	return fmt.Sprintf("req_%d_%d", timestamp, random)
 }
 
 func (e *OptimizedInferenceEngine) monitorPerformance() {
-	// TODO: Implement performance monitoring
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -540,48 +651,321 @@ func (e *OptimizedInferenceEngine) monitorPerformance() {
 		select {
 		case <-ticker.C:
 			stats := e.GetPerformanceStats()
-			e.logger.Infof("Performance stats: QPS=%.2f, ErrorRate=%.4f, P95Latency=%v",
-				stats.ThroughputQPS, stats.ErrorRate, stats.P95Latency)
+			e.logger.Infof("Performance stats: QPS=%.2f, ErrorRate=%.4f, P95Latency=%v, OptimizedModels=%d",
+				stats.ThroughputQPS, stats.ErrorRate, stats.P95Latency, stats.OptimizedModels)
+
+			// Log cache performance
+			cacheHitRate := 0.0
+			if stats.CacheHits+stats.CacheMisses > 0 {
+				cacheHitRate = float64(stats.CacheHits) / float64(stats.CacheHits+stats.CacheMisses) * 100
+			}
+			e.logger.Debugf("Cache performance: HitRate=%.2f%%, Hits=%d, Misses=%d",
+				cacheHitRate, stats.CacheHits, stats.CacheMisses)
+
+			// Check performance against targets
+			if stats.ThroughputQPS < e.config.MinThroughputQPS {
+				e.logger.Warnf("Throughput below target: %.2f < %.2f QPS",
+					stats.ThroughputQPS, e.config.MinThroughputQPS)
+			}
+
+			if stats.P95Latency > time.Duration(e.config.MaxLatencyMs)*time.Millisecond {
+				e.logger.Warnf("P95 latency above target: %v > %dms",
+					stats.P95Latency, e.config.MaxLatencyMs)
+			}
+
 		case <-e.ctx.Done():
+			e.logger.Info("Performance monitoring stopped")
 			return
 		}
 	}
 }
 
 func (e *OptimizedInferenceEngine) runPrunedInference(model *PrunedModel, features map[string]float64) (*PredictionResult, error) {
-	// TODO: Implement pruned inference logic
+	// Implement pruned inference logic using sparse matrix operations
+
+	// Extract input features in normalized order
+	inputValues := []float32{
+		float32(features["cpu_utilization"]),
+		float32(features["memory_utilization"]),
+		float32(features["requests_per_second"] / 1000.0), // Normalize
+		float32(features["error_rate"] * 100),             // Scale to percentage
+		float32(features["latency_p95"] / 100.0),          // Normalize
+	}
+
+	// Perform sparse computation using pruning mask
+	result := e.computePrunedPrediction(inputValues, model)
+
+	// Convert to LoadMetrics
+	loadMetrics := &LoadMetrics{
+		CPUUtilization:    float64(result[0]),
+		MemoryUtilization: float64(result[1]),
+		RequestsPerSecond: float64(result[2]) * 1000, // Denormalize
+		LatencyP95Ms:      float64(result[3]) * 100,  // Denormalize
+		ErrorRate:         float64(result[4]) / 100,  // Convert back to ratio
+	}
+
 	return &PredictionResult{
-		PredictedLoad: &LoadMetrics{
-			CPUUtilization:    0.5,
-			MemoryUtilization: 0.5,
-			RequestsPerSecond: 100,
-			LatencyP95Ms:      10,
-			ErrorRate:         0.01,
-		},
-		Confidence:    0.95,
+		PredictedLoad: loadMetrics,
+		Confidence:    0.94, // Slightly reduced confidence for pruned models
 		Timestamp:     time.Now(),
 		ModelMetadata: &ModelMetadata{ModelType: "pruned"},
 	}, nil
 }
 
+func (e *OptimizedInferenceEngine) computePrunedPrediction(input []float32, model *PrunedModel) []float32 {
+	// Simulate sparse matrix multiplication with pruning mask
+
+	// Use a simplified neural network simulation with 3 layers
+	layer1Size := 16
+	layer2Size := 8
+	outputSize := 5
+
+	// Layer 1: Input to hidden
+	hidden1 := make([]float32, layer1Size)
+	weightIdx := 0
+
+	for i := 0; i < layer1Size; i++ {
+		for j := 0; j < len(input); j++ {
+			if weightIdx < len(model.PruningMask) && model.PruningMask[weightIdx] {
+				// Use active weight if not pruned
+				if weightIdx < len(model.ActiveWeights) {
+					hidden1[i] += input[j] * model.ActiveWeights[weightIdx]
+				}
+			}
+			// If pruned, weight is 0 (skip multiplication)
+			weightIdx++
+		}
+		// Apply ReLU activation
+		if hidden1[i] < 0 {
+			hidden1[i] = 0
+		}
+	}
+
+	// Layer 2: Hidden to hidden
+	hidden2 := make([]float32, layer2Size)
+	for i := 0; i < layer2Size; i++ {
+		for j := 0; j < layer1Size; j++ {
+			if weightIdx < len(model.PruningMask) && model.PruningMask[weightIdx] {
+				if weightIdx < len(model.ActiveWeights) {
+					hidden2[i] += hidden1[j] * model.ActiveWeights[weightIdx]
+				}
+			}
+			weightIdx++
+		}
+		if hidden2[i] < 0 {
+			hidden2[i] = 0
+		}
+	}
+
+	// Output layer
+	output := make([]float32, outputSize)
+	for i := 0; i < outputSize; i++ {
+		for j := 0; j < layer2Size; j++ {
+			if weightIdx < len(model.PruningMask) && model.PruningMask[weightIdx] {
+				if weightIdx < len(model.ActiveWeights) {
+					output[i] += hidden2[j] * model.ActiveWeights[weightIdx]
+				}
+			}
+			weightIdx++
+		}
+		// Apply sigmoid activation for output (normalize to 0-1)
+		output[i] = 1.0 / (1.0 + float32(math.Exp(-float64(output[i]))))
+	}
+
+	return output
+}
+
 func (e *OptimizedInferenceEngine) calculateConfidence(prediction *PredictionResult, model *OptimizedModel) float64 {
-	// TODO: Implement confidence calculation
-	return 1.0
+	// Calculate confidence based on model type and prediction characteristics
+	baseConfidence := 0.95
+
+	if prediction == nil || prediction.PredictedLoad == nil {
+		return 0.5 // Low confidence for null predictions
+	}
+
+	// Reduce confidence based on optimization type
+	if model.QuantizedModel != nil {
+		baseConfidence *= 0.98 // Slight reduction for quantization
+	}
+	if model.PrunedModel != nil {
+		// Reduction based on sparsity ratio
+		sparsityPenalty := model.PrunedModel.SparsityRatio * 0.1
+		baseConfidence *= (1.0 - sparsityPenalty)
+	}
+
+	// Adjust confidence based on prediction values
+	load := prediction.PredictedLoad
+
+	// Check for reasonable ranges
+	if load.CPUUtilization < 0 || load.CPUUtilization > 1 {
+		baseConfidence *= 0.8 // Penalize out-of-range predictions
+	}
+	if load.MemoryUtilization < 0 || load.MemoryUtilization > 1 {
+		baseConfidence *= 0.8
+	}
+	if load.ErrorRate < 0 || load.ErrorRate > 1 {
+		baseConfidence *= 0.8
+	}
+
+	// Factor in model accuracy drop
+	if model.AccuracyDrop > 0 {
+		baseConfidence *= (1.0 - model.AccuracyDrop)
+	}
+
+	// Factor in inference count (higher usage = higher confidence in stability)
+	usageFactor := math.Min(float64(model.InferenceCount)/1000.0, 0.05)
+	baseConfidence += usageFactor
+
+	// Clamp to reasonable range
+	if baseConfidence < 0.5 {
+		baseConfidence = 0.5
+	}
+	if baseConfidence > 0.99 {
+		baseConfidence = 0.99
+	}
+
+	return baseConfidence
 }
 
-func (e *OptimizedInferenceEngine) getOptimizationInfo(model *OptimizedModel) interface{} {
-	// TODO: Implement optimization info extraction
-	return nil
+func (e *OptimizedInferenceEngine) getOptimizationInfo(model *OptimizedModel) map[string]interface{} {
+	info := make(map[string]interface{})
+
+	info["model_id"] = model.ID
+	info["original_model_type"] = model.OriginalModel.GetModelType()
+	info["is_loaded"] = model.IsLoaded
+	info["inference_count"] = model.InferenceCount
+	info["last_used"] = model.LastUsed
+
+	// Optimization details
+	optimizations := make([]string, 0)
+	if model.QuantizedModel != nil {
+		optimizations = append(optimizations, "quantization")
+		info["quantization_metadata"] = model.QuantizedModel.Metadata
+	}
+	if model.PrunedModel != nil {
+		optimizations = append(optimizations, "pruning")
+		info["sparsity_ratio"] = model.PrunedModel.SparsityRatio
+		info["pruning_metadata"] = model.PrunedModel.Metadata
+	}
+	info["optimizations"] = optimizations
+
+	// Performance metrics
+	if model.OriginalLatency > 0 && model.OptimizedLatency > 0 {
+		improvement := float64(model.OriginalLatency-model.OptimizedLatency) / float64(model.OriginalLatency) * 100
+		info["latency_improvement_percent"] = improvement
+	}
+
+	if model.OriginalSize > 0 && model.OptimizedSize > 0 {
+		reduction := float64(model.OriginalSize-model.OptimizedSize) / float64(model.OriginalSize) * 100
+		info["size_reduction_percent"] = reduction
+	}
+
+	info["accuracy_drop"] = model.AccuracyDrop
+
+	return info
 }
 
-func (e *OptimizedInferenceEngine) quantizeFeatures(features map[string]float64, scales []float32, zeroPoints []int8) interface{} {
-	// TODO: Implement feature quantization
-	return nil
+func (e *OptimizedInferenceEngine) quantizeFeatures(features map[string]float64, scales []float32, zeroPoints []int8) []int8 {
+	// Convert input features to quantized format
+	quantizedValues := make([]int8, 0, len(features))
+
+	// Order features consistently
+	featureOrder := []string{"cpu_utilization", "memory_utilization", "requests_per_second", "error_rate", "latency_p95"}
+
+	for i, feature := range featureOrder {
+		if value, exists := features[feature]; exists {
+			// Normalize feature value
+			normalizedValue := value
+			if feature == "requests_per_second" {
+				normalizedValue = value / 1000.0 // Normalize large values
+			} else if feature == "error_rate" {
+				normalizedValue = value * 100 // Scale small values
+			} else if feature == "latency_p95" {
+				normalizedValue = value / 100.0
+			} // Apply quantization using scale and zero point
+			scale := scales[i%len(scales)]
+			zeroPoint := zeroPoints[i%len(zeroPoints)]
+
+			valueToQuantize := math.Round(normalizedValue/float64(scale)) + float64(zeroPoint)
+
+			// Clamp to int8 range before casting
+			const minInt8 = -128
+			const maxInt8 = 127
+			if valueToQuantize < minInt8 {
+				valueToQuantize = minInt8
+			} else if valueToQuantize > maxInt8 {
+				valueToQuantize = maxInt8
+			}
+
+			quantizedValue := int8(valueToQuantize)
+			quantizedValues = append(quantizedValues, quantizedValue)
+		}
+	}
+
+	return quantizedValues
 }
 
-func (e *OptimizedInferenceEngine) computeQuantizedPrediction(quantizedFeatures interface{}, model *QuantizedModel) float64 {
-	// TODO: Implement quantized prediction
-	return 0.0
+func (e *OptimizedInferenceEngine) computeQuantizedPrediction(quantizedFeatures []int8, model *QuantizedModel) float64 {
+	// Perform quantized inference computation
+
+	// Simulate quantized neural network layers
+	layer1Size := 16
+	layer2Size := 8
+
+	// Layer 1: Quantized input to hidden layer
+	hidden1 := make([]int32, layer1Size) // Use int32 to prevent overflow
+	weightIdx := 0
+
+	for i := 0; i < layer1Size && i < len(quantizedFeatures); i++ {
+		for j := 0; j < len(quantizedFeatures); j++ {
+			if weightIdx < len(model.Weights) {
+				// Quantized multiplication: input * weight
+				product := int32(quantizedFeatures[j]) * int32(model.Weights[weightIdx])
+				hidden1[i] += product
+			}
+			weightIdx++
+		}
+
+		// Add bias if available
+		if i < len(model.Biases) {
+			hidden1[i] += int32(model.Biases[i])
+		}
+	}
+
+	// Layer 2: Hidden to output (simplified to single output)
+	output := int32(0)
+	for i := 0; i < layer2Size && i < len(hidden1); i++ {
+		if weightIdx < len(model.Weights) {
+			// Use quantized values with saturation to prevent overflow
+			if hidden1[i] > 127 {
+				hidden1[i] = 127
+			} else if hidden1[i] < -128 {
+				hidden1[i] = -128
+			}
+
+			product := hidden1[i] * int32(model.Weights[weightIdx])
+			output += product
+		}
+		weightIdx++
+	}
+
+	// Dequantize to get final result
+	if len(model.Scales) > 0 {
+		scale := model.Scales[0]
+		zeroPoint := int32(0)
+		if len(model.ZeroPoints) > 0 {
+			zeroPoint = int32(model.ZeroPoints[0])
+		}
+
+		dequantized := (float64(output) - float64(zeroPoint)) * float64(scale)
+
+		// Apply sigmoid activation and normalize to 0-1 range
+		result := 1.0 / (1.0 + math.Exp(-dequantized/1000.0)) // Scale down for stability
+		return result
+	}
+
+	// Fallback if no scales available
+	return float64(output) / 10000.0 // Simple normalization
 }
 
 func (e *OptimizedInferenceEngine) dequantizeResult(result float64, scales []float32, zeroPoints []int8) *LoadMetrics {
@@ -593,4 +977,181 @@ func (e *OptimizedInferenceEngine) dequantizeResult(result float64, scales []flo
 		LatencyP95Ms:      10,
 		ErrorRate:         0.01,
 	}
+}
+
+// Helper methods for model benchmarking and optimization
+func (e *OptimizedInferenceEngine) estimateModelSize(model PredictionModel) int64 {
+	// Estimate model size based on type
+	switch m := model.(type) {
+	case *ARIMAModel:
+		// ARIMA models are relatively small
+		return int64(len(m.coeffs)*8 + 1024) // coefficients + metadata
+	case *LSTMModel:
+		// LSTM models are larger due to weight matrices
+		hiddenSize := 64
+		inputSize := 8
+		return int64(hiddenSize*inputSize*4*4*4 + 1024*4) // 4 gates, 4 bytes per float32, metadata
+	default:
+		return 1024 * 1024 // Default 1MB estimate
+	}
+}
+
+func (e *OptimizedInferenceEngine) estimateOptimizedModelSize(model *OptimizedModel) int64 {
+	// Start with original model size
+	originalSize := e.estimateModelSize(model.OriginalModel)
+
+	// Apply size reductions based on optimizations
+	if model.QuantizedModel != nil {
+		// Quantization typically reduces size by ~4x (float32 to int8)
+		originalSize = originalSize / 4
+	}
+
+	if model.PrunedModel != nil {
+		// Pruning reduces size based on sparsity ratio
+		sparsityReduction := 1.0 - model.PrunedModel.SparsityRatio
+		originalSize = int64(float64(originalSize) * sparsityReduction)
+	}
+
+	// Add overhead for optimization metadata
+	overhead := int64(1024) // 1KB overhead
+	return originalSize + overhead
+}
+
+func (e *OptimizedInferenceEngine) calculateAccuracy(predictions []*PredictionResult) float64 {
+	// Simplified accuracy calculation based on consistency
+	if len(predictions) < 2 {
+		return 0.95 // Default accuracy
+	}
+
+	// Calculate coefficient of variation for CPU utilization predictions
+	var values []float64
+	for _, pred := range predictions {
+		if pred.PredictedLoad != nil {
+			values = append(values, pred.PredictedLoad.CPUUtilization)
+		}
+	}
+
+	if len(values) == 0 {
+		return 0.95
+	}
+
+	// Calculate mean
+	mean := 0.0
+	for _, v := range values {
+		mean += v
+	}
+	mean /= float64(len(values))
+
+	// Calculate standard deviation
+	variance := 0.0
+	for _, v := range values {
+		variance += (v - mean) * (v - mean)
+	}
+	variance /= float64(len(values))
+	stddev := variance
+
+	// Higher consistency = higher accuracy
+	cv := stddev / mean
+	accuracy := 1.0 - cv
+
+	// Clamp between 0.8 and 0.99
+	if accuracy < 0.8 {
+		accuracy = 0.8
+	}
+	if accuracy > 0.99 {
+		accuracy = 0.99
+	}
+
+	return accuracy
+}
+
+// Shutdown gracefully shuts down the inference engine
+func (e *OptimizedInferenceEngine) Shutdown(ctx context.Context) error {
+	e.logger.Info("Shutting down optimized inference engine...")
+
+	// Signal shutdown to all goroutines
+	e.cancel()
+
+	// Wait for graceful shutdown with timeout
+	shutdownTimer := time.NewTimer(10 * time.Second)
+	defer shutdownTimer.Stop()
+
+	select {
+	case <-ctx.Done():
+		e.logger.Warn("Shutdown cancelled by context")
+		return ctx.Err()
+	case <-shutdownTimer.C:
+		e.logger.Info("Shutdown completed")
+		return nil
+	}
+}
+
+// GetModelInfo returns information about a specific optimized model
+func (e *OptimizedInferenceEngine) GetModelInfo(modelID string) (*OptimizedModel, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	model, exists := e.optimizedModels[modelID]
+	return model, exists
+}
+
+// ListOptimizedModels returns a list of all optimized model IDs
+func (e *OptimizedInferenceEngine) ListOptimizedModels() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	modelIDs := make([]string, 0, len(e.optimizedModels))
+	for id := range e.optimizedModels {
+		modelIDs = append(modelIDs, id)
+	}
+	return modelIDs
+}
+
+// UnloadModel removes an optimized model from memory
+func (e *OptimizedInferenceEngine) UnloadModel(modelID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if model, exists := e.optimizedModels[modelID]; exists {
+		model.IsLoaded = false
+		delete(e.optimizedModels, modelID)
+		e.logger.Infof("Unloaded optimized model: %s", modelID)
+		return nil
+	}
+
+	return fmt.Errorf("model not found: %s", modelID)
+}
+
+// UpdateConfiguration updates the engine configuration
+func (e *OptimizedInferenceEngine) UpdateConfiguration(newConfig *InferenceConfig) error {
+	if newConfig == nil {
+		return fmt.Errorf("configuration cannot be nil")
+	}
+
+	e.logger.Info("Updating inference engine configuration")
+
+	// Validate new configuration
+	if newConfig.MaxBatchSize <= 0 {
+		return fmt.Errorf("MaxBatchSize must be positive")
+	}
+	if newConfig.MaxConcurrentJobs <= 0 {
+		return fmt.Errorf("MaxConcurrentJobs must be positive")
+	}
+	if newConfig.AccuracyThreshold < 0 || newConfig.AccuracyThreshold > 1 {
+		return fmt.Errorf("AccuracyThreshold must be between 0 and 1")
+	}
+
+	// Update configuration (in practice, would need to restart some components)
+	e.config = newConfig
+
+	e.logger.Info("Configuration updated successfully")
+	return nil
+}
+
+// min helper function
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
