@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/auth/migrations"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/migrations"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/golang-jwt/jwt/v5"

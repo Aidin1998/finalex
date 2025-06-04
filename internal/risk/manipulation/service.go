@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	aml "github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/database"
+	aml "github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/gin-gonic/gin"
 

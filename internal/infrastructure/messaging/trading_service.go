@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	ws "github.com/Aidin1998/pincex_unified/internal/ws"
+	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"

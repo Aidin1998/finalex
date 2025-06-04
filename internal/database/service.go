@@ -32,28 +32,6 @@ type Config struct {
 	Pool     PoolConfig     `json:"pool"`
 }
 
-// DatabaseConfig represents database configuration
-type DatabaseConfig struct {
-	Driver          string        `json:"driver"`
-	Host            string        `json:"host"`
-	Port            int           `json:"port"`
-	Username        string        `json:"username"`
-	Password        string        `json:"password"`
-	Database        string        `json:"database"`
-	SSLMode         string        `json:"ssl_mode"`
-	MaxConnections  int           `json:"max_connections"`
-	MaxIdleConns    int           `json:"max_idle_conns"`
-	ConnMaxLifetime time.Duration `json:"conn_max_lifetime"`
-	ConnMaxIdleTime time.Duration `json:"conn_max_idle_time"`
-}
-
-// CacheConfig represents in-memory cache configuration
-type CacheConfig struct {
-	DefaultExpiration time.Duration `json:"default_expiration"`
-	CleanupInterval   time.Duration `json:"cleanup_interval"`
-	MaxItems          int           `json:"max_items"`
-}
-
 // PoolConfig represents connection pool configuration
 type PoolConfig struct {
 	MaxOpenConns    int           `json:"max_open_conns"`
@@ -82,17 +60,6 @@ type CacheEntry struct {
 	LastAccess  time.Time   `json:"last_access"`
 }
 
-// QueryResult represents a database query result
-type QueryResult struct {
-	Data         interface{}   `json:"data"`
-	RowsAffected int64         `json:"rows_affected"`
-	Duration     time.Duration `json:"duration"`
-	Query        string        `json:"query"`
-	Success      bool          `json:"success"`
-	Error        string        `json:"error"`
-	Timestamp    time.Time     `json:"timestamp"`
-}
-
 // TransactionStats represents transaction statistics
 type TransactionStats struct {
 	StartTime    time.Time     `json:"start_time"`
@@ -111,13 +78,11 @@ func NewService(logger *zap.Logger, db *gorm.DB) (Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection is required")
 	}
-
 	// Default configuration
 	config := &Config{
 		Cache: CacheConfig{
-			DefaultExpiration: 5 * time.Minute,
-			CleanupInterval:   10 * time.Minute,
-			MaxItems:          10000,
+			Enabled:  true,
+			Strategy: "memory",
 		},
 		Pool: PoolConfig{
 			MaxOpenConns:    100,
@@ -148,7 +113,7 @@ func NewService(logger *zap.Logger, db *gorm.DB) (Service, error) {
 
 // cacheCleanupWorker periodically cleans expired cache entries
 func (s *service) cacheCleanupWorker() {
-	ticker := time.NewTicker(s.config.Cache.CleanupInterval)
+	ticker := time.NewTicker(10 * time.Minute) // Fixed cleanup interval
 	defer ticker.Stop()
 
 	for {
@@ -195,14 +160,12 @@ func (s *service) ExecuteQuery(ctx context.Context, query string, args ...interf
 	}
 
 	s.metrics.QueriesExecuted++
-
 	queryResult := &QueryResult{
-		Data:         result,
-		RowsAffected: tx.RowsAffected,
-		Duration:     time.Since(start),
-		Query:        query,
-		Success:      true,
-		Timestamp:    time.Now(),
+		Data:          result,
+		Query:         query,
+		Args:          args,
+		RowsAffected:  tx.RowsAffected,
+		ExecutionTime: time.Since(start),
 	}
 
 	return queryResult, nil

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
+	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"

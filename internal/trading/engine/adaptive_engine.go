@@ -14,16 +14,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/redis"
+	"github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
+	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
-	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -345,7 +345,7 @@ func NewAdaptiveMatchingEngine(
 		var err error
 		ame.asyncRiskService, err = aml.NewAsyncRiskService(
 			riskService,
-			redisClient.GetClient(),
+			redisClient,
 			logger,
 			asyncConfig,
 		)

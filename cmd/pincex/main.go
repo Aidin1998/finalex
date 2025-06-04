@@ -30,23 +30,23 @@ import (
 
 	_ "github.com/Aidin1998/pincex_unified/docs" // Swagger docs
 
-	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/config"
+	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
-	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
+	"github.com/Aidin1998/pincex_unified/internal/infrastructure/config"
+	"github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
+	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketfeeds"
+	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
 	"github.com/Aidin1998/pincex_unified/internal/userauth"
-	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
-	"github.com/Aidin1998/pincex_unified/internal/server"
-	"github.com/Aidin1998/pincex_unified/internal/settlement"
-	"github.com/Aidin1998/pincex_unified/internal/transaction"
+	"github.com/Aidin1998/pincex_unified/internal/accounts/transaction"
+	"github.com/Aidin1998/pincex_unified/internal/infrastructure/server"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
+	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 )
 
 // --- STUB KYC PROVIDER ---

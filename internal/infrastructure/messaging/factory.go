@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	ws "github.com/Aidin1998/pincex_unified/internal/ws"
+	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
 	"go.uber.org/zap"
 )
 
