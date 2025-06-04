@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
 	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/trading/consensus"
 	"github.com/Aidin1998/pincex_unified/internal/trading/consistency"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"

@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 	"github.com/shopspring/decimal"

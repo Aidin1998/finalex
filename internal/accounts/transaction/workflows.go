@@ -8,8 +8,8 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/wallet"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"

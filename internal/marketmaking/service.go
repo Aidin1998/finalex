@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shopspring/decimal"
-	"go.uber.org/zap"
-	"gorm.io/gorm"
 	"github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics"
 	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketdata"
 	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketmaker"
+	"github.com/shopspring/decimal"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // Implementation of the consolidated market making service

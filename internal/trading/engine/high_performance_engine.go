@@ -17,12 +17,12 @@ import (
 	"go.uber.org/zap"
 
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
-	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
 	persistence "github.com/Aidin1998/pincex_unified/internal/trading/persistence"
+	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 	ws "github.com/Aidin1998/pincex_unified/internal/ws"
 )
