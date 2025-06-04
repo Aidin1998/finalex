@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
 
@@ -18,10 +18,9 @@ import (
 // ensuring coordinated response to system stress while preserving critical flows
 type CrossServiceCoordinator struct {
 	logger *zap.Logger
-
 	// Kafka infrastructure
-	producer sarama.SyncProducer
-	consumer sarama.ConsumerGroup
+	writer *kafka.Writer
+	reader *kafka.Reader
 
 	// Service registration and health tracking
 	services   map[string]*ServiceState
@@ -139,9 +138,6 @@ type SignalHandler interface {
 	HandleSignal(ctx context.Context, signal *BackpressureSignal) error
 }
 
-// CoordinatorConfig configures the cross-service coordinator
-// [REMOVED] type CoordinatorConfig struct { ... }
-
 // CoordinatorMetrics tracks cross-service coordination metrics
 type CoordinatorMetrics struct {
 	// Signal metrics
@@ -205,33 +201,29 @@ func NewCrossServiceCoordinator(
 	if config == nil {
 		config = DefaultCoordinatorConfig()
 	}
-
-	// Create Kafka producer
-	producerConfig := sarama.NewConfig()
-	producerConfig.Producer.RequiredAcks = sarama.WaitForAll
-	producerConfig.Producer.Retry.Max = 3
-	producerConfig.Producer.Return.Successes = true
-
-	producer, err := sarama.NewSyncProducer(config.KafkaBrokers, producerConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	// Create Kafka writer (producer)
+	writer := &kafka.Writer{
+		Addr:         kafka.TCP(config.KafkaBrokers...),
+		Topic:        config.BackpressureTopic,
+		Balancer:     &kafka.LeastBytes{},
+		RequiredAcks: kafka.RequireAll,
+		MaxAttempts:  3,
+		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  10 * time.Second,
 	}
 
-	// Create Kafka consumer
-	consumerConfig := sarama.NewConfig()
-	consumerConfig.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
-	consumerConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
-
-	consumer, err := sarama.NewConsumerGroup(config.KafkaBrokers, config.ConsumerGroup, consumerConfig)
-	if err != nil {
-		producer.Close()
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
+	// Create Kafka reader (consumer)
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  config.KafkaBrokers,
+		Topic:    config.BackpressureTopic,
+		GroupID:  config.ConsumerGroup,
+		MaxBytes: 10e6, // 10MB
+	})
 
 	coordinator := &CrossServiceCoordinator{
 		logger:   logger,
-		producer: producer,
-		consumer: consumer,
+		writer:   writer,
+		reader:   reader,
 		services: make(map[string]*ServiceState),
 		config:   config,
 		shutdown: make(chan struct{}),
@@ -323,9 +315,8 @@ func (csc *CrossServiceCoordinator) UpdateServiceHealth(serviceID string, health
 	service.Healthy = health.Healthy
 	service.LastHealthCheck = time.Now()
 	service.mu.Unlock()
-
 	// Check if service needs backpressure
-	csc.evaluateServiceBackpressure(service)
+	csc.evaluateServiceBackpressure(context.Background(), service)
 }
 
 // ServiceHealth represents service health metrics
@@ -338,7 +329,7 @@ type ServiceHealth struct {
 }
 
 // SendBackpressureSignal sends a backpressure signal to other services
-func (csc *CrossServiceCoordinator) SendBackpressureSignal(signal *BackpressureSignal) error {
+func (csc *CrossServiceCoordinator) SendBackpressureSignal(ctx context.Context, signal *BackpressureSignal) error {
 	signal.Timestamp = time.Now()
 	if signal.ExpiresAt.IsZero() {
 		signal.ExpiresAt = time.Now().Add(csc.config.SignalTimeout)
@@ -349,19 +340,17 @@ func (csc *CrossServiceCoordinator) SendBackpressureSignal(signal *BackpressureS
 	if err != nil {
 		return fmt.Errorf("failed to marshal backpressure signal: %w", err)
 	}
-
 	// Send to Kafka
-	message := &sarama.ProducerMessage{
-		Topic: csc.config.BackpressureTopic,
-		Key:   sarama.StringEncoder(signal.SourceService),
-		Value: sarama.ByteEncoder(signalData),
-		Headers: []sarama.RecordHeader{
-			{Key: []byte("signal_type"), Value: []byte(fmt.Sprintf("%d", signal.SignalType))},
-			{Key: []byte("severity"), Value: []byte(fmt.Sprintf("%d", signal.Severity))},
+	message := kafka.Message{
+		Key:   []byte(signal.SourceService),
+		Value: signalData,
+		Headers: []kafka.Header{
+			{Key: "signal_type", Value: []byte(fmt.Sprintf("%d", signal.SignalType))},
+			{Key: "severity", Value: []byte(fmt.Sprintf("%d", signal.Severity))},
 		},
 	}
 
-	_, _, err = csc.producer.SendMessage(message)
+	err = csc.writer.WriteMessages(ctx, message)
 	if err != nil {
 		atomic.AddInt64(&csc.metrics.SignalErrors, 1)
 		return fmt.Errorf("failed to send backpressure signal: %w", err)
@@ -382,8 +371,6 @@ func (csc *CrossServiceCoordinator) SendBackpressureSignal(signal *BackpressureS
 func (csc *CrossServiceCoordinator) signalConsumer(ctx context.Context) {
 	defer csc.workers.Done()
 
-	handler := &backpressureConsumerHandler{coordinator: csc}
-
 	csc.logger.Info("Backpressure signal consumer started")
 
 	for {
@@ -394,62 +381,42 @@ func (csc *CrossServiceCoordinator) signalConsumer(ctx context.Context) {
 			csc.logger.Info("Backpressure signal consumer shutting down")
 			return
 		default:
-			err := csc.consumer.Consume(ctx, []string{csc.config.BackpressureTopic}, handler)
+			message, err := csc.reader.ReadMessage(ctx)
 			if err != nil {
-				csc.logger.Error("Consumer error", zap.Error(err))
-				time.Sleep(time.Second) // Brief pause before retry
-			}
-		}
-	}
-}
-
-// backpressureConsumerHandler handles Kafka messages
-type backpressureConsumerHandler struct {
-	coordinator *CrossServiceCoordinator
-}
-
-func (h *backpressureConsumerHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
-func (h *backpressureConsumerHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
-
-func (h *backpressureConsumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for {
-		select {
-		case message := <-claim.Messages():
-			if message == nil {
-				return nil
-			}
-
-			// Parse backpressure signal
-			var signal BackpressureSignal
-			if err := json.Unmarshal(message.Value, &signal); err != nil {
-				h.coordinator.logger.Error("Failed to unmarshal backpressure signal", zap.Error(err))
-				session.MarkMessage(message, "")
+				if err != context.Canceled {
+					csc.logger.Error("Consumer error", zap.Error(err))
+					time.Sleep(time.Second) // Brief pause before retry
+				}
 				continue
 			}
 
-			// Process signal
-			if err := h.coordinator.processBackpressureSignal(session.Context(), &signal); err != nil {
-				h.coordinator.logger.Error("Failed to process backpressure signal", zap.Error(err))
+			if err := csc.processBackpressureMessage(ctx, &message); err != nil {
+				csc.logger.Error("Failed to process backpressure message", zap.Error(err))
 			}
-
-			atomic.AddInt64(&h.coordinator.metrics.SignalsReceived, 1)
-			session.MarkMessage(message, "")
-
-		case <-session.Context().Done():
-			return nil
 		}
 	}
 }
 
-// processBackpressureSignal processes a received backpressure signal
-func (csc *CrossServiceCoordinator) processBackpressureSignal(ctx context.Context, signal *BackpressureSignal) error {
-	// Check if signal has expired
-	if time.Now().After(signal.ExpiresAt) {
-		return nil // Ignore expired signals
+// processBackpressureMessage processes a single backpressure message
+func (csc *CrossServiceCoordinator) processBackpressureMessage(ctx context.Context, message *kafka.Message) error {
+	// Parse backpressure signal
+	var signal BackpressureSignal
+	if err := json.Unmarshal(message.Value, &signal); err != nil {
+		csc.logger.Error("Failed to unmarshal backpressure signal", zap.Error(err))
+		return err
 	}
 
-	// Route signal to appropriate handler
-	return csc.signalProcessor.ProcessSignal(ctx, signal)
+	atomic.AddInt64(&csc.metrics.SignalsReceived, 1)
+
+	// Check if signal has expired
+	if time.Now().After(signal.ExpiresAt) {
+		csc.logger.Debug("Ignoring expired backpressure signal",
+			zap.String("signal_id", signal.SignalID),
+			zap.Time("expired_at", signal.ExpiresAt))
+		return nil
+	}
+	// Process signal through appropriate handler
+	return csc.signalProcessor.ProcessSignal(ctx, &signal)
 }
 
 // ProcessSignal processes a backpressure signal
@@ -510,7 +477,7 @@ func (h *LoadSheddingHandler) HandleSignal(ctx context.Context, signal *Backpres
 			ExpiresAt:     time.Now().Add(h.coordinator.config.SignalTimeout),
 		}
 
-		h.coordinator.SendBackpressureSignal(loadSheddingSignal)
+		h.coordinator.SendBackpressureSignal(ctx, loadSheddingSignal)
 	}
 
 	return nil
@@ -579,7 +546,7 @@ func (h *EmergencyStopHandler) HandleSignal(ctx context.Context, signal *Backpre
 				ExpiresAt:     time.Now().Add(time.Hour), // Long expiry for emergency
 			}
 
-			h.coordinator.SendBackpressureSignal(emergencySignal)
+			h.coordinator.SendBackpressureSignal(ctx, emergencySignal)
 		}
 	}
 	h.coordinator.servicesMu.RUnlock()
@@ -666,7 +633,7 @@ func (csc *CrossServiceCoordinator) backpressureEngine(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			csc.evaluateGlobalBackpressure()
+			csc.evaluateGlobalBackpressure(context.Background())
 
 		case <-csc.shutdown:
 			csc.logger.Info("Backpressure engine shutting down")
@@ -712,7 +679,7 @@ func (csc *CrossServiceCoordinator) checkServiceHealth() {
 }
 
 // evaluateServiceBackpressure evaluates if a service needs backpressure
-func (csc *CrossServiceCoordinator) evaluateServiceBackpressure(service *ServiceState) {
+func (csc *CrossServiceCoordinator) evaluateServiceBackpressure(ctx context.Context, service *ServiceState) {
 	service.mu.RLock()
 	cpuUsage := service.CPUUsage
 	memoryUsage := service.MemoryUsage
@@ -733,7 +700,6 @@ func (csc *CrossServiceCoordinator) evaluateServiceBackpressure(service *Service
 		} else if cpuUsage > 80 || memoryUsage > 80 || errorRate > 5 {
 			severity = 2
 		}
-
 		signal := &BackpressureSignal{
 			SignalID:      fmt.Sprintf("service-stress-%s-%d", serviceID, time.Now().UnixNano()),
 			SourceService: serviceID,
@@ -742,12 +708,12 @@ func (csc *CrossServiceCoordinator) evaluateServiceBackpressure(service *Service
 			Reason:        fmt.Sprintf("Service stress: CPU %.1f%%, Memory %.1f%%, Errors %.1f%%", cpuUsage, memoryUsage, errorRate),
 		}
 
-		csc.SendBackpressureSignal(signal)
+		csc.SendBackpressureSignal(ctx, signal)
 	}
 }
 
 // evaluateGlobalBackpressure evaluates global system backpressure
-func (csc *CrossServiceCoordinator) evaluateGlobalBackpressure() {
+func (csc *CrossServiceCoordinator) evaluateGlobalBackpressure(ctx context.Context) {
 	// Calculate global system load
 	var totalLoad float64
 	var serviceCount int
@@ -790,7 +756,7 @@ func (csc *CrossServiceCoordinator) evaluateGlobalBackpressure() {
 			Reason:        fmt.Sprintf("Global system load: %.1f%%", avgLoad),
 		}
 
-		csc.SendBackpressureSignal(signal)
+		csc.SendBackpressureSignal(ctx, signal)
 	}
 }
 
@@ -852,13 +818,12 @@ func (csc *CrossServiceCoordinator) Stop(ctx context.Context) error {
 		case <-ctx.Done():
 			csc.logger.Warn("Coordinator shutdown timed out")
 		}
-
 		// Close Kafka connections
-		if err := csc.consumer.Close(); err != nil {
-			csc.logger.Error("Failed to close Kafka consumer", zap.Error(err))
+		if err := csc.reader.Close(); err != nil {
+			csc.logger.Error("Failed to close Kafka reader", zap.Error(err))
 		}
-		if err := csc.producer.Close(); err != nil {
-			csc.logger.Error("Failed to close Kafka producer", zap.Error(err))
+		if err := csc.writer.Close(); err != nil {
+			csc.logger.Error("Failed to close Kafka writer", zap.Error(err))
 		}
 
 		csc.logger.Info("Cross-service backpressure coordinator stopped")

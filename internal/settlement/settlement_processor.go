@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/IBM/sarama" // Kafka client
+	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
 
@@ -34,7 +34,7 @@ const (
 
 // SettlementProcessor handles consuming, processing, and confirming settlements.
 type SettlementProcessor struct {
-	consumer      sarama.ConsumerGroup
+	reader        *kafka.Reader
 	confirmations chan<- SettlementConfirmation
 	logger        *zap.Logger
 }
@@ -49,67 +49,65 @@ type SettlementConfirmation struct {
 }
 
 // NewSettlementProcessor creates a new processor.
-func NewSettlementProcessor(brokers []string, groupID string, confirmations chan<- SettlementConfirmation, logger *zap.Logger) (*SettlementProcessor, error) {
-	config := sarama.NewConfig()
-	config.Consumer.Offsets.Initial = sarama.OffsetNewest
-	consumer, err := sarama.NewConsumerGroup(brokers, groupID, config)
-	if err != nil {
-		return nil, err
-	}
-	return &SettlementProcessor{consumer: consumer, confirmations: confirmations, logger: logger}, nil
+func NewSettlementProcessor(brokers []string, groupID string, topic string, confirmations chan<- SettlementConfirmation, logger *zap.Logger) (*SettlementProcessor, error) {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:     brokers,
+		GroupID:     groupID,
+		Topic:       topic,
+		StartOffset: kafka.LastOffset,
+	})
+	return &SettlementProcessor{reader: reader, confirmations: confirmations, logger: logger}, nil
 }
 
 // StartConsuming starts the processor loop.
-func (sp *SettlementProcessor) StartConsuming(ctx context.Context, topic string) error {
-	handler := &settlementConsumerGroupHandler{processor: sp}
+func (sp *SettlementProcessor) StartConsuming(ctx context.Context) error {
 	for {
-		if err := sp.consumer.Consume(ctx, []string{topic}, handler); err != nil {
+		msg, err := sp.reader.ReadMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			sp.logger.Error("settlement consume error", zap.Error(err))
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-}
-
-type settlementConsumerGroupHandler struct {
-	processor *SettlementProcessor
-}
-
-func (h *settlementConsumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error   { return nil }
-func (h *settlementConsumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
-func (h *settlementConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for msg := range claim.Messages() {
-		var sm SettlementMessage
-		if err := json.Unmarshal(msg.Value, &sm); err != nil {
-			h.processor.logger.Error("invalid settlement message", zap.Error(err))
-			sess.MarkMessage(msg, "")
 			continue
 		}
-		// Process settlement (idempotent)
-		status, receipt, err := h.processor.processSettlement(sm)
-		confirmation := SettlementConfirmation{
-			SettlementID: sm.SettlementID,
-			TradeID:      sm.TradeID,
-			Status:       status,
-			Receipt:      receipt,
-			ConfirmedAt:  time.Now(),
+
+		if err := sp.processMessage(msg); err != nil {
+			sp.logger.Error("failed to process settlement message", zap.Error(err))
 		}
-		if err != nil {
-			confirmation.Error = err.Error()
-			if sm.RetryCount < 5 {
-				// Retry with backoff
-				sm.RetryCount++
-				go h.processor.retrySettlement(sm)
-			} else {
-				// Send to dead letter queue (not implemented here)
-				h.processor.logger.Error("settlement failed, sending to DLQ", zap.String("settlement_id", sm.SettlementID))
-			}
-		} else {
-			sess.MarkMessage(msg, "")
-		}
-		h.processor.confirmations <- confirmation
 	}
+}
+
+// processMessage handles a single Kafka message
+func (sp *SettlementProcessor) processMessage(msg kafka.Message) error {
+	var sm SettlementMessage
+	if err := json.Unmarshal(msg.Value, &sm); err != nil {
+		sp.logger.Error("invalid settlement message", zap.Error(err))
+		return err
+	}
+
+	// Process settlement (idempotent)
+	status, receipt, err := sp.processSettlement(sm)
+	confirmation := SettlementConfirmation{
+		SettlementID: sm.SettlementID,
+		TradeID:      sm.TradeID,
+		Status:       status,
+		Receipt:      receipt,
+		ConfirmedAt:  time.Now(),
+	}
+
+	if err != nil {
+		confirmation.Error = err.Error()
+		if sm.RetryCount < 5 {
+			// Retry with backoff
+			sm.RetryCount++
+			go sp.retrySettlement(sm)
+		} else {
+			// Send to dead letter queue (not implemented here)
+			sp.logger.Error("settlement failed, sending to DLQ", zap.String("settlement_id", sm.SettlementID))
+		}
+	}
+
+	sp.confirmations <- confirmation
 	return nil
 }
 
@@ -134,4 +132,9 @@ func (sp *SettlementProcessor) retrySettlement(sm SettlementMessage) {
 	time.Sleep(backoff)
 	// TODO: Publish to Kafka again (not implemented here)
 	sp.logger.Warn("retrying settlement", zap.String("settlement_id", sm.SettlementID), zap.Int("retry", sm.RetryCount))
+}
+
+// Close closes the Kafka reader
+func (sp *SettlementProcessor) Close() error {
+	return sp.reader.Close()
 }

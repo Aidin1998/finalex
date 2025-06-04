@@ -426,9 +426,8 @@ func (m *BackpressureManager) TriggerEmergencyStop(reason string) {
 		m.logger.Error("Emergency stop triggered",
 			zap.String("reason", reason),
 			zap.Time("activation_time", m.emergencyMetrics.LastActivation))
-
 		// Notify cross-service coordinator
-		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
+		m.coordinator.SendBackpressureSignal(m.ctx, &BackpressureSignal{
 			SignalID:      fmt.Sprintf("emergency-stop-%d", time.Now().UnixNano()),
 			SourceService: "marketdata-backpressure",
 			SignalType:    SignalTypeEmergencyStop,
@@ -466,9 +465,8 @@ func (m *BackpressureManager) RecoverFromEmergency() error {
 			zap.Duration("emergency_duration", duration),
 			zap.Int("incoming_queue", incomingQueueLen),
 			zap.Int("processed_queue", processedQueueLen))
-
 		// Notify cross-service coordinator
-		m.coordinator.SendBackpressureSignal(&BackpressureSignal{
+		m.coordinator.SendBackpressureSignal(m.ctx, &BackpressureSignal{
 			SignalID:      fmt.Sprintf("recovery-%d", time.Now().UnixNano()),
 			SourceService: "marketdata-backpressure",
 			SignalType:    SignalTypeRecovery,

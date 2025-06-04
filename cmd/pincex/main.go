@@ -233,7 +233,7 @@ func main() {
 	kafkaGroupID := "settlement-group"         // TODO: load from config
 	kafkaTopic := "settlement-requests"        // TODO: load from config
 
-	settlementProcessor, err := settlement.NewSettlementProcessor(kafkaBrokers, kafkaGroupID, confirmationChan, zapLogger)
+	settlementProcessor, err := settlement.NewSettlementProcessor(kafkaBrokers, kafkaGroupID, kafkaTopic, confirmationChan, zapLogger)
 	if err != nil {
 		zapLogger.Fatal("Failed to create settlement processor", zap.Error(err))
 	}
@@ -241,7 +241,7 @@ func main() {
 	// Start the settlement processor in a goroutine
 	go func() {
 		ctx := context.Background()
-		if err := settlementProcessor.StartConsuming(ctx, kafkaTopic); err != nil {
+		if err := settlementProcessor.StartConsuming(ctx); err != nil {
 			zapLogger.Error("Settlement processor stopped", zap.Error(err))
 		}
 	}()

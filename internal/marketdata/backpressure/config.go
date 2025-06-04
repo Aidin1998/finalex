@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // BackpressureConfig is the comprehensive configuration for the backpressure system
