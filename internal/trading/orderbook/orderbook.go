@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
