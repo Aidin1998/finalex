@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/kyc"
+	"github.com/Aidin1998/pincex_unified/internal/accounts"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
 	"github.com/google/uuid"
@@ -29,20 +28,20 @@ type FiatService interface {
 
 // Service implements FiatService
 type Service struct {
-	logger        *zap.Logger
-	db            *gorm.DB
-	bookkeeperSvc bookkeeper.BookkeeperService
-	kycService    *kyc.KYCService // Compliance hooks
+	logger     *zap.Logger
+	db         *gorm.DB
+	bookkeeper accounts.Service
+	kycService kyc.Service // Compliance hooks
 }
 
 // NewService creates a new FiatService
-func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, kycService *kyc.KYCService) (FiatService, error) {
+func NewService(logger *zap.Logger, db *gorm.DB, bookkeeper accounts.Service, kycService kyc.Service) (FiatService, error) {
 	// Create service
 	svc := &Service{
-		logger:        logger,
-		db:            db,
-		bookkeeperSvc: bookkeeperSvc,
-		kycService:    kycService,
+		logger:     logger,
+		db:         db,
+		bookkeeper: bookkeeper,
+		kycService: kycService,
 	}
 
 	return svc, nil
@@ -78,10 +77,11 @@ func (s *Service) InitiateDeposit(ctx context.Context, userID string, currency s
 	}
 
 	// Create transaction
-	transaction, err := s.bookkeeperSvc.CreateTransaction(ctx, userID, "deposit", amount, currency, provider, fmt.Sprintf("Fiat deposit via %s", provider))
+	transaction, err := s.bookkeeper.CreateTransaction(ctx, userID, "deposit", amount, currency, provider, fmt.Sprintf("Fiat deposit via %s", provider))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
+
 	// Compliance: Monitor deposit
 	if s.kycService != nil {
 		uid, err := uuid.Parse(userID)
@@ -92,10 +92,11 @@ func (s *Service) InitiateDeposit(ctx context.Context, userID string, currency s
 			}
 		}
 	}
+
 	// In a real implementation, this would initiate a deposit with the provider
 	s.logger.Info("Initiating fiat deposit", zap.String("userID", userID), zap.String("currency", currency), zap.Float64("amount", amount), zap.String("provider", provider))
 
-	return transaction, nil
+	return transaction.(*models.Transaction), nil
 }
 
 // InitiateWithdrawal initiates a fiat withdrawal
@@ -116,10 +117,11 @@ func (s *Service) InitiateWithdrawal(ctx context.Context, userID string, currenc
 	}
 
 	// Create transaction
-	transaction, err := s.bookkeeperSvc.CreateTransaction(ctx, userID, "withdrawal", amount, currency, "bank", "Fiat withdrawal to bank account")
+	transaction, err := s.bookkeeper.CreateTransaction(ctx, userID, "withdrawal", amount, currency, "bank", "Fiat withdrawal to bank account")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
+
 	// Compliance: Monitor withdrawal
 	if s.kycService != nil {
 		uid, err := uuid.Parse(userID)
@@ -130,10 +132,11 @@ func (s *Service) InitiateWithdrawal(ctx context.Context, userID string, currenc
 			}
 		}
 	}
+
 	// Lock funds
-	if err := s.bookkeeperSvc.LockFunds(ctx, userID, currency, amount); err != nil {
+	if err := s.bookkeeper.LockFunds(ctx, userID, currency, amount); err != nil {
 		// Fail transaction
-		if failErr := s.bookkeeperSvc.FailTransaction(ctx, transaction.ID.String()); failErr != nil {
+		if failErr := s.bookkeeper.FailTransaction(ctx, transaction.(*models.Transaction).ID.String()); failErr != nil {
 			s.logger.Error("Failed to fail transaction", zap.Error(failErr))
 		}
 		return nil, fmt.Errorf("failed to lock funds: %w", err)
@@ -142,7 +145,7 @@ func (s *Service) InitiateWithdrawal(ctx context.Context, userID string, currenc
 	// In a real implementation, this would initiate a withdrawal with the bank
 	s.logger.Info("Initiating fiat withdrawal", zap.String("userID", userID), zap.String("currency", currency), zap.Float64("amount", amount))
 
-	return transaction, nil
+	return transaction.(*models.Transaction), nil
 }
 
 // GetDeposits gets fiat deposits for a user
@@ -194,7 +197,7 @@ func (s *Service) GetWithdrawals(ctx context.Context, userID string, currency st
 // CompleteDeposit completes a fiat deposit
 func (s *Service) CompleteDeposit(ctx context.Context, transactionID string) error {
 	// Complete transaction
-	if err := s.bookkeeperSvc.CompleteTransaction(ctx, transactionID); err != nil {
+	if err := s.bookkeeper.CompleteTransaction(ctx, transactionID); err != nil {
 		return fmt.Errorf("failed to complete transaction: %w", err)
 	}
 
@@ -211,6 +214,7 @@ func (s *Service) CompleteWithdrawal(ctx context.Context, transactionID string) 
 		}
 		return fmt.Errorf("failed to find transaction: %w", err)
 	}
+
 	// Compliance: Monitor withdrawal completion
 	if s.kycService != nil {
 		_, amlErr := s.kycService.MonitorTransaction(ctx, transaction.UserID, "withdrawal_complete", "fiat", transaction.Amount)
@@ -218,6 +222,7 @@ func (s *Service) CompleteWithdrawal(ctx context.Context, transactionID string) 
 			s.logger.Warn("AML alert on withdrawal completion", zap.String("userID", transaction.UserID.String()), zap.Error(amlErr))
 		}
 	}
+
 	// Check if transaction is a withdrawal
 	if transaction.Type != "withdrawal" {
 		return fmt.Errorf("transaction is not a withdrawal")
@@ -229,12 +234,12 @@ func (s *Service) CompleteWithdrawal(ctx context.Context, transactionID string) 
 	}
 
 	// Complete transaction
-	if err := s.bookkeeperSvc.CompleteTransaction(ctx, transactionID); err != nil {
+	if err := s.bookkeeper.CompleteTransaction(ctx, transactionID); err != nil {
 		return fmt.Errorf("failed to complete transaction: %w", err)
 	}
 
 	// Unlock and deduct funds
-	if err := s.bookkeeperSvc.UnlockFunds(ctx, transaction.UserID.String(), transaction.Currency, transaction.Amount); err != nil {
+	if err := s.bookkeeper.UnlockFunds(ctx, transaction.UserID.String(), transaction.Currency, transaction.Amount); err != nil {
 		return fmt.Errorf("failed to unlock funds: %w", err)
 	}
 
@@ -263,12 +268,12 @@ func (s *Service) FailWithdrawal(ctx context.Context, transactionID string) erro
 	}
 
 	// Fail transaction
-	if err := s.bookkeeperSvc.FailTransaction(ctx, transactionID); err != nil {
+	if err := s.bookkeeper.FailTransaction(ctx, transactionID); err != nil {
 		return fmt.Errorf("failed to fail transaction: %w", err)
 	}
 
 	// Unlock funds
-	if err := s.bookkeeperSvc.UnlockFunds(ctx, transaction.UserID.String(), transaction.Currency, transaction.Amount); err != nil {
+	if err := s.bookkeeper.UnlockFunds(ctx, transaction.UserID.String(), transaction.Currency, transaction.Amount); err != nil {
 		return fmt.Errorf("failed to unlock funds: %w", err)
 	}
 
@@ -377,39 +382,6 @@ func validateBankDetails(details map[string]interface{}) error {
 		}
 	} else {
 		return errors.New("bank_name must be a string")
-	}
-
-	// Validate optional IBAN if provided
-	if iban, exists := details["iban"]; exists {
-		if ibanStr, ok := iban.(string); ok && ibanStr != "" {
-			if err := validation.ValidateIBAN(ibanStr); err != nil {
-				return fmt.Errorf("invalid IBAN: %v", err)
-			}
-		}
-	}
-
-	// Validate optional BIC if provided
-	if bic, exists := details["bic"]; exists {
-		if bicStr, ok := bic.(string); ok && bicStr != "" {
-			if err := validation.ValidateBIC(bicStr); err != nil {
-				return fmt.Errorf("invalid BIC: %v", err)
-			}
-		}
-	}
-
-	// Validate optional beneficiary name
-	if beneficiary, exists := details["beneficiary_name"]; exists {
-		if beneficiaryStr, ok := beneficiary.(string); ok {
-			sanitized := validation.SanitizeInput(beneficiaryStr)
-			if len(sanitized) == 0 || len(sanitized) > 100 {
-				return errors.New("beneficiary_name must be between 1 and 100 characters")
-			}
-
-			// Check for malicious content
-			if validation.ContainsSQLInjection(beneficiaryStr) || validation.ContainsXSS(beneficiaryStr) {
-				return errors.New("beneficiary_name contains invalid characters")
-			}
-		}
 	}
 
 	return nil

@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/google/uuid"

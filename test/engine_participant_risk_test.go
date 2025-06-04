@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/migration/participants"
+	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"	"github.com/Aidin1998/pincex_unified/internal/core/trading/engine"
+	"github.com/Aidin1998/pincex_unified/internal/core/trading/migration/participants"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

@@ -3,12 +3,10 @@ package repository
 import (
 	"context"
 	"fmt"
-
-	"github.com/google/uuid"
-
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

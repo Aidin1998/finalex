@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/database"
-	"github.com/Aidin1998/pincex_unified/internal/fiat"
+	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"	"github.com/Aidin1998/pincex_unified/internal/core/database"
+	"github.com/Aidin1998/pincex_unified/internal/core/fiat"
 	"github.com/Aidin1998/pincex_unified/internal/messaging"
 	"github.com/Aidin1998/pincex_unified/internal/monitoring"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"

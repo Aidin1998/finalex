@@ -16,8 +16,8 @@ import (
 
 	"go.uber.org/zap"
 
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
-	settlement "github.com/Aidin1998/pincex_unified/internal/settlement"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
+	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"

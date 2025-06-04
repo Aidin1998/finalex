@@ -27,7 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	settlement "github.com/Aidin1998/pincex_unified/internal/settlement"
+	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"

@@ -12,8 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
@@ -26,7 +25,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"github.com/Aidin1998/pincex_unified/internal/settlement"
+	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 )
 
 // AdaptiveTradingService extends TradingService with adaptive engine capabilities

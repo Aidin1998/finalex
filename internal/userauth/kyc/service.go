@@ -6,53 +6,18 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
-// Service provides KYC/AML operations and integration with providers
-type Service interface {
-	// Core service methods
-	Start() error
-	Stop() error
+// KYCService provides KYC/AML operations and integration with providers
+// This is a stub for compliance logic, monitoring, and reporting
 
-	// KYC methods
-	StartKYCRequest(ctx context.Context, userID uuid.UUID, data *KYCData) (string, error)
-	GetKYCStatus(ctx context.Context, userID uuid.UUID) (string, error)
-	MonitorTransactions(ctx context.Context, userID uuid.UUID, txType, details string) error
-	MonitorTransaction(ctx context.Context, userID uuid.UUID, txType, details string, amount float64) (*models.AMLAlert, error)
-	ReportRegulatory(ctx context.Context, userID uuid.UUID) error
-	AuditTrail(ctx context.Context, userID uuid.UUID, event, details string) error
-	GenerateRegulatoryReport(ctx context.Context, reportType string, since time.Time) (string, error)
-}
-
-// KYCService implements Service interface
 type KYCService struct {
 	provider KYCProvider
-	logger   *zap.Logger
-	db       *gorm.DB
+	// Add DB, logger, and monitoring fields as needed
 }
 
-// NewService creates a new KYC service
-func NewService(logger *zap.Logger, db *gorm.DB) Service {
-	// For now, use a stub provider - this can be enhanced later
-	return &KYCService{
-		provider: &stubKYCProvider{},
-		logger:   logger,
-		db:       db,
-	}
-}
-
-// Start starts the KYC service
-func (s *KYCService) Start() error {
-	s.logger.Info("KYC service started")
-	return nil
-}
-
-// Stop stops the KYC service
-func (s *KYCService) Stop() error {
-	s.logger.Info("KYC service stopped")
-	return nil
+func NewKYCService(provider KYCProvider) *KYCService {
+	return &KYCService{provider: provider}
 }
 
 // StartKYCRequest creates a new KYC request and calls the provider

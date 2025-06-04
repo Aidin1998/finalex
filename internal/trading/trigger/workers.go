@@ -12,8 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/analytics/metrics"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
 

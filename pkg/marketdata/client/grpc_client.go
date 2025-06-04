@@ -9,7 +9,7 @@ import (
 	"time"
 
 	pb "github.com/Aidin1998/pincex_unified/api/marketdata"
-	"github.com/Aidin1998/pincex_unified/internal/marketdata/distribution"
+	"github.com/Aidin1998/pincex_unified/internal/core/marketmaking/marketdata/distribution"
 	"google.golang.org/grpc"
 )
 

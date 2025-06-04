@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"	"github.com/Aidin1998/pincex_unified/internal/core/trading"
+	"github.com/Aidin1998/pincex_unified/internal/core/trading/engine"
+	"github.com/Aidin1998/pincex_unified/internal/core/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"

@@ -38,7 +38,6 @@ import (
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
 	"github.com/Aidin1998/pincex_unified/internal/userauth"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/joho/godotenv"
@@ -51,15 +50,11 @@ import (
 )
 
 // --- STUB KYC PROVIDER ---
+// Note: This is deprecated as the KYC provider is now defined in userauth/kyc/types.go
+// Keeping this temporarily for reference during refactoring
 type stubKYCProvider struct{}
 
-func (s *stubKYCProvider) StartVerification(userID string, data *kyc.KYCData) (string, error) {
-	return "stub-session", nil
-}
-func (s *stubKYCProvider) GetStatus(sessionID string) (kyc.KYCStatus, error) {
-	return kyc.KYCStatusPending, nil
-}
-func (s *stubKYCProvider) WebhookHandler(w http.ResponseWriter, r *http.Request) {}
+// Using stubKYCProvider from userauth/kyc/types.go instead
 
 // --- STUB PUBSUB AND MARKET DATA DISTRIBUTOR ---
 type stubPubSub struct{}

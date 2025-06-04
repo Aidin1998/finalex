@@ -3,28 +3,67 @@ package wallet
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/wallet/blockchain"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
+// KeyManager interface for key management operations
+type KeyManager interface {
+	GenerateKey(keyID string) (string, error)
+	GetPublicKey(keyID string) ([]byte, error)
+	Sign(keyID string, data []byte) ([]byte, error)
+	DeleteKey(keyID string) error
+}
+
+// CustodyProvider interface for custody operations
+type CustodyProvider interface {
+	CreateWallet(asset string) (string, error)
+	GetBalance(walletID string) (decimal.Decimal, error)
+	Transfer(from, to string, amount decimal.Decimal) error
+	CreateWithdrawal(from, to string, amount decimal.Decimal) (string, error)
+}
+
+// WalletService represents the consolidated wallet service
 type WalletService struct {
 	keyManager      KeyManager
 	custodyProvider CustodyProvider
-	db              *gorm.DB    // Add DB for persistence
-	logger          *zap.Logger // Add logger for audit
+	blockchainMgr   *blockchain.BlockchainManager
+	db              *gorm.DB
+	logger          *zap.Logger
+	mu              sync.RWMutex
+	running         bool
 }
 
-func NewWalletService(km KeyManager, cp CustodyProvider, db *gorm.DB, logger *zap.Logger) *WalletService {
-	return &WalletService{
+// NewWalletService creates a new wallet service
+func NewWalletService(km KeyManager, cp CustodyProvider, db *gorm.DB, logger *zap.Logger) (*WalletService, error) {
+	// Create blockchain manager
+	blockchainMgr, err := blockchain.NewBlockchainManager(logger, db, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blockchain manager: %w", err)
+	}
+
+	service := &WalletService{
 		keyManager:      km,
 		custodyProvider: cp,
+		blockchainMgr:   blockchainMgr,
 		db:              db,
 		logger:          logger,
 	}
+
+	// Auto-migrate wallet-related tables
+	if err := db.AutoMigrate(&models.Wallet{}, &models.WalletAudit{}); err != nil {
+		return nil, fmt.Errorf("failed to migrate wallet tables: %w", err)
+	}
+
+	return service, nil
 }
 
 // CreateWallet creates a new wallet (hot/warm/cold)
@@ -73,15 +112,15 @@ func (s *WalletService) CreateWallet(ctx context.Context, userID uuid.UUID, asse
 }
 
 // GetBalance returns the balance for a wallet
-func (s *WalletService) GetBalance(ctx context.Context, walletID string) (float64, error) {
+func (s *WalletService) GetBalance(ctx context.Context, walletID string) (decimal.Decimal, error) {
 	var wallet models.Wallet
 	if err := s.db.WithContext(ctx).First(&wallet, "id = ?", walletID).Error; err != nil {
-		return 0, err
+		return decimal.Zero, err
 	}
 	// Query blockchain or custody provider for actual balance
 	onChain, err := s.custodyProvider.GetBalance(wallet.Address)
 	if err != nil {
-		return 0, err
+		return decimal.Zero, err
 	}
 	return onChain, nil
 }
@@ -106,6 +145,7 @@ func (s *WalletService) CreateWithdrawalRequest(ctx context.Context, userID uuid
 			return nil, errors.New("withdrawal address not whitelisted")
 		}
 	}
+
 	wr := &models.WithdrawalRequest{
 		ID:        uuid.New(),
 		UserID:    userID,
@@ -167,7 +207,9 @@ func (s *WalletService) BroadcastWithdrawal(ctx context.Context, requestID uuid.
 		return "", err
 	}
 	// Call custody provider to create withdrawal using wallet address as key
-	txid, err := s.custodyProvider.CreateWithdrawal(wallet.Address, wr.ToAddress, wr.Amount)
+	// Convert float64 to decimal.Decimal for the custody provider
+	decimalAmount := decimal.NewFromFloat(wr.Amount)
+	txid, err := s.custodyProvider.CreateWithdrawal(wallet.Address, wr.ToAddress, decimalAmount)
 	if err != nil {
 		return "", err
 	}
@@ -190,8 +232,13 @@ func (s *WalletService) ReconcileBalances(ctx context.Context) error {
 			s.logger.Error("Failed to get on-chain balance", zap.String("wallet_id", w.ID.String()), zap.Error(err))
 			continue
 		}
-		if w.Balance != onChain {
-			s.logger.Warn("Balance mismatch", zap.String("wallet_id", w.ID.String()), zap.Float64("db", w.Balance), zap.Float64("on_chain", onChain))
+		// Convert decimal to float64 for comparison with the model's float64 field
+		onChainFloat, _ := onChain.Float64()
+		if w.Balance != onChainFloat {
+			s.logger.Warn("Balance mismatch",
+				zap.String("wallet_id", w.ID.String()),
+				zap.Float64("db", w.Balance),
+				zap.Float64("on_chain", onChainFloat))
 			// Alert/raise incident here
 		}
 	}
@@ -212,9 +259,13 @@ func (s *WalletService) LogAudit(walletID, event, actor, details string) error {
 }
 
 // ColdStorageTransfer moves funds to/from cold storage (stub)
-func (s *WalletService) ColdStorageTransfer(ctx context.Context, fromWalletID, toWalletID string, amount float64, operator string) error {
-	// TODO: Implement secure cold storage transfer logic, approval, and audit
-	s.logger.Info("Cold storage transfer initiated", zap.String("from", fromWalletID), zap.String("to", toWalletID), zap.Float64("amount", amount), zap.String("operator", operator))
+func (s *WalletService) ColdStorageTransfer(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal, operator string) error {
+	amountFloat, _ := amount.Float64() // Convert to float64 for logging	// TODO: Implement secure cold storage transfer logic, approval, and audit
+	s.logger.Info("Cold storage transfer initiated",
+		zap.String("from", fromWalletID),
+		zap.String("to", toWalletID),
+		zap.Float64("amount", amountFloat),
+		zap.String("operator", operator))
 	return nil
 }
 
@@ -254,5 +305,150 @@ func (s *WalletService) RemoveWhitelistAddress(ctx context.Context, walletID str
 		return err
 	}
 	s.logger.Info("Removed address from whitelist", zap.String("wallet_id", walletID), zap.String("address", address))
+	return nil
+}
+
+// GetBlockchainBalance gets balance from blockchain directly
+func (s *WalletService) GetBlockchainBalance(ctx context.Context, network, address string) (decimal.Decimal, error) {
+	return s.blockchainMgr.GetBalance(ctx, network, address)
+}
+
+// SendBlockchainTransaction sends a transaction on the blockchain
+func (s *WalletService) SendBlockchainTransaction(ctx context.Context, network, from, to string, amount decimal.Decimal) (*blockchain.Transaction, error) {
+	// Validate addresses
+	if !s.blockchainMgr.ValidateAddress(network, from) {
+		return nil, fmt.Errorf("invalid from address: %s", from)
+	}
+	if !s.blockchainMgr.ValidateAddress(network, to) {
+		return nil, fmt.Errorf("invalid to address: %s", to)
+	}
+
+	// Log audit trail
+	if err := s.LogAudit(from, "blockchain_send", "system", fmt.Sprintf("Sending %s %s to %s", amount.String(), network, to)); err != nil {
+		s.logger.Error("Failed to log audit", zap.Error(err))
+	}
+
+	return s.blockchainMgr.SendTransaction(ctx, network, from, to, amount)
+}
+
+// GetTransactionHistory gets transaction history for an address
+func (s *WalletService) GetTransactionHistory(ctx context.Context, network, address string, limit int) ([]*blockchain.Transaction, error) {
+	return s.blockchainMgr.GetTransactionHistory(ctx, network, address, limit)
+}
+
+// GetTransaction gets a specific transaction by hash
+func (s *WalletService) GetTransaction(ctx context.Context, network, txHash string) (*blockchain.Transaction, error) {
+	return s.blockchainMgr.GetTransaction(ctx, network, txHash)
+}
+
+// ValidateAddress validates if an address is valid for the specified network
+func (s *WalletService) ValidateAddress(network, address string) bool {
+	return s.blockchainMgr.ValidateAddress(network, address)
+}
+
+// GetWallet retrieves a wallet by ID
+func (s *WalletService) GetWallet(ctx context.Context, walletID string) (*models.Wallet, error) {
+	var wallet models.Wallet
+	result := s.db.WithContext(ctx).Where("id = ?", walletID).First(&wallet)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get wallet: %w", result.Error)
+	}
+	return &wallet, nil
+}
+
+// GetWalletsByUser retrieves all wallets for a user
+func (s *WalletService) GetWalletsByUser(ctx context.Context, userID uuid.UUID) ([]*models.Wallet, error) {
+	var wallets []*models.Wallet
+	result := s.db.WithContext(ctx).Where("user_id = ?", userID).Find(&wallets)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get user wallets: %w", result.Error)
+	}
+	return wallets, nil
+}
+
+// UpdateWalletStatus updates the status of a wallet
+func (s *WalletService) UpdateWalletStatus(ctx context.Context, walletID, status string) error {
+	result := s.db.WithContext(ctx).Model(&models.Wallet{}).Where("id = ?", walletID).Update("status", status)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update wallet status: %w", result.Error)
+	}
+
+	if err := s.LogAudit(walletID, "status_update", "system", fmt.Sprintf("Status changed to %s", status)); err != nil {
+		s.logger.Error("Failed to log audit", zap.Error(err))
+	}
+
+	s.logger.Info("Wallet status updated",
+		zap.String("wallet_id", walletID),
+		zap.String("status", status))
+
+	return nil
+}
+
+// FreezeWallet freezes a wallet (prevents all operations)
+func (s *WalletService) FreezeWallet(ctx context.Context, walletID, reason string) error {
+	return s.UpdateWalletStatus(ctx, walletID, "frozen")
+}
+
+// UnfreezeWallet unfreezes a wallet
+func (s *WalletService) UnfreezeWallet(ctx context.Context, walletID string) error {
+	return s.UpdateWalletStatus(ctx, walletID, "active")
+}
+
+// GetWalletAuditLog retrieves audit log for a wallet
+func (s *WalletService) GetWalletAuditLog(ctx context.Context, walletID string, limit int) ([]*models.WalletAudit, error) {
+	var audits []*models.WalletAudit
+	result := s.db.WithContext(ctx).Where("wallet_id = ?", walletID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&audits)
+
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get wallet audit log: %w", result.Error)
+	}
+
+	return audits, nil
+}
+
+// Start starts the wallet service
+func (s *WalletService) Start(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.running {
+		return fmt.Errorf("wallet service is already running")
+	}
+
+	s.logger.Info("Starting wallet service")
+
+	// Start blockchain manager
+	if err := s.blockchainMgr.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start blockchain manager: %w", err)
+	}
+
+	s.running = true
+	s.logger.Info("Wallet service started successfully")
+
+	return nil
+}
+
+// Stop stops the wallet service
+func (s *WalletService) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.running {
+		return fmt.Errorf("wallet service is not running")
+	}
+
+	s.logger.Info("Stopping wallet service")
+
+	// Stop blockchain manager
+	if err := s.blockchainMgr.Stop(); err != nil {
+		s.logger.Error("Failed to stop blockchain manager", zap.Error(err))
+	}
+
+	s.running = false
+	s.logger.Info("Wallet service stopped")
+
 	return nil
 }

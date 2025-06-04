@@ -2,15 +2,14 @@ package test
 
 import (
 	"net"
-	"testing"
-	"time"
+	"testing"	"time"
 
 	pb "github.com/Aidin1998/pincex_unified/api/marketdata"
-	"github.com/Aidin1998/pincex_unified/internal/marketdata/distribution"
+	"github.com/Aidin1998/pincex_unified/internal/core/marketmaking/marketdata/distribution"
 	clientSDK "github.com/Aidin1998/pincex_unified/pkg/marketdata/client"
 	"google.golang.org/grpc"
 
-	transportGRPC "github.com/Aidin1998/pincex_unified/internal/marketdata/distribution/transport"
+	transportGRPC "github.com/Aidin1998/pincex_unified/internal/core/marketmaking/marketdata/distribution/transport"
 )
 
 func TestGRPCServer_SubscribeAndReceive(t *testing.T) {
