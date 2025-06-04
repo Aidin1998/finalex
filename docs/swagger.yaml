@@ -1,0 +1,635 @@
+swagger: "2.0"
+info:
+  title: PinCEX Unified Exchange API
+  description: |
+    # PinCEX Unified Exchange API
+    
+    A high-performance cryptocurrency exchange API providing trading, market data, and account management capabilities.
+    
+    ## Key Features
+    - High-frequency trading support with sub-10ms latency
+    - Real-time market data via WebSocket
+    - Comprehensive order management
+    - Multi-tier rate limiting
+    - Enterprise-grade security
+    
+    ## Base URLs
+    - **Production**: `https://api.pincex.com`
+    - **Sandbox**: `https://api-sandbox.pincex.com`
+    
+    ## Authentication
+    This API supports multiple authentication methods:
+    - **JWT Bearer Tokens**: For web applications
+    - **API Keys**: For programmatic access
+    - **OAuth 2.0**: For third-party integrations
+    
+    ## Rate Limiting
+    - **VIP Tier**: 10,000 requests/minute
+    - **Pro Tier**: 5,000 requests/minute  
+    - **Standard Tier**: 1,000 requests/minute
+    - **Basic Tier**: 200 requests/minute
+    
+    ## Error Handling
+    All errors follow RFC 7807 Problem Details standard with consistent error codes and messages.
+  version: "1.0.0"
+  contact:
+    name: PinCEX API Support
+    url: https://support.pincex.com
+    email: api-support@pincex.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: https://pincex.com/terms
+
+host: api.pincex.com
+basePath: /api/v1
+schemes:
+  - https
+  - http
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+securityDefinitions:
+  BearerAuth:
+    type: apiKey
+    name: Authorization
+    in: header
+    description: JWT Bearer token
+  ApiKeyAuth:
+    type: apiKey
+    name: X-API-Key
+    in: header
+    description: API key for programmatic access
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Basic health check
+      description: Returns the current health status of the API
+      operationId: getHealth
+      security: []
+      responses:
+        200:
+          description: Service is healthy
+          schema:
+            $ref: '#/definitions/HealthResponse'
+          examples:
+            application/json:
+              status: "ok"
+              timestamp: "2025-06-02T10:30:00Z"
+              version: "1.0.0"
+              
+  /health/detailed:
+    get:
+      tags:
+        - Health
+      summary: Detailed health check
+      description: Returns detailed health information including database and Redis connectivity
+      operationId: getDetailedHealth
+      responses:
+        200:
+          description: Detailed health information
+          schema:
+            $ref: '#/definitions/DetailedHealthResponse'
+
+  /identities/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user
+      description: Register a new user account
+      operationId: registerUser
+      security: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/RegisterRequest'
+      responses:
+        201:
+          description: User registered successfully
+          schema:
+            $ref: '#/definitions/RegisterResponse'
+        400:
+          description: Invalid request data
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /identities/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and return JWT tokens
+      operationId: loginUser
+      security: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/LoginRequest'
+      responses:
+        200:
+          description: Login successful
+          schema:
+            $ref: '#/definitions/LoginResponse'
+        401:
+          description: Authentication failed
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /trading/orders:
+    get:
+      tags:
+        - Trading
+      summary: Get user orders
+      description: Retrieve orders for the authenticated user
+      operationId: getUserOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          type: string
+          enum: [open, filled, cancelled, all]
+          description: Filter orders by status
+        - name: symbol
+          in: query
+          type: string
+          description: Filter orders by trading pair symbol
+        - name: limit
+          in: query
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+          description: Number of orders to return
+      responses:
+        200:
+          description: Orders retrieved successfully
+          schema:
+            $ref: '#/definitions/OrdersResponse'
+        401:
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+    post:
+      tags:
+        - Trading
+      summary: Place new order
+      description: Place a new trading order
+      operationId: placeOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/PlaceOrderRequest'
+      responses:
+        201:
+          description: Order placed successfully
+          schema:
+            $ref: '#/definitions/OrderResponse'
+        400:
+          description: Invalid order data
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        401:
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /marketdata/symbols:
+    get:
+      tags:
+        - Market Data
+      summary: Get trading symbols
+      description: Retrieve all available trading symbols
+      operationId: getTradingSymbols
+      security: []
+      responses:
+        200:
+          description: Trading symbols retrieved successfully
+          schema:
+            $ref: '#/definitions/SymbolsResponse'
+
+  /marketdata/ticker:
+    get:
+      tags:
+        - Market Data
+      summary: Get ticker data
+      description: Retrieve ticker data for all or specific symbols
+      operationId: getTickerData
+      security: []
+      parameters:
+        - name: symbol
+          in: query
+          type: string
+          description: Specific symbol to get ticker for
+      responses:
+        200:
+          description: Ticker data retrieved successfully
+          schema:
+            $ref: '#/definitions/TickerResponse'
+
+definitions:
+  HealthResponse:
+    type: object
+    required:
+      - status
+      - timestamp
+      - version
+    properties:
+      status:
+        type: string
+        example: "ok"
+      timestamp:
+        type: string
+        format: date-time
+        example: "2025-06-02T10:30:00Z"
+      version:
+        type: string
+        example: "1.0.0"
+
+  DetailedHealthResponse:
+    type: object
+    required:
+      - status
+      - timestamp
+      - version
+      - components
+    properties:
+      status:
+        type: string
+        example: "ok"
+      timestamp:
+        type: string
+        format: date-time
+      version:
+        type: string
+      components:
+        type: object
+        properties:
+          database:
+            $ref: '#/definitions/ComponentHealth'
+          redis:
+            $ref: '#/definitions/ComponentHealth'
+          kafka:
+            $ref: '#/definitions/ComponentHealth'
+
+  ComponentHealth:
+    type: object
+    required:
+      - status
+    properties:
+      status:
+        type: string
+        enum: [ok, warning, error]
+      latency:
+        type: string
+        description: Component response latency
+      message:
+        type: string
+        description: Additional status information
+
+  RegisterRequest:
+    type: object
+    required:
+      - email
+      - password
+      - firstName
+      - lastName
+    properties:
+      email:
+        type: string
+        format: email
+        example: "user@example.com"
+      password:
+        type: string
+        minLength: 8
+        example: "SecurePass123!"
+      firstName:
+        type: string
+        example: "John"
+      lastName:
+        type: string
+        example: "Doe"
+      referralCode:
+        type: string
+        description: Optional referral code
+
+  RegisterResponse:
+    type: object
+    required:
+      - id
+      - email
+      - status
+    properties:
+      id:
+        type: string
+        format: uuid
+        example: "123e4567-e89b-12d3-a456-426614174000"
+      email:
+        type: string
+        format: email
+      status:
+        type: string
+        example: "pending_verification"
+      message:
+        type: string
+        example: "Registration successful. Please verify your email."
+
+  LoginRequest:
+    type: object
+    required:
+      - email
+      - password
+    properties:
+      email:
+        type: string
+        format: email
+        example: "user@example.com"
+      password:
+        type: string
+        example: "SecurePass123!"
+      twoFactorCode:
+        type: string
+        description: 2FA code if enabled
+
+  LoginResponse:
+    type: object
+    required:
+      - accessToken
+      - refreshToken
+      - user
+    properties:
+      accessToken:
+        type: string
+        description: JWT access token
+      refreshToken:
+        type: string
+        description: JWT refresh token
+      expiresIn:
+        type: integer
+        description: Token expiration time in seconds
+      user:
+        $ref: '#/definitions/UserInfo'
+
+  UserInfo:
+    type: object
+    required:
+      - id
+      - email
+      - firstName
+      - lastName
+    properties:
+      id:
+        type: string
+        format: uuid
+      email:
+        type: string
+        format: email
+      firstName:
+        type: string
+      lastName:
+        type: string
+      tier:
+        type: string
+        enum: [basic, standard, pro, vip]
+      kycStatus:
+        type: string
+        enum: [pending, verified, rejected]
+
+  PlaceOrderRequest:
+    type: object
+    required:
+      - symbol
+      - side
+      - type
+      - quantity
+    properties:
+      symbol:
+        type: string
+        example: "BTC-USD"
+      side:
+        type: string
+        enum: [buy, sell]
+      type:
+        type: string
+        enum: [market, limit, stop, stop_limit]
+      quantity:
+        type: string
+        description: Order quantity as decimal string
+        example: "1.5"
+      price:
+        type: string
+        description: Order price (required for limit orders)
+        example: "50000.00"
+      stopPrice:
+        type: string
+        description: Stop price (required for stop orders)
+        example: "49000.00"
+      timeInForce:
+        type: string
+        enum: [GTC, IOC, FOK]
+        default: GTC
+
+  OrderResponse:
+    type: object
+    required:
+      - id
+      - symbol
+      - side
+      - type
+      - quantity
+      - status
+      - createdAt
+    properties:
+      id:
+        type: string
+        format: uuid
+      symbol:
+        type: string
+      side:
+        type: string
+        enum: [buy, sell]
+      type:
+        type: string
+        enum: [market, limit, stop, stop_limit]
+      quantity:
+        type: string
+      price:
+        type: string
+      stopPrice:
+        type: string
+      status:
+        type: string
+        enum: [pending, open, filled, cancelled, rejected]
+      filledQuantity:
+        type: string
+        default: "0"
+      averagePrice:
+        type: string
+      timeInForce:
+        type: string
+        enum: [GTC, IOC, FOK]
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+
+  OrdersResponse:
+    type: object
+    required:
+      - orders
+      - pagination
+    properties:
+      orders:
+        type: array
+        items:
+          $ref: '#/definitions/OrderResponse'
+      pagination:
+        $ref: '#/definitions/PaginationInfo'
+
+  PaginationInfo:
+    type: object
+    required:
+      - page
+      - limit
+      - total
+    properties:
+      page:
+        type: integer
+        minimum: 1
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 100
+      total:
+        type: integer
+        minimum: 0
+      hasNext:
+        type: boolean
+      hasPrev:
+        type: boolean
+
+  SymbolsResponse:
+    type: object
+    required:
+      - symbols
+    properties:
+      symbols:
+        type: array
+        items:
+          $ref: '#/definitions/TradingSymbol'
+
+  TradingSymbol:
+    type: object
+    required:
+      - symbol
+      - baseAsset
+      - quoteAsset
+      - status
+    properties:
+      symbol:
+        type: string
+        example: "BTC-USD"
+      baseAsset:
+        type: string
+        example: "BTC"
+      quoteAsset:
+        type: string
+        example: "USD"
+      status:
+        type: string
+        enum: [active, inactive, suspended]
+      minOrderSize:
+        type: string
+        description: Minimum order size
+      maxOrderSize:
+        type: string
+        description: Maximum order size
+      priceStep:
+        type: string
+        description: Minimum price increment
+      quantityStep:
+        type: string
+        description: Minimum quantity increment
+
+  TickerResponse:
+    type: object
+    properties:
+      tickers:
+        type: array
+        items:
+          $ref: '#/definitions/TickerData'
+
+  TickerData:
+    type: object
+    required:
+      - symbol
+      - price
+      - volume24h
+      - change24h
+      - timestamp
+    properties:
+      symbol:
+        type: string
+        example: "BTC-USD"
+      price:
+        type: string
+        description: Current price
+        example: "50000.00"
+      volume24h:
+        type: string
+        description: 24-hour volume
+        example: "1234.567"
+      change24h:
+        type: string
+        description: 24-hour price change percentage
+        example: "2.45"
+      high24h:
+        type: string
+        description: 24-hour high price
+      low24h:
+        type: string
+        description: 24-hour low price
+      timestamp:
+        type: string
+        format: date-time
+
+  ErrorResponse:
+    type: object
+    required:
+      - error
+      - message
+    properties:
+      error:
+        type: string
+        description: Error code
+        example: "INVALID_REQUEST"
+      message:
+        type: string
+        description: Human-readable error message
+        example: "The request contains invalid parameters"
+      details:
+        type: object
+        description: Additional error details
+      timestamp:
+        type: string
+        format: date-time
+      requestId:
+        type: string
+        description: Unique request identifier for support

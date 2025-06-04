@@ -521,7 +521,7 @@ type PaymentProcessor interface {
 ### 2. API Integration Standards
 
 #### RESTful API Design
-- OpenAPI 3.0 specification
+- Swagger 2.0 specification
 - JSON request/response format
 - Standard HTTP status codes
 - Consistent error response format

@@ -120,7 +120,7 @@ rm -rf api/
 
 #### API Documentation
 - Ensure all endpoints are documented
-- Add OpenAPI/Swagger specifications
+- Add Swagger specifications
 - Include response examples and error cases
 
 #### Code Documentation

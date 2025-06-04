@@ -26,7 +26,7 @@ This document defines the code review standards for the PinCEX Unified codebase.
 ---
 
 ## 3. API Review Checklist
-- [ ] API endpoints are documented in OpenAPI/Swagger and markdown docs
+- [ ] API endpoints are documented in Swagger and markdown docs
 - [ ] Request/response models are validated and documented
 - [ ] Consistent use of HTTP status codes and error formats (RFC7807)
 - [ ] Rate limiting, authentication, and authorization are enforced where required

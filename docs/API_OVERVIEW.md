@@ -63,7 +63,7 @@ See: `api/marketdata/marketdata_grpc.pb.go`, `internal/marketdata/distribution/t
 
 ## Notes
 - All exported interfaces and handler structs should have GoDoc comments.
-- For full endpoint details, see the OpenAPI/Swagger docs and markdown files.
+- For full endpoint details, see the Swagger docs and markdown files.
 - For gRPC, see the generated `.pb.go` files and proto definitions.
 
 ---
