@@ -35,7 +35,7 @@ var SwaggerInfoInstance = swaggerInfo{
 	BasePath:    "/api/v1",
 	Schemes:     []string{"http", "https"},
 	Title:       "PinCEX Unified API",
-	Description: "Comprehensive Swagger documentation for the PinCEX Unified Exchange API.",
+	Description: "Comprehensive Swagger documentation for the PinCEX Unified Exchange API. Generated from Swagger 2.0 specification.",
 }
 
 func init() {

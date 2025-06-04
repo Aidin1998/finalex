@@ -25,22 +25,20 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	_ "github.com/Aidin1998/pincex_unified/docs" // Swagger docs
 
-	"github.com/Aidin1998/pincex_unified/internal/auth"
 	"github.com/Aidin1998/pincex_unified/internal/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/config"
 	"github.com/Aidin1998/pincex_unified/internal/fiat"
-	"github.com/Aidin1998/pincex_unified/internal/identities"
-	"github.com/Aidin1998/pincex_unified/internal/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/marketfeeds"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
 	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
+	"github.com/Aidin1998/pincex_unified/internal/userauth"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/ws"
 	"github.com/Aidin1998/pincex_unified/pkg/logger"
 	"github.com/joho/godotenv"
@@ -155,31 +153,11 @@ func main() {
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
-	var rateLimiter auth.RateLimiter = auth.NewRedisRateLimiter(simpleRedis)
-	// Tiered rate limiter
-	userService := auth.NewAuthUserService(db)
-	tieredRateLimiter := auth.NewTieredRateLimiter(simpleRedis, zapLogger, userService)
+	// Note: Rate limiting is now handled inside the userauth service
 
-	// Create unified authentication service
-	authSvc, err := auth.NewAuthService(
-		zapLogger,
-		db,
-		cfg.JWT.Secret,
-		time.Duration(cfg.JWT.ExpirationHours)*time.Hour,
-		cfg.JWT.RefreshSecret,
-		time.Duration(cfg.JWT.RefreshExpHours)*time.Hour,
-		"pincex-exchange",
-		rateLimiter,
-	)
-	if err != nil {
-		zapLogger.Fatal("Failed to create auth service", zap.Error(err))
-	}
+	// Note: Authentication service is now created inside userauth service
 
-	// Create services using failover DB and auth service
-	identitiesSvc, err := identities.NewService(zapLogger, db, authSvc)
-	if err != nil {
-		zapLogger.Fatal("Failed to create identities service", zap.Error(err))
-	}
+	// Note: Identity service is now created inside userauth service
 
 	bookkeeperSvc, err := bookkeeper.NewService(zapLogger, db)
 	if err != nil {
@@ -189,11 +167,13 @@ func main() {
 	// Update transaction suite with bookkeeper service
 	transactionSuite.BookkeeperXA = transaction.NewBookkeeperXAResource(bookkeeperSvc, db, zapLogger)
 
-	// Create a stub KYC service (replace with real provider as needed)
-	kycProvider := &stubKYCProvider{}
-	kycService := kyc.NewKYCService(kycProvider)
+	// Create userauth service (includes auth, identities, and KYC)
+	userauthSvc, err := userauth.NewService(zapLogger, db, simpleRedis)
+	if err != nil {
+		zapLogger.Fatal("Failed to create userauth service", zap.Error(err))
+	}
 
-	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc, kycService)
+	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc, userauthSvc.KYCService())
 	if err != nil {
 		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
 	}
@@ -254,17 +234,15 @@ func main() {
 	}()
 	// --- END SETTLEMENT PIPELINE WIRING ---
 
-	// Create API server
+	// Create API server with modified parameters
 	apiServer := server.NewServer(
 		zapLogger,
-		authSvc,
-		identitiesSvc,
+		userauthSvc,
 		bookkeeperSvc,
 		fiatSvc,
 		marketfeedsSvc,
 		tradingSvc,
 		wsHub,
-		tieredRateLimiter,
 		aml.NewRiskService(),
 		nil, // audit service (disabled)
 		nil, // audit handlers (disabled)
@@ -279,8 +257,8 @@ func main() {
 	_ = metricsapi.ComplianceServiceInstance
 
 	// Start services
-	if err := identitiesSvc.Start(); err != nil {
-		zapLogger.Fatal("Failed to start identities service", zap.Error(err))
+	if err := userauthSvc.Start(context.Background()); err != nil {
+		zapLogger.Fatal("Failed to start userauth service", zap.Error(err))
 	}
 
 	// Start distributed transaction manager suite
@@ -344,8 +322,8 @@ func main() {
 	if err := bookkeeperSvc.Stop(); err != nil {
 		zapLogger.Error("Failed to stop bookkeeper service", zap.Error(err))
 	}
-	if err := identitiesSvc.Stop(); err != nil {
-		zapLogger.Error("Failed to stop identities service", zap.Error(err))
+	if err := userauthSvc.Stop(context.Background()); err != nil {
+		zapLogger.Error("Failed to stop userauth service", zap.Error(err))
 	}
 
 	zapLogger.Info("Server exited properly")
