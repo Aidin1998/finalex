@@ -13,6 +13,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
 )
@@ -613,7 +614,7 @@ func (suite *TradingMonitoringTestSuite) TestMetricsCollection() {
 	log.Println("Testing metrics collection...")
 
 	const operationCount = 100
-	userID := "metrics_test_user"
+	userID := uuid.New()
 
 	// Perform various operations to generate metrics
 	for i := 0; i < operationCount; i++ {
@@ -695,7 +696,7 @@ func (suite *TradingMonitoringTestSuite) TestHealthChecks() {
 func (suite *TradingMonitoringTestSuite) TestAlertSystem() {
 	log.Println("Testing alert system...")
 
-	userID := "alert_test_user"
+	userID := uuid.New()
 
 	// Generate some errors to trigger alerts
 	for i := 0; i < 15; i++ {
@@ -730,7 +731,7 @@ func (suite *TradingMonitoringTestSuite) TestAlertSystem() {
 func (suite *TradingMonitoringTestSuite) TestCircuitBreakerMonitoring() {
 	log.Println("Testing circuit breaker monitoring...")
 
-	userID := "circuit_monitor_user"
+	userID := uuid.New()
 
 	// Open circuit breaker
 	suite.mockBookkeeper.SetCircuitOpen(true)
@@ -773,7 +774,7 @@ func (suite *TradingMonitoringTestSuite) TestCircuitBreakerMonitoring() {
 func (suite *TradingMonitoringTestSuite) TestPerformanceDegradationDetection() {
 	log.Println("Testing performance degradation detection...")
 
-	userID := "perf_test_user"
+	userID := uuid.New()
 
 	// Normal operation baseline
 	normalLatencies := make([]time.Duration, 0)
@@ -830,11 +831,10 @@ func (suite *TradingMonitoringTestSuite) TestContinuousMonitoring() {
 
 	const monitoringDuration = 10 * time.Second
 	const checkInterval = 1 * time.Second
-
 	ctx, cancel := context.WithTimeout(suite.ctx, monitoringDuration)
 	defer cancel()
 
-	userID := "continuous_monitor_user"
+	userID := uuid.New()
 
 	// Start continuous operations
 	var wg sync.WaitGroup

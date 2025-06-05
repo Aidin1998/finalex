@@ -3,6 +3,7 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -203,11 +204,10 @@ func submitBenchmarkOrder(bookkeeper *MockBookkeeperStressTest, wsHub *MockWSHub
 		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
-
 	// Simulate order processing
 	_, _ = bookkeeper.GetBalance(user.String(), "USDT")
 	reservationID, _ := bookkeeper.ReserveBalance(user.String(), "USDT", decimal.NewFromFloat(order.Price*order.Quantity))
-	_ = bookkeeper.CommitReservation(reservationID)
+	_ = bookkeeper.CommitReservation(context.Background(), reservationID)
 	// Simulate WebSocket notification
 	message := fmt.Sprintf(`{"type":"order","id":"%s","status":"filled"}`, order.ID)
 	wsHub.BroadcastToUser(user.String(), []byte(message))
@@ -249,12 +249,11 @@ func performBenchmarkMatching(bookkeeper *MockBookkeeperStressTest, wsHub *MockW
 	// Simulate matching process
 	_, _ = bookkeeper.GetBalance(buyUser.String(), "USDT")
 	_, _ = bookkeeper.GetBalance(sellUser.String(), "BTC")
-
 	reservationID1, _ := bookkeeper.ReserveBalance(buyUser.String(), "USDT", decimal.NewFromFloat(price*quantity))
 	reservationID2, _ := bookkeeper.ReserveBalance(sellUser.String(), "BTC", decimal.NewFromFloat(quantity))
 
-	_ = bookkeeper.CommitReservation(reservationID1)
-	_ = bookkeeper.CommitReservation(reservationID2)
+	_ = bookkeeper.CommitReservation(context.Background(), reservationID1)
+	_ = bookkeeper.CommitReservation(context.Background(), reservationID2)
 
 	// Simulate trade broadcast
 	tradeMessage := fmt.Sprintf(`{"type":"trade","pair":"BTCUSDT","price":"%.2f","qty":"%.3f","time":%d}`,
@@ -475,12 +474,10 @@ func benchmarkLargeOrderScenario(b *testing.B) {
 				Quantity:  chunkSize,
 				Status:    "NEW",
 				CreatedAt: time.Now(),
-			}
-
-			// Simulate order processing with larger amounts
+			} // Simulate order processing with larger amounts
 			_, _ = mockBookkeeper.GetBalance(whaleUser.String(), "USDT")
 			reservationID, _ := mockBookkeeper.ReserveBalance(whaleUser.String(), "USDT", decimal.NewFromFloat(price*chunkSize))
-			_ = mockBookkeeper.CommitReservation(reservationID)
+			_ = mockBookkeeper.CommitReservation(context.Background(), reservationID)
 
 			// Broadcast large trade
 			if i%5 == 0 {

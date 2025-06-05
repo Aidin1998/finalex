@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/pkg/models"
@@ -27,7 +28,7 @@ type TradingEdgeCaseTestSuite struct {
 	suite.Suite
 	logger           *zap.Logger
 	db               *gorm.DB
-	service          trading.Service
+	service          trading.TradingService
 	mockBookkeeper   *MockBookkeeperEdgeCase
 	mockWSHub        *MockWSHubEdgeCase
 	settlementEngine *settlement.SettlementEngine
@@ -37,22 +38,69 @@ type TradingEdgeCaseTestSuite struct {
 
 // MockBookkeeperEdgeCase provides edge case testing mock for bookkeeper service
 type MockBookkeeperEdgeCase struct {
-	balances           map[string]map[string]decimal.Decimal
-	reservations       map[string]ReservationInfo
+	*MockBookkeeper
 	networkFailures    int64
 	databaseErrors     int64
 	timeouts           int64
 	recoveryMode       bool
-	mu                 sync.RWMutex
 	operationCounter   int64
 	circuitBreakerOpen bool
 }
 
 func NewMockBookkeeperEdgeCase() *MockBookkeeperEdgeCase {
 	return &MockBookkeeperEdgeCase{
-		balances:     make(map[string]map[string]decimal.Decimal),
-		reservations: make(map[string]ReservationInfo),
+		MockBookkeeper: NewMockBookkeeper(),
 	}
+}
+
+// BatchLockFunds implements the missing method for edge case testing
+func (m *MockBookkeeperEdgeCase) BatchLockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	atomic.AddInt64(&m.operationCounter, 1)
+
+	// Simulate network failures
+	if atomic.LoadInt64(&m.networkFailures) > 0 {
+		atomic.AddInt64(&m.networkFailures, -1)
+		return nil, fmt.Errorf("network connection failed during batch lock")
+	}
+
+	// Simulate database errors
+	if atomic.LoadInt64(&m.databaseErrors) > 0 {
+		atomic.AddInt64(&m.databaseErrors, -1)
+		return nil, fmt.Errorf("database connection error during batch lock")
+	}
+
+	// Circuit breaker simulation
+	if m.circuitBreakerOpen {
+		return nil, fmt.Errorf("circuit breaker open - cannot batch lock")
+	}
+
+	// Delegate to base implementation
+	return m.MockBookkeeper.BatchLockFunds(ctx, operations)
+}
+
+// BatchUnlockFunds implements the missing method for edge case testing
+func (m *MockBookkeeperEdgeCase) BatchUnlockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	atomic.AddInt64(&m.operationCounter, 1)
+
+	// Simulate network failures
+	if atomic.LoadInt64(&m.networkFailures) > 0 {
+		atomic.AddInt64(&m.networkFailures, -1)
+		return nil, fmt.Errorf("network connection failed during batch unlock")
+	}
+
+	// Simulate database errors
+	if atomic.LoadInt64(&m.databaseErrors) > 0 {
+		atomic.AddInt64(&m.databaseErrors, -1)
+		return nil, fmt.Errorf("database connection error during batch unlock")
+	}
+
+	// Circuit breaker simulation
+	if m.circuitBreakerOpen {
+		return nil, fmt.Errorf("circuit breaker open - cannot batch unlock")
+	}
+
+	// Delegate to base implementation
+	return m.MockBookkeeper.BatchUnlockFunds(ctx, operations)
 }
 
 func (m *MockBookkeeperEdgeCase) GetBalance(userID, asset string) (decimal.Decimal, error) {
@@ -82,19 +130,11 @@ func (m *MockBookkeeperEdgeCase) GetBalance(userID, asset string) (decimal.Decim
 		return decimal.Zero, fmt.Errorf("circuit breaker open")
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if userBalances, exists := m.balances[userID]; exists {
-		if balance, exists := userBalances[asset]; exists {
-			return balance, nil
-		}
-	}
-
-	return decimal.NewFromInt(10000), nil
+	// Delegate to base implementation
+	return m.MockBookkeeper.GetBalance(userID, asset)
 }
 
-func (m *MockBookkeeperEdgeCase) ReserveBalance(userID, asset string, amount decimal.Decimal) (string, error) {
+func (m *MockBookkeeperEdgeCase) Reserve(userID uuid.UUID, asset string, amount decimal.Decimal) (string, error) {
 	atomic.AddInt64(&m.operationCounter, 1)
 
 	// Simulate edge case scenarios
@@ -106,46 +146,20 @@ func (m *MockBookkeeperEdgeCase) ReserveBalance(userID, asset string, amount dec
 	if m.circuitBreakerOpen {
 		return "", fmt.Errorf("circuit breaker open - cannot reserve")
 	}
-
-	reservationID := fmt.Sprintf("edge_res_%s_%d", userID, time.Now().UnixNano())
-
-	m.mu.Lock()
-	m.reservations[reservationID] = ReservationInfo{
-		UserID: userID,
-		Asset:  asset,
-		Amount: amount,
-	}
-	m.mu.Unlock()
-
-	return reservationID, nil
+	// Delegate to base implementation
+	return m.MockBookkeeper.Reserve(context.Background(), userID, asset, amount)
 }
 
 func (m *MockBookkeeperEdgeCase) ReleaseReservation(reservationID string) error {
 	atomic.AddInt64(&m.operationCounter, 1)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.reservations[reservationID]; !exists {
-		return fmt.Errorf("reservation not found or already released: %s", reservationID)
-	}
-
-	delete(m.reservations, reservationID)
-	return nil
+	// Delegate to base implementation
+	return m.MockBookkeeper.ReleaseReservation(context.Background(), reservationID)
 }
 
-func (m *MockBookkeeperEdgeCase) TransferReservedBalance(reservationID, toUserID string) error {
+func (m *MockBookkeeperEdgeCase) CommitReservation(reservationID string) error {
 	atomic.AddInt64(&m.operationCounter, 1)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.reservations[reservationID]; !exists {
-		return fmt.Errorf("reservation not found for transfer: %s", reservationID)
-	}
-
-	delete(m.reservations, reservationID)
-	return nil
+	// Delegate to base implementation
+	return m.MockBookkeeper.CommitReservation(context.Background(), reservationID)
 }
 
 // Edge case simulation methods
@@ -169,67 +183,41 @@ func (m *MockBookkeeperEdgeCase) GetOperationCount() int64 {
 	return atomic.LoadInt64(&m.operationCounter)
 }
 
-// Add stubs to satisfy bookkeeper.BookkeeperService interface
-func (m *MockBookkeeperEdgeCase) BatchGetAccounts(userIDs []string) (map[string]interface{}, error) {
-	panic("not implemented: BatchGetAccounts (mock)")
-}
-
-func (m *MockBookkeeperEdgeCase) SomeOtherRequiredMethod() error {
-	panic("not implemented: SomeOtherRequiredMethod (mock)")
-}
-
 // MockWSHubEdgeCase provides edge case testing mock for WebSocket hub
 type MockWSHubEdgeCase struct {
-	messageQueue    []WSMessage
+	*MockWSHub
 	connectionLost  bool
 	publishFailures int64
 	reconnecting    bool
-	mu              sync.RWMutex
 }
 
 // WSMessage is defined in common_test_types.go
 
 func NewMockWSHubEdgeCase() *MockWSHubEdgeCase {
 	return &MockWSHubEdgeCase{
-		messageQueue: make([]WSMessage, 0),
+		MockWSHub: NewMockWSHub(),
 	}
 }
 
-func (m *MockWSHubEdgeCase) PublishToUser(userID string, data interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+func (m *MockWSHubEdgeCase) BroadcastToUser(userID string, data []byte) {
 	failed := m.connectionLost || atomic.LoadInt64(&m.publishFailures) > 0
 	if failed && atomic.LoadInt64(&m.publishFailures) > 0 {
 		atomic.AddInt64(&m.publishFailures, -1)
+		return // Simulate failed publish
 	}
 
-	m.messageQueue = append(m.messageQueue, WSMessage{
-		Type: "user",
-		Data: data,
-	})
+	// Delegate to base implementation
+	m.MockWSHub.BroadcastToUser(userID, data)
 }
 
-func (m *MockWSHubEdgeCase) PublishToTopic(topic string, data interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+func (m *MockWSHubEdgeCase) Broadcast(topic string, data []byte) {
 	failed := m.connectionLost || atomic.LoadInt64(&m.publishFailures) > 0
 	if failed && atomic.LoadInt64(&m.publishFailures) > 0 {
 		atomic.AddInt64(&m.publishFailures, -1)
+		return // Simulate failed publish
 	}
-
-	m.messageQueue = append(m.messageQueue, WSMessage{
-		Type: "topic",
-		Data: data,
-	})
-}
-
-func (m *MockWSHubEdgeCase) SubscribeToTopic(userID, topic string) {
-	// Simulate subscription that might fail
-	if m.connectionLost {
-		return // Subscription fails silently
-	}
+	// Delegate to base implementation
+	m.MockWSHub.Broadcast(topic, data)
 }
 
 func (m *MockWSHubEdgeCase) SimulateConnectionLoss() {
@@ -244,15 +232,6 @@ func (m *MockWSHubEdgeCase) SimulatePublishFailures(count int) {
 	atomic.StoreInt64(&m.publishFailures, int64(count))
 }
 
-func (m *MockWSHubEdgeCase) GetMessageQueue() []WSMessage {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]WSMessage, len(m.messageQueue))
-	copy(result, m.messageQueue)
-	return result
-}
-
 func (suite *TradingEdgeCaseTestSuite) SetupSuite() {
 	log.Println("Setting up trading edge case test suite...")
 
@@ -264,16 +243,14 @@ func (suite *TradingEdgeCaseTestSuite) SetupSuite() {
 
 	suite.mockBookkeeper = NewMockBookkeeperEdgeCase()
 	suite.mockWSHub = NewMockWSHubEdgeCase()
-
 	suite.service, _ = trading.NewService(
 		suite.logger,
 		suite.db, // pass nil for db
 		suite.mockBookkeeper,
 		suite.mockWSHub,
-		suite.settlementEngine,
+		nil, // pass nil for settlement engine in tests
 	)
-
-	err := suite.service.Start(suite.ctx)
+	err := suite.service.Start()
 	suite.Require().NoError(err, "Failed to start trading service")
 }
 
@@ -282,7 +259,10 @@ func (suite *TradingEdgeCaseTestSuite) TearDownSuite() {
 		suite.cancel()
 	}
 	if suite.service != nil {
-		suite.service.Stop()
+		err := suite.service.Stop()
+		if err != nil {
+			suite.T().Logf("Error stopping service: %v", err)
+		}
 	}
 }
 
@@ -291,20 +271,16 @@ func (suite *TradingEdgeCaseTestSuite) TestNetworkFailureRecovery() {
 	log.Println("Testing network failure recovery...")
 
 	userID := uuid.New()
-
 	// Simulate network failures
 	suite.mockBookkeeper.SimulateNetworkFailures(5)
 
-	order := &models.Order{
-		UserID:    userID,
-		Symbol:    "BTC/USDT",
-		Side:      "buy",
-		Type:      "limit",
-		Price:     50000,
-		Quantity:  0.1,
-		Status:    "new",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	order := &models.PlaceOrderRequest{
+		UserID:   userID,
+		Symbol:   "BTC/USDT",
+		Side:     "BUY",
+		Type:     "LIMIT",
+		Price:    decimal.NewFromInt(50000),
+		Quantity: decimal.NewFromFloat(0.1),
 	}
 
 	// First few attempts should fail due to network issues
@@ -319,7 +295,7 @@ func (suite *TradingEdgeCaseTestSuite) TestNetworkFailureRecovery() {
 	suite.Assert().NoError(err, "Should succeed after network recovery")
 	suite.Assert().NotNil(placedOrder, "Order should be placed successfully")
 
-	log.Printf("Network failure recovery test completed - Order ID: %s", placedOrder.ID)
+	log.Printf("Network failure recovery test completed - Order ID: %s", placedOrder.ID.String())
 }
 
 // TestDatabaseErrorHandling tests handling of database errors
@@ -327,20 +303,16 @@ func (suite *TradingEdgeCaseTestSuite) TestDatabaseErrorHandling() {
 	log.Println("Testing database error handling...")
 
 	userID := uuid.New()
-
 	// Simulate database errors
 	suite.mockBookkeeper.SimulateDatabaseErrors(3)
 
-	order := &models.Order{
-		UserID:    userID,
-		Symbol:    "ETH/USDT",
-		Side:      "sell",
-		Type:      "limit",
-		Price:     3000,
-		Quantity:  1.0,
-		Status:    "new",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	order := &models.PlaceOrderRequest{
+		UserID:   userID,
+		Symbol:   "ETH/USDT",
+		Side:     "SELL",
+		Type:     "LIMIT",
+		Price:    decimal.NewFromInt(3000),
+		Quantity: decimal.NewFromFloat(1.0),
 	}
 
 	// Should handle database errors gracefully
@@ -358,20 +330,16 @@ func (suite *TradingEdgeCaseTestSuite) TestDatabaseErrorHandling() {
 func (suite *TradingEdgeCaseTestSuite) TestTimeoutHandling() {
 	log.Println("Testing timeout handling...")
 
-	userID := "timeout_test_user"
-
+	userID := uuid.New()
 	// Simulate timeouts
 	suite.mockBookkeeper.SimulateTimeouts(2)
 
-	order := &models.Order{
-		UserID:    userID,
-		Symbol:    "BTC/USDT",
-		Side:      "buy",
-		Type:      "market",
-		Quantity:  0.05,
-		Status:    "new",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	order := &models.PlaceOrderRequest{
+		UserID:   userID,
+		Symbol:   "BTC/USDT",
+		Side:     "BUY",
+		Type:     "MARKET",
+		Quantity: decimal.NewFromFloat(0.05),
 	}
 
 	start := time.Now()
@@ -390,21 +358,17 @@ func (suite *TradingEdgeCaseTestSuite) TestTimeoutHandling() {
 func (suite *TradingEdgeCaseTestSuite) TestCircuitBreakerBehavior() {
 	log.Println("Testing circuit breaker behavior...")
 
-	userID := "circuit_test_user"
-
+	userID := uuid.New()
 	// Open circuit breaker
 	suite.mockBookkeeper.SetCircuitBreakerOpen(true)
 
-	order := &models.Order{
-		UserID:    userID,
-		Symbol:    "BTC/USDT",
-		Side:      "buy",
-		Type:      "limit",
-		Price:     50000,
-		Quantity:  0.1,
-		Status:    "new",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	order := &models.PlaceOrderRequest{
+		UserID:   userID,
+		Symbol:   "BTC/USDT",
+		Side:     "BUY",
+		Type:     "LIMIT",
+		Price:    decimal.NewFromInt(50000),
+		Quantity: decimal.NewFromFloat(0.1),
 	}
 
 	// Should fail immediately with circuit breaker open
@@ -446,18 +410,15 @@ func (suite *TradingEdgeCaseTestSuite) TestConcurrentFailureRecovery() {
 			defer wg.Done()
 
 			userID := uuid.New()
-
 			for j := 0; j < operationsPerWorker; j++ {
-				order := &models.Order{
-					UserID:    userID,
-					Symbol:    "BTC/USDT",
-					Side:      []string{"buy", "sell"}[j%2],
-					Type:      "limit",
-					Price:     50000 + float64(j*100),
-					Quantity:  0.01 + float64(j)*0.01,
-					Status:    "new",
-					CreatedAt: time.Now(),
-					UpdatedAt: time.Now(),
+				sides := []string{"BUY", "SELL"}
+				order := &models.PlaceOrderRequest{
+					UserID:   userID,
+					Symbol:   "BTC/USDT",
+					Side:     sides[j%2],
+					Type:     "LIMIT",
+					Price:    decimal.NewFromFloat(50000 + float64(j*100)),
+					Quantity: decimal.NewFromFloat(0.01 + float64(j)*0.01),
 				}
 
 				_, err := suite.service.PlaceOrder(suite.ctx, order)
@@ -492,35 +453,31 @@ func (suite *TradingEdgeCaseTestSuite) TestConcurrentFailureRecovery() {
 func (suite *TradingEdgeCaseTestSuite) TestRaceConditionHandling() {
 	log.Println("Testing race condition handling...")
 
-	userID := "race_test_user"
+	userID := uuid.New()
 	const concurrency = 50
 
 	var wg sync.WaitGroup
 	var placedOrders []string
 	var mu sync.Mutex
-
 	// Multiple goroutines trying to place orders simultaneously
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func(routineID int) {
 			defer wg.Done()
 
-			order := &models.Order{
-				UserID:    userID,
-				Symbol:    "BTC/USDT",
-				Side:      "buy",
-				Type:      "limit",
-				Price:     50000 + int64(routineID),
-				Quantity:  0.01,
-				Status:    "new",
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
+			order := &models.PlaceOrderRequest{
+				UserID:   userID,
+				Symbol:   "BTC/USDT",
+				Side:     "BUY",
+				Type:     "LIMIT",
+				Price:    decimal.NewFromInt(50000 + int64(routineID)),
+				Quantity: decimal.NewFromFloat(0.01),
 			}
 
 			placedOrder, err := suite.service.PlaceOrder(suite.ctx, order)
 			if err == nil && placedOrder != nil {
 				mu.Lock()
-				placedOrders = append(placedOrders, placedOrder.ID)
+				placedOrders = append(placedOrders, placedOrder.ID.String())
 				mu.Unlock()
 			}
 		}(i)
@@ -547,22 +504,18 @@ func (suite *TradingEdgeCaseTestSuite) TestRaceConditionHandling() {
 func (suite *TradingEdgeCaseTestSuite) TestWebSocketFailureRecovery() {
 	log.Println("Testing WebSocket failure recovery...")
 
-	userID := "ws_test_user"
-
+	userID := uuid.New()
 	// Simulate WebSocket connection loss
 	suite.mockWSHub.SimulateConnectionLoss()
 	suite.mockWSHub.SimulatePublishFailures(5)
 
-	order := &models.Order{
-		UserID:    userID,
-		Symbol:    "BTC/USDT",
-		Side:      "buy",
-		Type:      "limit",
-		Price:     50000,
-		Quantity:  0.1,
-		Status:    "new",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	order := &models.PlaceOrderRequest{
+		UserID:   userID,
+		Symbol:   "BTC/USDT",
+		Side:     "BUY",
+		Type:     "LIMIT",
+		Price:    decimal.NewFromInt(50000),
+		Quantity: decimal.NewFromFloat(0.1),
 	}
 
 	// Place order during WebSocket issues
@@ -584,9 +537,8 @@ func (suite *TradingEdgeCaseTestSuite) TestWebSocketFailureRecovery() {
 
 	// Restore WebSocket connection
 	suite.mockWSHub.RestoreConnection()
-
 	// Subsequent operations should work normally
-	_, err = suite.service.GetOrder(suite.ctx, userID, placedOrder.ID)
+	_, err = suite.service.GetOrder(suite.ctx, userID, placedOrder.ID.String())
 	suite.Assert().NoError(err, "Operations should work after WebSocket recovery")
 
 	log.Printf("WebSocket failure recovery test completed - Failed messages: %d", failedMessages)
@@ -597,27 +549,24 @@ func (suite *TradingEdgeCaseTestSuite) TestMemoryLeakPrevention() {
 	log.Println("Testing memory leak prevention...")
 
 	const iterations = 1000
-	userID := "memory_test_user"
+	userID := uuid.New()
 
 	initialOps := suite.mockBookkeeper.GetOperationCount()
-
 	for i := 0; i < iterations; i++ {
-		order := &models.Order{
-			UserID:    userID,
-			Symbol:    "BTC/USDT",
-			Side:      []models.OrderSide{models.Buy, models.Sell}[i%2],
-			Type:      "limit",
-			Price:     50000 + int64(i),
-			Quantity:  0.01,
-			Status:    "new",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+		sides := []string{"BUY", "SELL"}
+		order := &models.PlaceOrderRequest{
+			UserID:   userID,
+			Symbol:   "BTC/USDT",
+			Side:     sides[i%2],
+			Type:     "LIMIT",
+			Price:    decimal.NewFromInt(50000 + int64(i)),
+			Quantity: decimal.NewFromFloat(0.01),
 		}
 
 		placedOrder, err := suite.service.PlaceOrder(suite.ctx, order)
 		if err == nil && placedOrder != nil {
 			// Immediately cancel to test cleanup
-			suite.service.CancelOrder(suite.ctx, userID, placedOrder.ID)
+			suite.service.CancelOrder(suite.ctx, userID, placedOrder.ID.String())
 		}
 
 		// Periodically force garbage collection
@@ -636,7 +585,6 @@ func (suite *TradingEdgeCaseTestSuite) TestMemoryLeakPrevention() {
 // TestCorruptedDataHandling tests handling of corrupted data
 func (suite *TradingEdgeCaseTestSuite) TestCorruptedDataHandling() {
 	log.Println("Testing corrupted data handling...")
-
 	corruptedInputs := []struct {
 		name  string
 		order *models.PlaceOrderRequest
@@ -644,10 +592,10 @@ func (suite *TradingEdgeCaseTestSuite) TestCorruptedDataHandling() {
 		{
 			name: "Corrupted Price",
 			order: &models.PlaceOrderRequest{
-				UserID:   "test_user",
-				Pair:     "BTC/USDT",
-				Side:     models.Buy,
-				Type:     models.Limit,
+				UserID:   uuid.New(),
+				Symbol:   "BTC/USDT",
+				Side:     "BUY",
+				Type:     "LIMIT",
 				Price:    decimal.NewFromFloat(float64(^uint64(0) >> 1)), // Max float
 				Quantity: decimal.NewFromFloat(0.1),
 			},
@@ -655,10 +603,10 @@ func (suite *TradingEdgeCaseTestSuite) TestCorruptedDataHandling() {
 		{
 			name: "Corrupted Quantity",
 			order: &models.PlaceOrderRequest{
-				UserID:   "test_user",
-				Pair:     "BTC/USDT",
-				Side:     models.Buy,
-				Type:     models.Limit,
+				UserID:   uuid.New(),
+				Symbol:   "BTC/USDT",
+				Side:     "BUY",
+				Type:     "LIMIT",
 				Price:    decimal.NewFromInt(50000),
 				Quantity: decimal.NewFromFloat(-0.1), // Negative quantity
 			},
@@ -666,10 +614,10 @@ func (suite *TradingEdgeCaseTestSuite) TestCorruptedDataHandling() {
 		{
 			name: "Extremely Large Values",
 			order: &models.PlaceOrderRequest{
-				UserID:   "test_user",
-				Pair:     "BTC/USDT",
-				Side:     models.Buy,
-				Type:     models.Limit,
+				UserID:   uuid.New(),
+				Symbol:   "BTC/USDT",
+				Side:     "BUY",
+				Type:     "LIMIT",
 				Price:    decimal.NewFromString("999999999999999999999999999999"),
 				Quantity: decimal.NewFromString("999999999999999999999999999999"),
 			},
@@ -688,38 +636,37 @@ func (suite *TradingEdgeCaseTestSuite) TestCorruptedDataHandling() {
 func (suite *TradingEdgeCaseTestSuite) TestSystemLimitsBoundary() {
 	log.Println("Testing system limits boundary conditions...")
 
-	userID := "limits_test_user"
+	userID := uuid.New()
 
 	boundaryTests := []struct {
 		name        string
 		description string
 		testFunc    func() error
-	}{
-		{
-			name:        "MaxOrderSize",
-			description: "Test maximum order size limits",
-			testFunc: func() error {
-				order := &models.PlaceOrderRequest{
-					UserID:   userID,
-					Pair:     "BTC/USDT",
-					Side:     models.Buy,
-					Type:     models.Limit,
-					Price:    decimal.NewFromInt(50000),
-					Quantity: decimal.NewFromInt(1000000), // Very large quantity
-				}
-				_, err := suite.service.PlaceOrder(suite.ctx, order)
-				return err
-			},
+	}{{
+		name:        "MaxOrderSize",
+		description: "Test maximum order size limits",
+		testFunc: func() error {
+			order := &models.PlaceOrderRequest{
+				UserID:   userID,
+				Symbol:   "BTC/USDT",
+				Side:     "BUY",
+				Type:     "LIMIT",
+				Price:    decimal.NewFromInt(50000),
+				Quantity: decimal.NewFromInt(1000000), // Very large quantity
+			}
+			_, err := suite.service.PlaceOrder(suite.ctx, order)
+			return err
 		},
+	},
 		{
 			name:        "MinOrderSize",
 			description: "Test minimum order size limits",
 			testFunc: func() error {
 				order := &models.PlaceOrderRequest{
 					UserID:   userID,
-					Pair:     "BTC/USDT",
-					Side:     models.Buy,
-					Type:     models.Limit,
+					Symbol:   "BTC/USDT",
+					Side:     "BUY",
+					Type:     "LIMIT",
 					Price:    decimal.NewFromInt(50000),
 					Quantity: decimal.NewFromString("0.00000001"), // Very small quantity
 				}
@@ -733,9 +680,9 @@ func (suite *TradingEdgeCaseTestSuite) TestSystemLimitsBoundary() {
 			testFunc: func() error {
 				order := &models.PlaceOrderRequest{
 					UserID:   userID,
-					Pair:     "BTC/USDT",
-					Side:     models.Buy,
-					Type:     models.Limit,
+					Symbol:   "BTC/USDT",
+					Side:     "BUY",
+					Type:     "LIMIT",
 					Price:    decimal.NewFromString("50000.123456789123456789"), // High precision
 					Quantity: decimal.NewFromString("0.123456789123456789"),
 				}

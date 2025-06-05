@@ -12,6 +12,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
 )
@@ -334,7 +335,7 @@ func (suite *TradingOrderTypesTestSuite) TestMarketOrders() {
 func (suite *TradingOrderTypesTestSuite) TestLimitOrders() {
 	log.Println("Testing limit orders...")
 
-	userID := "limit_trader"
+	userID := uuid.New()
 
 	// Test buy limit order
 	buyLimitOrder := &models.PlaceOrderRequest{
@@ -379,7 +380,7 @@ func (suite *TradingOrderTypesTestSuite) TestLimitOrders() {
 func (suite *TradingOrderTypesTestSuite) TestStopLossOrders() {
 	log.Println("Testing stop loss orders...")
 
-	userID := "stop_trader"
+	userID := uuid.New()
 
 	// Place initial position (buy order)
 	initialOrder := &models.PlaceOrderRequest{
@@ -420,7 +421,7 @@ func (suite *TradingOrderTypesTestSuite) TestStopLossOrders() {
 func (suite *TradingOrderTypesTestSuite) TestStopLimitOrders() {
 	log.Println("Testing stop limit orders...")
 
-	userID := "stop_limit_trader"
+	userID := uuid.New()
 
 	stopLimitOrder := &models.PlaceOrderRequest{
 		UserID:           userID,
@@ -446,7 +447,7 @@ func (suite *TradingOrderTypesTestSuite) TestStopLimitOrders() {
 func (suite *TradingOrderTypesTestSuite) TestTakeProfitOrders() {
 	log.Println("Testing take profit orders...")
 
-	userID := "take_profit_trader"
+	userID := uuid.New()
 
 	takeProfitOrder := &models.PlaceOrderRequest{
 		UserID:           userID,
@@ -470,7 +471,7 @@ func (suite *TradingOrderTypesTestSuite) TestTakeProfitOrders() {
 func (suite *TradingOrderTypesTestSuite) TestTrailingStopOrders() {
 	log.Println("Testing trailing stop orders...")
 
-	userID := "trailing_stop_trader"
+	userID := uuid.New()
 
 	trailingStopOrder := &models.PlaceOrderRequest{
 		UserID:          userID,
@@ -494,7 +495,7 @@ func (suite *TradingOrderTypesTestSuite) TestTrailingStopOrders() {
 func (suite *TradingOrderTypesTestSuite) TestIcebergOrders() {
 	log.Println("Testing iceberg orders...")
 
-	userID := "iceberg_trader"
+	userID := uuid.New()
 
 	icebergOrder := &models.PlaceOrderRequest{
 		UserID:          userID,
@@ -525,7 +526,7 @@ func (suite *TradingOrderTypesTestSuite) TestIcebergOrders() {
 func (suite *TradingOrderTypesTestSuite) TestTimeInForceOptions() {
 	log.Println("Testing time in force options...")
 
-	userID := "tif_trader"
+	userID := uuid.New()
 
 	// Test Good Till Cancelled (GTC)
 	gtcOrder := &models.PlaceOrderRequest{
@@ -611,7 +612,7 @@ func (suite *TradingOrderTypesTestSuite) TestTimeInForceOptions() {
 func (suite *TradingOrderTypesTestSuite) TestOrderLifecycleManagement() {
 	log.Println("Testing order lifecycle management...")
 
-	userID := "lifecycle_trader"
+	userID := uuid.New()
 
 	// 1. Place order
 	order := &models.PlaceOrderRequest{

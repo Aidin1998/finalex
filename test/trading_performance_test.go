@@ -13,17 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
-	"gorm.io/gorm"
 )
 
 // TradingPerformanceTestSuite provides high-performance testing for trading operations
@@ -137,8 +134,6 @@ func (m *MockBookkeeperPerformance) TransferBalance(ctx context.Context, fromUse
 func (m *MockBookkeeperPerformance) GetAllBalances(ctx context.Context, userID uuid.UUID) (map[string]decimal.Decimal, error) {
 	return make(map[string]decimal.Decimal), nil
 }
-	return nil
-}
 
 func (m *MockBookkeeperPerformance) GetTotalOps() int64 {
 	return atomic.LoadInt64(&m.totalOps)
@@ -192,7 +187,7 @@ func (suite *TradingPerformanceTestSuite) SetupSuite() {
 	// Create logger and database for testing
 	logger := zaptest.NewLogger(suite.T())
 	db := createInMemoryDB(suite.T()) // Returns nil for mock-based testing
-	
+
 	// Create settlement engine (can be nil for performance testing)
 	settlementEngine := (*settlement.SettlementEngine)(nil)
 
@@ -631,13 +626,6 @@ func (suite *TradingPerformanceTestSuite) BenchmarkOrderBookRetrieval() {
 		}
 	})
 	log.Printf("BenchmarkOrderBookRetrieval completed")
-}
-
-// Helper function to create test database for performance tests
-func createInMemoryDB(t testing.TB) *gorm.DB {
-	// For performance testing without a real DB, we just return nil
-	// This bypasses the DB requirement and allows tests to run with mock data
-	return nil
 }
 
 func TestTradingPerformanceTestSuite(t *testing.T) {

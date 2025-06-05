@@ -53,28 +53,6 @@ func (m *MockBookkeeperService) GetAllBalances(ctx context.Context, userID uuid.
 	return args.Get(0).(map[string]decimal.Decimal), args.Error(1)
 }
 
-type MockWSHub struct {
-	mock.Mock
-}
-
-func (m *MockWSHub) Broadcast(topic string, data []byte) {
-	m.Called(topic, data)
-}
-
-func (m *MockWSHub) BroadcastToUser(userID string, data []byte) {
-	m.Called(userID, data)
-}
-
-func (m *MockWSHub) Subscribe(userID, topic string) error {
-	args := m.Called(userID, topic)
-	return args.Error(0)
-}
-
-func (m *MockWSHub) Unsubscribe(userID, topic string) error {
-	args := m.Called(userID, topic)
-	return args.Error(0)
-}
-
 // TradingServiceTestSuite tests trading service functionality
 type TradingServiceTestSuite struct {
 	suite.Suite
@@ -497,12 +475,5 @@ func BenchmarkGetOrderBook(b *testing.B) {
 // Helper function to create test database
 func setupTestDB(t testing.TB) *gorm.DB {
 	// For testing, we'll use an in-memory SQLite database
-	// In a real test environment, you might want to use a test-specific PostgreSQL database
-	return createInMemoryDB(t)
-}
-
-func createInMemoryDB(t testing.TB) *gorm.DB {
-	// For testing without a real DB, we just return nil
-	// This bypasses the DB requirement and allows tests to run with mock data
-	return nil
+	// In a real test environment, you might want to use a test-specific PostgreSQL database	return createInMemoryDB(t)
 }

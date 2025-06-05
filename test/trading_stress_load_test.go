@@ -153,10 +153,9 @@ func (suite *TradingStressLoadTestSuite) SetupSuite() {
 
 	// Test trading pairs
 	suite.testPairs = []string{"BTCUSDT", "ETHUSDT", "ETHBTC"}
-
 	// Initialize logger and database
 	logger, _ := zap.NewDevelopment()
-	db := createInMemoryDB()
+	db := createInMemoryDB(suite.T())
 
 	// Create settlement engine
 	settlementEngine := (*settlement.SettlementEngine)(nil)
@@ -391,7 +390,6 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 		price = 0.065 + float64(orderID%100)/100000 // Price range around 0.065-0.075
 		quantity = 0.1 + float64(orderID%100)/1000
 	}
-
 	order := &models.Order{
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
@@ -401,7 +399,7 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 		Price:       price,
 		Quantity:    quantity,
 		Status:      "NEW",
-		Created:     time.Now(),
+		CreatedAt:   time.Now(),
 		TimeInForce: "GTC",
 	}
 
@@ -415,7 +413,6 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 // submitMatchingOrdersForPair submits matching buy/sell orders for a specific trading pair
 func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string, numOrders int) {
 	basePrice := suite.getBasePriceForPair(pair)
-
 	for i := 0; i < numOrders; i++ { // Submit buy order
 		buyUserIndex := (i * 2) % len(suite.testUsers)
 		buyOrder := &models.Order{
@@ -427,10 +424,9 @@ func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string
 			Price:       basePrice + float64(i%50), // Slightly increasing prices
 			Quantity:    0.001 + float64(i%100)/100000,
 			Status:      "NEW",
-			Created:     time.Now(),
+			CreatedAt:   time.Now(),
 			TimeInForce: "GTC",
 		}
-
 		// Submit sell order
 		sellUserIndex := (i*2 + 1) % len(suite.testUsers)
 		sellOrder := &models.Order{
@@ -442,7 +438,7 @@ func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string
 			Price:       basePrice + float64(i%50), // Same price for matching
 			Quantity:    0.001 + float64(i%100)/100000,
 			Status:      "NEW",
-			Created:     time.Now(),
+			CreatedAt:   time.Now(),
 			TimeInForce: "GTC",
 		}
 

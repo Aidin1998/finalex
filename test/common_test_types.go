@@ -7,11 +7,13 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // Common test types used across multiple test files
@@ -126,8 +128,19 @@ func (m *MockBookkeeperStressTest) GetAccounts(ctx context.Context, userIDs []uu
 }
 
 // BatchGetAccounts implements bookkeeper.BookkeeperService
-func (m *MockBookkeeperStressTest) BatchGetAccounts(ctx context.Context, userIDs []uuid.UUID) ([]*models.Account, error) {
-	return m.GetAccounts(ctx, userIDs)
+func (m *MockBookkeeperStressTest) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	result := make(map[string]map[string]*models.Account)
+	for _, userID := range userIDs {
+		userAccounts := make(map[string]*models.Account)
+		for _, currency := range currencies {
+			userAccounts[currency] = &models.Account{
+				ID:     uuid.New(),
+				UserID: uuid.MustParse(userID),
+			}
+		}
+		result[userID] = userAccounts
+	}
+	return result, nil
 }
 
 // GetAccount implements bookkeeper.BookkeeperService
@@ -313,3 +326,221 @@ func (m *MockWSHubStressTest) GetBroadcasts(topic string) [][]byte {
 }
 
 // --- End: Moved from trading_stress_load_test.go ---
+
+// --- Begin: Base Mock Types ---
+
+// MockBookkeeper provides base mock implementation for bookkeeper service
+type MockBookkeeper struct {
+	balances     sync.Map // userID -> map[asset]decimal.Decimal
+	reservations sync.Map // reservationID -> ReservationInfo
+	mu           sync.RWMutex
+}
+
+func NewMockBookkeeper() *MockBookkeeper {
+	return &MockBookkeeper{}
+}
+
+// Start implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) Start() error {
+	return nil
+}
+
+// Stop implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) Stop() error {
+	return nil
+}
+
+// GetAccounts implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) GetAccounts(ctx context.Context, userIDs []uuid.UUID) ([]*models.Account, error) {
+	accounts := make([]*models.Account, 0, len(userIDs))
+	for _, userID := range userIDs {
+		account := &models.Account{
+			ID:     userID,
+			UserID: userID,
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+// BatchGetAccounts implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	result := make(map[string]map[string]*models.Account)
+	for _, userID := range userIDs {
+		userAccounts := make(map[string]*models.Account)
+		for _, currency := range currencies {
+			userAccounts[currency] = &models.Account{
+				ID:     uuid.New(),
+				UserID: uuid.MustParse(userID),
+			}
+		}
+		result[userID] = userAccounts
+	}
+	return result, nil
+}
+
+// GetAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) GetAccount(ctx context.Context, userID uuid.UUID) (*models.Account, error) {
+	return &models.Account{
+		ID:     userID,
+		UserID: userID,
+	}, nil
+}
+
+// CreateAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) CreateAccount(ctx context.Context, account *models.Account) (*models.Account, error) {
+	return account, nil
+}
+
+// UpdateAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) UpdateAccount(ctx context.Context, account *models.Account) (*models.Account, error) {
+	return account, nil
+}
+
+// DeleteAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
+	return nil
+}
+
+// GetAccountBalance implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) GetAccountBalance(ctx context.Context, userID uuid.UUID, asset string) (decimal.Decimal, error) {
+	return m.GetBalance(userID.String(), asset)
+}
+
+// GetAccountBalances implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) GetAccountBalances(ctx context.Context, userID uuid.UUID) (map[string]decimal.Decimal, error) {
+	userBalances, exists := m.balances.Load(userID.String())
+	if !exists {
+		return make(map[string]decimal.Decimal), nil
+	}
+	return userBalances.(map[string]decimal.Decimal), nil
+}
+
+// SetAccountBalance implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) SetAccountBalance(ctx context.Context, userID uuid.UUID, asset string, balance decimal.Decimal) error {
+	m.SetBalance(userID.String(), asset, balance)
+	return nil
+}
+
+// Transfer implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) Transfer(ctx context.Context, fromUserID, toUserID uuid.UUID, asset string, amount decimal.Decimal) error {
+	return nil
+}
+
+// Reserve implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) Reserve(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) (string, error) {
+	reservationID := uuid.New().String()
+	reservation := ReservationInfo{
+		UserID: userID.String(),
+		Asset:  asset,
+		Amount: amount,
+	}
+	m.reservations.Store(reservationID, reservation)
+	return reservationID, nil
+}
+
+// CommitReservation implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) CommitReservation(ctx context.Context, reservationID string) error {
+	m.reservations.Delete(reservationID)
+	return nil
+}
+
+// ReleaseReservation implements bookkeeper.BookkeeperService
+func (m *MockBookkeeper) ReleaseReservation(ctx context.Context, reservationID string) error {
+	m.reservations.Delete(reservationID)
+	return nil
+}
+
+// Helper methods for testing
+func (m *MockBookkeeper) GetBalance(userID, asset string) (decimal.Decimal, error) {
+	userBalances, exists := m.balances.Load(userID)
+	if !exists {
+		return decimal.NewFromInt(10000), nil // Default test balance
+	}
+	balanceMap := userBalances.(map[string]decimal.Decimal)
+	balance, exists := balanceMap[asset]
+	if !exists {
+		return decimal.NewFromInt(10000), nil // Default test balance
+	}
+	return balance, nil
+}
+
+func (m *MockBookkeeper) SetBalance(userID, asset string, amount decimal.Decimal) {
+	userBalances, _ := m.balances.LoadOrStore(userID, make(map[string]decimal.Decimal))
+	balanceMap := userBalances.(map[string]decimal.Decimal)
+	balanceMap[asset] = amount
+	m.balances.Store(userID, balanceMap)
+}
+
+// MockWSHub provides base mock implementation for WebSocket hub
+type MockWSHub struct {
+	messages sync.Map // topic -> [][]byte
+	users    sync.Map // userID -> [][]byte
+	mu       sync.RWMutex
+}
+
+func NewMockWSHub() *MockWSHub {
+	return &MockWSHub{}
+}
+
+// Start implements ws.Hub
+func (m *MockWSHub) Start() error {
+	return nil
+}
+
+// Stop implements ws.Hub
+func (m *MockWSHub) Stop() error {
+	return nil
+}
+
+// Subscribe implements ws.Hub
+func (m *MockWSHub) Subscribe(userID string, topic string) error {
+	return nil
+}
+
+// Unsubscribe implements ws.Hub
+func (m *MockWSHub) Unsubscribe(userID string, topic string) error {
+	return nil
+}
+
+// Broadcast implements ws.Hub
+func (m *MockWSHub) Broadcast(topic string, data []byte) {
+	topicMessages, _ := m.messages.LoadOrStore(topic, make([][]byte, 0))
+	messages := topicMessages.([][]byte)
+	messages = append(messages, data)
+	m.messages.Store(topic, messages)
+}
+
+// BroadcastToUser implements ws.Hub
+func (m *MockWSHub) BroadcastToUser(userID string, data []byte) {
+	userMessages, _ := m.users.LoadOrStore(userID, make([][]byte, 0))
+	messages := userMessages.([][]byte)
+	messages = append(messages, data)
+	m.users.Store(userID, messages)
+}
+
+// Helper methods for testing
+func (m *MockWSHub) GetMessageQueue() []WSMessage {
+	var result []WSMessage
+	m.messages.Range(func(key, value interface{}) bool {
+		topic := key.(string)
+		messages := value.([][]byte)
+		for _, msg := range messages {
+			result = append(result, WSMessage{
+				Type:  "broadcast",
+				Topic: topic,
+				Data:  string(msg),
+			})
+		}
+		return true
+	})
+	return result
+}
+
+// --- End: Base Mock Types ---
+
+// createInMemoryDB creates an in-memory database for testing
+func createInMemoryDB(t testing.TB) *gorm.DB {
+	// For testing purposes, return nil to use mock services
+	return nil
+}

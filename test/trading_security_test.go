@@ -12,6 +12,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
 )
@@ -431,7 +432,7 @@ func (suite *TradingSecurityTestSuite) TestAuthenticationBypass() {
 func (suite *TradingSecurityTestSuite) TestRateLimitingSecurity() {
 	log.Println("Testing rate limiting security...")
 
-	userID := "rate_limit_test_user"
+	userID := uuid.New()
 
 	// Perform rapid requests to trigger rate limiting
 	for i := 0; i < 200; i++ {
@@ -662,7 +663,7 @@ func (suite *TradingSecurityTestSuite) TestSessionSecurity() {
 func (suite *TradingSecurityTestSuite) TestConcurrentSecurityViolations() {
 	log.Println("Testing concurrent security violations...")
 
-	userID := "concurrent_test_user"
+	userID := uuid.New()
 
 	// Simulate concurrent malicious requests
 	const concurrency = 50
