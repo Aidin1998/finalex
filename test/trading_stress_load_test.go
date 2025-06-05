@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Orbit-CEX/Finalex/internal/trading"
-	"github.com/Orbit-CEX/Finalex/internal/trading/models"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
@@ -22,7 +22,7 @@ import (
 // TradingStressLoadTestSuite provides comprehensive stress and load testing for trading operations
 type TradingStressLoadTestSuite struct {
 	suite.Suite
-	service        trading.Service
+	service        trading.TradingService
 	mockBookkeeper *MockBookkeeperStressTest
 	mockWSHub      *MockWSHubStressTest
 	testUsers      []string
@@ -287,6 +287,14 @@ func (suite *TradingStressLoadTestSuite) SetupSuite() {
 
 	// Test trading pairs
 	suite.testPairs = []string{"BTCUSDT", "ETHUSDT", "ETHBTC"}
+
+	// Create trading service with mock adapters
+	tradingService := &MockTradingServiceStress{
+		bookkeeper: suite.mockBookkeeper,
+		wsHub:      suite.mockWSHub,
+		metrics:    suite.metrics,
+	}
+	suite.service = tradingService
 }
 
 // TearDownSuite cleans up after all tests
@@ -482,192 +490,117 @@ func (suite *TradingStressLoadTestSuite) TestMarketDataBroadcastPerformance() {
 	})
 }
 
-// Helper method to submit a random order
-func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int) {
-	defer func() {
-		if r := recover(); r != nil {
-			suite.metrics.RecordError()
+// MockTradingServiceStress provides a mock trading service for stress testing
+type MockTradingServiceStress struct {
+	bookkeeper *MockBookkeeperStressTest
+	wsHub      *MockWSHubStressTest
+	metrics    *StressTestMetrics
+	mu         sync.RWMutex
+}
+
+func (m *MockTradingServiceStress) Start() error {
+	return nil
+}
+
+func (m *MockTradingServiceStress) Stop() error {
+	return nil
+}
+
+func (m *MockTradingServiceStress) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
+	// Simulate order processing latency
+	start := time.Now()
+
+	// Validate order
+	if order.Quantity.LessThanOrEqual(decimal.Zero) {
+		m.metrics.RecordOrderFailed()
+		return nil, fmt.Errorf("invalid quantity")
+	}
+
+	// Check balance simulation
+	if order.Side == models.SideBuy {
+		requiredBalance := order.Price.Mul(order.Quantity)
+		balance, err := m.bookkeeper.GetBalance(order.UserID, "USDT")
+		if err != nil || balance.LessThan(requiredBalance) {
+			m.metrics.RecordOrderFailed()
+			return nil, fmt.Errorf("insufficient balance")
 		}
-	}()
-
-	suite.metrics.RecordOrderSubmission()
-	startTime := time.Now()
-
-	// Generate random order parameters
-	userIndex := rand.Intn(len(suite.testUsers))
-	userID := suite.testUsers[userIndex]
-	pair := suite.testPairs[rand.Intn(len(suite.testPairs))]
-
-	side := models.SideBuy
-	if rand.Float32() > 0.5 {
-		side = models.SideSell
 	}
 
-	orderType := models.OrderTypeLimit
-	if rand.Float32() > 0.8 {
-		orderType = models.OrderTypeMarket
-	}
+	// Simulate processing delay
+	processingDelay := time.Duration(rand.Intn(10)) * time.Microsecond
+	time.Sleep(processingDelay)
 
-	// Generate realistic price and quantity
-	var price, quantity decimal.Decimal
-	switch pair {
-	case "BTCUSDT":
-		price = decimal.NewFromFloat(45000 + rand.Float64()*10000)  // 45k-55k
-		quantity = decimal.NewFromFloat(0.001 + rand.Float64()*0.1) // 0.001-0.101
-	case "ETHUSDT":
-		price = decimal.NewFromFloat(3000 + rand.Float64()*1000)   // 3k-4k
-		quantity = decimal.NewFromFloat(0.01 + rand.Float64()*1.0) // 0.01-1.01
-	default:
-		price = decimal.NewFromFloat(0.05 + rand.Float64()*0.02)  // 0.05-0.07 (ETH/BTC)
-		quantity = decimal.NewFromFloat(0.1 + rand.Float64()*5.0) // 0.1-5.1
-	}
+	// Set order status
+	order.Status = models.OrderStatusNew
+	order.Created = time.Now()
 
-	order := &models.Order{
-		ID:       fmt.Sprintf("stress_%d_%d_%d", workerID, orderID, time.Now().UnixNano()),
-		UserID:   userID,
-		Symbol:   pair,
-		Side:     side,
-		Type:     orderType,
-		Price:    price,
-		Quantity: quantity,
-		Status:   models.OrderStatusPending,
-		Created:  time.Now(),
-	}
+	// Record metrics
+	latency := time.Since(start)
+	m.metrics.RecordOrderProcessed(latency)
 
-	// Submit order (simulate processing)
-	time.Sleep(time.Microsecond * time.Duration(rand.Intn(100))) // Simulate processing delay
+	// Simulate order matching probability
+	if rand.Float32() > 0.6 {
+		m.metrics.RecordOrderMatched()
 
-	// Record successful processing
-	latency := time.Since(startTime)
-	suite.metrics.RecordOrderProcessed(latency)
-
-	// Simulate matching (probabilistic)
-	if rand.Float32() > 0.7 {
-		suite.metrics.RecordOrderMatched()
-
+		// Simulate trade execution
 		if rand.Float32() > 0.5 {
-			suite.metrics.RecordTradeExecuted()
+			m.metrics.RecordTradeExecuted()
+
+			// Broadcast trade update
+			tradeMsg := fmt.Sprintf(`{"type":"trade","symbol":"%s","price":"%s","quantity":"%s","time":%d}`,
+				order.Symbol, order.Price.String(), order.Quantity.String(), time.Now().UnixNano())
+			m.wsHub.Broadcast(fmt.Sprintf("trades.%s", order.Symbol), []byte(tradeMsg))
 		}
 	}
+
+	return order, nil
 }
 
-// Helper method to submit matching orders for a specific pair
-func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string, orderCount int) {
-	basePrice := decimal.NewFromFloat(50000) // Base price for matching
-	if pair == "ETHUSDT" {
-		basePrice = decimal.NewFromFloat(3500)
-	} else if pair == "ETHBTC" {
-		basePrice = decimal.NewFromFloat(0.07)
-	}
-
-	for i := 0; i < orderCount; i++ {
-		// Submit buy order
-		buyOrder := &models.Order{
-			ID:       fmt.Sprintf("match_buy_%s_%d", pair, i),
-			UserID:   suite.testUsers[i%len(suite.testUsers)],
-			Symbol:   pair,
-			Side:     models.SideBuy,
-			Type:     models.OrderTypeLimit,
-			Price:    basePrice.Sub(decimal.NewFromFloat(float64(i % 100))), // Slight price variation
-			Quantity: decimal.NewFromFloat(0.001 + float64(i%10)*0.001),
-			Status:   models.OrderStatusPending,
-			Created:  time.Now(),
-		}
-
-		// Submit sell order
-		sellOrder := &models.Order{
-			ID:       fmt.Sprintf("match_sell_%s_%d", pair, i),
-			UserID:   suite.testUsers[(i+1)%len(suite.testUsers)],
-			Symbol:   pair,
-			Side:     models.SideSell,
-			Type:     models.OrderTypeLimit,
-			Price:    basePrice.Add(decimal.NewFromFloat(float64(i % 100))), // Slight price variation
-			Quantity: decimal.NewFromFloat(0.001 + float64(i%10)*0.001),
-			Status:   models.OrderStatusPending,
-			Created:  time.Now(),
-		}
-
-		suite.metrics.RecordOrderSubmission()
-		suite.metrics.RecordOrderSubmission()
-
-		// Simulate processing
-		time.Sleep(time.Microsecond * 50)
-
-		suite.metrics.RecordOrderProcessed(time.Microsecond * 25)
-		suite.metrics.RecordOrderProcessed(time.Microsecond * 25)
-
-		// Higher probability of matching
-		if rand.Float32() > 0.3 {
-			suite.metrics.RecordOrderMatched()
-			suite.metrics.RecordOrderMatched()
-			suite.metrics.RecordTradeExecuted()
-		}
-
-		// Simulate WebSocket broadcast for trade
-		if i%10 == 0 {
-			tradeMessage := fmt.Sprintf(`{"pair":"%s","price":"%s","qty":"%s","time":%d}`,
-				pair, basePrice.String(), "0.001", time.Now().UnixNano())
-			suite.mockWSHub.Broadcast(fmt.Sprintf("trades.%s", pair), []byte(tradeMessage))
-		}
-	}
+func (m *MockTradingServiceStress) CancelOrder(ctx context.Context, orderID string) error {
+	// Simulate cancellation processing
+	time.Sleep(time.Microsecond * 50)
+	return nil
 }
 
-// Helper method to measure latency at specific load level
-func (suite *TradingStressLoadTestSuite) measureLatencyAtLoad(orderRate int, duration time.Duration) {
-	fmt.Printf("Measuring latency at %d orders/sec for %v\n", orderRate, duration)
+func (m *MockTradingServiceStress) GetOrder(orderID string) (*models.Order, error) {
+	return nil, fmt.Errorf("order not found")
+}
 
-	var latencies []time.Duration
-	var latencyMutex sync.Mutex
+func (m *MockTradingServiceStress) GetOrders(userID, symbol, status string, limit, offset string) ([]*models.Order, int64, error) {
+	return []*models.Order{}, 0, nil
+}
 
-	startTime := time.Now()
-	orderCount := 0
+func (m *MockTradingServiceStress) GetOrderBook(symbol string, depth int) (*models.OrderBookSnapshot, error) {
+	return &models.OrderBookSnapshot{
+		Symbol:    symbol,
+		Timestamp: time.Now(),
+		Bids:      []models.OrderBookEntry{},
+		Asks:      []models.OrderBookEntry{},
+	}, nil
+}
 
-	ticker := time.NewTicker(time.Duration(1000/orderRate) * time.Millisecond)
-	defer ticker.Stop()
+func (m *MockTradingServiceStress) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
+	return []byte{}, nil
+}
 
-	for time.Since(startTime) < duration {
-		select {
-		case <-ticker.C:
-			go func(orderNum int) {
-				orderStart := time.Now()
-				suite.submitRandomOrder(0, orderNum)
-				latency := time.Since(orderStart)
+func (m *MockTradingServiceStress) GetTradingPairs() ([]*models.TradingPair, error) {
+	return []*models.TradingPair{}, nil
+}
 
-				latencyMutex.Lock()
-				latencies = append(latencies, latency)
-				latencyMutex.Unlock()
-			}(orderCount)
-			orderCount++
-		case <-suite.ctx.Done():
-			return
-		}
-	}
+func (m *MockTradingServiceStress) GetTradingPair(symbol string) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not found")
+}
 
-	// Calculate latency statistics
-	if len(latencies) > 0 {
-		var total time.Duration
-		min := latencies[0]
-		max := latencies[0]
+func (m *MockTradingServiceStress) CreateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 
-		for _, latency := range latencies {
-			total += latency
-			if latency < min {
-				min = latency
-			}
-			if latency > max {
-				max = latency
-			}
-		}
+func (m *MockTradingServiceStress) UpdateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 
-		avg := total / time.Duration(len(latencies))
-
-		fmt.Printf("Latency at %d OPS: avg=%v, min=%v, max=%v, samples=%d\n",
-			orderRate, avg, min, max, len(latencies))
-
-		// Verify latency requirements
-		suite.Assert().Less(avg.Milliseconds(), int64(100), "Average latency should be less than 100ms")
-		suite.Assert().Less(max.Milliseconds(), int64(500), "Max latency should be less than 500ms")
-	}
+func (m *MockTradingServiceStress) ListOrders(userID string, filter *models.OrderFilter) ([]*models.Order, error) {
+	return []*models.Order{}, nil
 }
 
 // TestStressLoadTestSuite runs the entire stress test suite

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Orbit-CEX/Finalex/internal/trading"
-	"github.com/Orbit-CEX/Finalex/internal/trading/models"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
 )

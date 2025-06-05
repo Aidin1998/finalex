@@ -1,4 +1,4 @@
-﻿//go:build userauth
+//go:build userauth
 
 package test
 

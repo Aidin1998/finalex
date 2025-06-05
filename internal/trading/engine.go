@@ -65,9 +65,8 @@ func NewOrderEngine(logger *zap.Logger, db *gorm.DB) (*OrderEngine, error) {
 
 	// Create trigger monitor for stop orders and other conditional orders
 	triggerMonitor := trigger.NewTriggerMonitor(logger.Sugar(), orderRepo, time.Millisecond*100)
-
 	// Create the actual engine implementation
-	matchingEngine, err := engine.NewMatchingEngine(
+	matchingEngine := engine.NewMatchingEngine(
 		orderRepo,
 		tradeRepo,
 		logger.Sugar(),
@@ -78,10 +77,6 @@ func NewOrderEngine(logger *zap.Logger, db *gorm.DB) (*OrderEngine, error) {
 		settlementEngine,
 		triggerMonitor,
 	)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create matching engine: %w", err)
-	}
 
 	return &OrderEngine{
 		logger: logger,

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Orbit-CEX/Finalex/internal/trading/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
