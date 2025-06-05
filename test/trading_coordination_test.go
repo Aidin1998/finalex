@@ -72,57 +72,69 @@ func (suite *TradingCoordinationTestSuite) TestTradeCoordination() {
 	suite.Require().NoError(err)
 
 	suite.Run("ValidTradeCoordination", func() {
-		trade := &coordination.CoordinationTrade{
-			ID:          uuid.New(),
-			BuyOrderID:  uuid.New(),
-			SellOrderID: uuid.New(),
-			BuyUserID:   uuid.New(),
-			SellUserID:  uuid.New(),
-			Pair:        "BTCUSDT",
-			Price:       decimal.NewFromFloat(50000.00),
-			Quantity:    decimal.NewFromFloat(0.001),
-			BuyFee:      decimal.NewFromFloat(0.5),
-			SellFee:     decimal.NewFromFloat(0.5),
-			Timestamp:   time.Now(),
+		testOrder := &coordination.CoordinationTrade{
+			ID:             uuid.New(),
+			OrderID:        uuid.New(),
+			CounterOrderID: uuid.New(),
+			UserID:         uuid.New(),
+			CounterUserID:  uuid.New(),
+			Pair:           "BTCUSDT",
+			Price:          decimal.NewFromFloat(50000.00),
+			Quantity:       decimal.NewFromFloat(0.001),
+			Side:           "buy",
+			Maker:          false,
+			CreatedAt:      time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		err := suite.service.CoordinateTrade(ctx, trade)
+		err := suite.service.CoordinateTrade(ctx, testOrder)
 		suite.NoError(err)
 	})
 
 	suite.Run("InvalidTradeParameters", func() {
-		trade := &coordination.CoordinationTrade{
-			ID:        uuid.New(),
-			Pair:      "BTCUSDT",
-			Price:     decimal.NewFromFloat(-1), // Invalid price
-			Quantity:  decimal.NewFromFloat(0.001),
-			Timestamp: time.Now(),
+		testOrder := &coordination.CoordinationTrade{
+			ID:             uuid.New(),
+			OrderID:        uuid.New(),
+			CounterOrderID: uuid.New(),
+			UserID:         uuid.New(),
+			CounterUserID:  uuid.New(),
+			Pair:           "BTCUSDT",
+			Price:          decimal.NewFromFloat(-1), // Invalid price
+			Quantity:       decimal.NewFromFloat(0.001),
+			Side:           "buy",
+			Maker:          false,
+			CreatedAt:      time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		err := suite.service.CoordinateTrade(ctx, trade)
+		err := suite.service.CoordinateTrade(ctx, testOrder)
 		suite.Error(err)
 		suite.Contains(err.Error(), "invalid")
 	})
 
 	suite.Run("ZeroQuantityTrade", func() {
-		trade := &coordination.CoordinationTrade{
-			ID:        uuid.New(),
-			Pair:      "BTCUSDT",
-			Price:     decimal.NewFromFloat(50000),
-			Quantity:  decimal.Zero, // Invalid quantity
-			Timestamp: time.Now(),
+		testOrder := &coordination.CoordinationTrade{
+			ID:             uuid.New(),
+			OrderID:        uuid.New(),
+			CounterOrderID: uuid.New(),
+			UserID:         uuid.New(),
+			CounterUserID:  uuid.New(),
+			Pair:           "BTCUSDT",
+			Price:          decimal.NewFromFloat(50000),
+			Quantity:       decimal.Zero, // Invalid quantity
+			Side:           "buy",
+			Maker:          false,
+			CreatedAt:      time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		err := suite.service.CoordinateTrade(ctx, trade)
+		err := suite.service.CoordinateTrade(ctx, testOrder)
 		suite.Error(err)
 		suite.Contains(err.Error(), "quantity")
 	})
@@ -144,24 +156,24 @@ func (suite *TradingCoordinationTestSuite) TestConcurrentTradeCoordination() {
 			go func(tradeID int) {
 				defer wg.Done()
 
-				trade := &coordination.CoordinationTrade{
-					ID:          uuid.New(),
-					BuyOrderID:  uuid.New(),
-					SellOrderID: uuid.New(),
-					BuyUserID:   uuid.New(),
-					SellUserID:  uuid.New(),
-					Pair:        fmt.Sprintf("TRADE%dUSDT", tradeID%10), // Spread across 10 pairs
-					Price:       decimal.NewFromFloat(50000.00 + float64(tradeID)),
-					Quantity:    decimal.NewFromFloat(0.001 + float64(tradeID)*0.0001),
-					BuyFee:      decimal.NewFromFloat(0.5),
-					SellFee:     decimal.NewFromFloat(0.5),
-					Timestamp:   time.Now(),
+				testOrder := &coordination.CoordinationTrade{
+					ID:             uuid.New(),
+					OrderID:        uuid.New(),
+					CounterOrderID: uuid.New(),
+					UserID:         uuid.New(),
+					CounterUserID:  uuid.New(),
+					Pair:           fmt.Sprintf("TRADE%dUSDT", tradeID%10), // Spread across 10 pairs
+					Price:          decimal.NewFromFloat(50000.00 + float64(tradeID)),
+					Quantity:       decimal.NewFromFloat(0.001 + float64(tradeID)*0.0001),
+					Side:           "buy",
+					Maker:          false,
+					CreatedAt:      time.Now(),
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 
-				if err := suite.service.CoordinateTrade(ctx, trade); err != nil {
+				if err := suite.service.CoordinateTrade(ctx, testOrder); err != nil {
 					atomic.AddInt64(&errorCount, 1)
 					suite.T().Logf("Trade %d failed: %v", tradeID, err)
 				} else {
@@ -186,25 +198,25 @@ func (suite *TradingCoordinationTestSuite) TestWorkflowManagement() {
 	suite.Require().NoError(err)
 
 	suite.Run("WorkflowStepExecution", func() {
-		trade := &coordination.CoordinationTrade{
-			ID:          uuid.New(),
-			BuyOrderID:  uuid.New(),
-			SellOrderID: uuid.New(),
-			BuyUserID:   uuid.New(),
-			SellUserID:  uuid.New(),
-			Pair:        "BTCUSDT",
-			Price:       decimal.NewFromFloat(50000.00),
-			Quantity:    decimal.NewFromFloat(0.001),
-			BuyFee:      decimal.NewFromFloat(0.5),
-			SellFee:     decimal.NewFromFloat(0.5),
-			Timestamp:   time.Now(),
+		testOrder := &coordination.CoordinationTrade{
+			ID:             uuid.New(),
+			OrderID:        uuid.New(),
+			CounterOrderID: uuid.New(),
+			UserID:         uuid.New(),
+			CounterUserID:  uuid.New(),
+			Pair:           "BTCUSDT",
+			Price:          decimal.NewFromFloat(50000.00),
+			Quantity:       decimal.NewFromFloat(0.001),
+			Side:           "buy",
+			Maker:          false,
+			CreatedAt:      time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		start := time.Now()
-		err := suite.service.CoordinateTrade(ctx, trade)
+		err := suite.service.CoordinateTrade(ctx, testOrder)
 		elapsed := time.Since(start)
 
 		suite.NoError(err)
@@ -213,25 +225,25 @@ func (suite *TradingCoordinationTestSuite) TestWorkflowManagement() {
 	})
 
 	suite.Run("WorkflowTimeout", func() {
-		trade := &coordination.CoordinationTrade{
-			ID:          uuid.New(),
-			BuyOrderID:  uuid.New(),
-			SellOrderID: uuid.New(),
-			BuyUserID:   uuid.New(),
-			SellUserID:  uuid.New(),
-			Pair:        "BTCUSDT",
-			Price:       decimal.NewFromFloat(50000.00),
-			Quantity:    decimal.NewFromFloat(0.001),
-			BuyFee:      decimal.NewFromFloat(0.5),
-			SellFee:     decimal.NewFromFloat(0.5),
-			Timestamp:   time.Now(),
+		testOrder := &coordination.CoordinationTrade{
+			ID:             uuid.New(),
+			OrderID:        uuid.New(),
+			CounterOrderID: uuid.New(),
+			UserID:         uuid.New(),
+			CounterUserID:  uuid.New(),
+			Pair:           "BTCUSDT",
+			Price:          decimal.NewFromFloat(50000.00),
+			Quantity:       decimal.NewFromFloat(0.001),
+			Side:           "buy",
+			Maker:          false,
+			CreatedAt:      time.Now(),
 		}
 
 		// Very short timeout to test timeout handling
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Microsecond)
 		defer cancel()
 
-		err := suite.service.CoordinateTrade(ctx, trade)
+		err := suite.service.CoordinateTrade(ctx, testOrder)
 
 		// Should either succeed very quickly or timeout
 		if err != nil {
@@ -256,7 +268,7 @@ func (suite *TradingCoordinationTestSuite) TestErrorHandling() {
 	suite.Run("EmptyTradeFields", func() {
 		trade := &coordination.CoordinationTrade{
 			// Missing required fields
-			Timestamp: time.Now(),
+			CreatedAt: time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -272,7 +284,7 @@ func (suite *TradingCoordinationTestSuite) TestErrorHandling() {
 			Pair:      "BTCUSDT",
 			Price:     decimal.NewFromFloat(50000),
 			Quantity:  decimal.NewFromFloat(0.001),
-			Timestamp: time.Now(),
+			CreatedAt: time.Now(),
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -307,22 +319,22 @@ func (suite *TradingCoordinationTestSuite) TestPerformanceUnderLoad() {
 				defer wg.Done()
 
 				for j := 0; j < tradesPerWorker; j++ {
-					trade := &coordination.CoordinationTrade{
-						ID:          uuid.New(),
-						BuyOrderID:  uuid.New(),
-						SellOrderID: uuid.New(),
-						BuyUserID:   uuid.New(),
-						SellUserID:  uuid.New(),
-						Pair:        fmt.Sprintf("PERF%dUSDT", (workerID*tradesPerWorker+j)%20),
-						Price:       decimal.NewFromFloat(50000.00 + float64(j)),
-						Quantity:    decimal.NewFromFloat(0.001 + float64(j)*0.0001),
-						BuyFee:      decimal.NewFromFloat(0.5),
-						SellFee:     decimal.NewFromFloat(0.5),
-						Timestamp:   time.Now(),
+					testOrder := &coordination.CoordinationTrade{
+						ID:             uuid.New(),
+						OrderID:        uuid.New(),
+						CounterOrderID: uuid.New(),
+						UserID:         uuid.New(),
+						CounterUserID:  uuid.New(),
+						Pair:           fmt.Sprintf("PERF%dUSDT", (workerID*tradesPerWorker+j)%20),
+						Price:          decimal.NewFromFloat(50000.00 + float64(j)),
+						Quantity:       decimal.NewFromFloat(0.001 + float64(j)*0.0001),
+						Side:           "buy",
+						Maker:          false,
+						CreatedAt:      time.Now(),
 					}
 
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					if err := suite.service.CoordinateTrade(ctx, trade); err != nil {
+					if err := suite.service.CoordinateTrade(ctx, testOrder); err != nil {
 						atomic.AddInt64(&totalErrors, 1)
 					} else {
 						atomic.AddInt64(&totalProcessed, 1)
@@ -365,24 +377,24 @@ func (suite *TradingCoordinationTestSuite) TestResourceManagement() {
 			go func(tradeID int) {
 				defer wg.Done()
 
-				trade := &coordination.CoordinationTrade{
-					ID:          uuid.New(),
-					BuyOrderID:  uuid.New(),
-					SellOrderID: uuid.New(),
-					BuyUserID:   uuid.New(),
-					SellUserID:  uuid.New(),
-					Pair:        fmt.Sprintf("MEM%dUSDT", tradeID%50),
-					Price:       decimal.NewFromFloat(50000.00),
-					Quantity:    decimal.NewFromFloat(0.001),
-					BuyFee:      decimal.NewFromFloat(0.5),
-					SellFee:     decimal.NewFromFloat(0.5),
-					Timestamp:   time.Now(),
+				testOrder := &coordination.CoordinationTrade{
+					ID:             uuid.New(),
+					OrderID:        uuid.New(),
+					CounterOrderID: uuid.New(),
+					UserID:         uuid.New(),
+					CounterUserID:  uuid.New(),
+					Pair:           fmt.Sprintf("MEM%dUSDT", tradeID%50),
+					Price:          decimal.NewFromFloat(50000.00),
+					Quantity:       decimal.NewFromFloat(0.001),
+					Side:           "buy",
+					Maker:          false,
+					CreatedAt:      time.Now(),
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 
-				suite.service.CoordinateTrade(ctx, trade)
+				suite.service.CoordinateTrade(ctx, testOrder)
 			}(i)
 		}
 
@@ -404,22 +416,22 @@ func (suite *TradingCoordinationTestSuite) TestResourceManagement() {
 					case <-stopChan:
 						return
 					default:
-						trade := &coordination.CoordinationTrade{
-							ID:          uuid.New(),
-							BuyOrderID:  uuid.New(),
-							SellOrderID: uuid.New(),
-							BuyUserID:   uuid.New(),
-							SellUserID:  uuid.New(),
-							Pair:        "SHUTDOWNUSDT",
-							Price:       decimal.NewFromFloat(50000.00),
-							Quantity:    decimal.NewFromFloat(0.001),
-							BuyFee:      decimal.NewFromFloat(0.5),
-							SellFee:     decimal.NewFromFloat(0.5),
-							Timestamp:   time.Now(),
+						testOrder := &coordination.CoordinationTrade{
+							ID:             uuid.New(),
+							OrderID:        uuid.New(),
+							CounterOrderID: uuid.New(),
+							UserID:         uuid.New(),
+							CounterUserID:  uuid.New(),
+							Pair:           "SHUTDOWNUSDT",
+							Price:          decimal.NewFromFloat(50000.00),
+							Quantity:       decimal.NewFromFloat(0.001),
+							Side:           "buy",
+							Maker:          false,
+							CreatedAt:      time.Now(),
 						}
 
 						ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-						suite.service.CoordinateTrade(ctx, trade)
+						suite.service.CoordinateTrade(ctx, testOrder)
 						cancel()
 
 						time.Sleep(time.Millisecond * 10)
@@ -455,30 +467,30 @@ func (suite *TradingCoordinationTestSuite) TestTradeValidation() {
 	suite.Run("ValidTradeValidation", func() {
 		validTrades := []*coordination.CoordinationTrade{
 			{
-				ID:          uuid.New(),
-				BuyOrderID:  uuid.New(),
-				SellOrderID: uuid.New(),
-				BuyUserID:   uuid.New(),
-				SellUserID:  uuid.New(),
-				Pair:        "BTCUSDT",
-				Price:       decimal.NewFromFloat(50000.00),
-				Quantity:    decimal.NewFromFloat(0.001),
-				BuyFee:      decimal.NewFromFloat(0.5),
-				SellFee:     decimal.NewFromFloat(0.5),
-				Timestamp:   time.Now(),
+				ID:             uuid.New(),
+				OrderID:        uuid.New(),
+				CounterOrderID: uuid.New(),
+				UserID:         uuid.New(),
+				CounterUserID:  uuid.New(),
+				Pair:           "BTCUSDT",
+				Price:          decimal.NewFromFloat(50000.00),
+				Quantity:       decimal.NewFromFloat(0.001),
+				Side:           "buy",
+				Maker:          false,
+				CreatedAt:      time.Now(),
 			},
 			{
-				ID:          uuid.New(),
-				BuyOrderID:  uuid.New(),
-				SellOrderID: uuid.New(),
-				BuyUserID:   uuid.New(),
-				SellUserID:  uuid.New(),
-				Pair:        "ETHUSDT",
-				Price:       decimal.NewFromFloat(3000.00),
-				Quantity:    decimal.NewFromFloat(0.1),
-				BuyFee:      decimal.NewFromFloat(3.0),
-				SellFee:     decimal.NewFromFloat(3.0),
-				Timestamp:   time.Now(),
+				ID:             uuid.New(),
+				OrderID:        uuid.New(),
+				CounterOrderID: uuid.New(),
+				UserID:         uuid.New(),
+				CounterUserID:  uuid.New(),
+				Pair:           "ETHUSDT",
+				Price:          decimal.NewFromFloat(3000.00),
+				Quantity:       decimal.NewFromFloat(0.1),
+				Side:           "buy",
+				Maker:          false,
+				CreatedAt:      time.Now(),
 			},
 		}
 
@@ -498,31 +510,31 @@ func (suite *TradingCoordinationTestSuite) TestTradeValidation() {
 				Pair:      "BTCUSDT",
 				Price:     decimal.NewFromFloat(50000.00),
 				Quantity:  decimal.NewFromFloat(0.001),
-				Timestamp: time.Now(),
+				CreatedAt: time.Now(),
 			},
 			{
 				// Negative price
-				ID:          uuid.New(),
-				BuyOrderID:  uuid.New(),
-				SellOrderID: uuid.New(),
-				BuyUserID:   uuid.New(),
-				SellUserID:  uuid.New(),
-				Pair:        "BTCUSDT",
-				Price:       decimal.NewFromFloat(-50000.00),
-				Quantity:    decimal.NewFromFloat(0.001),
-				Timestamp:   time.Now(),
+				ID:             uuid.New(),
+				OrderID:        uuid.New(),
+				CounterOrderID: uuid.New(),
+				UserID:         uuid.New(),
+				CounterUserID:  uuid.New(),
+				Pair:           "BTCUSDT",
+				Price:          decimal.NewFromFloat(-50000.00),
+				Quantity:       decimal.NewFromFloat(0.001),
+				CreatedAt:      time.Now(),
 			},
 			{
 				// Zero quantity
-				ID:          uuid.New(),
-				BuyOrderID:  uuid.New(),
-				SellOrderID: uuid.New(),
-				BuyUserID:   uuid.New(),
-				SellUserID:  uuid.New(),
-				Pair:        "BTCUSDT",
-				Price:       decimal.NewFromFloat(50000.00),
-				Quantity:    decimal.Zero,
-				Timestamp:   time.Now(),
+				ID:             uuid.New(),
+				OrderID:        uuid.New(),
+				CounterOrderID: uuid.New(),
+				UserID:         uuid.New(),
+				CounterUserID:  uuid.New(),
+				Pair:           "BTCUSDT",
+				Price:          decimal.NewFromFloat(50000.00),
+				Quantity:       decimal.Zero,
+				CreatedAt:      time.Now(),
 			},
 		}
 
@@ -559,22 +571,22 @@ func (suite *TradingCoordinationTestSuite) TestCoordinationBenchmarks() {
 				defer wg.Done()
 
 				for i := 0; i < batchSize; i++ {
-					trade := &coordination.CoordinationTrade{
-						ID:          uuid.New(),
-						BuyOrderID:  uuid.New(),
-						SellOrderID: uuid.New(),
-						BuyUserID:   uuid.New(),
-						SellUserID:  uuid.New(),
-						Pair:        fmt.Sprintf("BENCH%dUSDT", (batchID*batchSize+i)%10),
-						Price:       decimal.NewFromFloat(50000.00),
-						Quantity:    decimal.NewFromFloat(0.001),
-						BuyFee:      decimal.NewFromFloat(0.5),
-						SellFee:     decimal.NewFromFloat(0.5),
-						Timestamp:   time.Now(),
+					testOrder := &coordination.CoordinationTrade{
+						ID:             uuid.New(),
+						OrderID:        uuid.New(),
+						CounterOrderID: uuid.New(),
+						UserID:         uuid.New(),
+						CounterUserID:  uuid.New(),
+						Pair:           fmt.Sprintf("BENCH%dUSDT", (batchID*batchSize+i)%10),
+						Price:          decimal.NewFromFloat(50000.00),
+						Quantity:       decimal.NewFromFloat(0.001),
+						Side:           "buy",
+						Maker:          false,
+						CreatedAt:      time.Now(),
 					}
 
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					suite.service.CoordinateTrade(ctx, trade)
+					suite.service.CoordinateTrade(ctx, testOrder)
 					cancel()
 				}
 			}(batch)

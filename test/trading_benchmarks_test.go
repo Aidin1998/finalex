@@ -3,20 +3,19 @@
 package test
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
-	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"github.com/stretchr/testify/assert"
 )
+
+// --- Removed duplicate inline mock types. Use shared types from common_test_types.go instead. ---
+// import "test/common_test_types.go" for MockBookkeeperStressTest, MockWSHubStressTest, MockConnection, WSMessage, ReservationInfo
 
 // BenchmarkTradingEngine provides realistic benchmark scenarios for the trading engine
 func BenchmarkTradingEngine(b *testing.B) {
@@ -24,7 +23,8 @@ func BenchmarkTradingEngine(b *testing.B) {
 	mockBookkeeper := &MockBookkeeperStressTest{}
 	mockWSHub := &MockWSHubStressTest{}
 
-	// Set up test users with realistic balances	testUsers := make([]uuid.UUID, 100)
+	// Set up test users with realistic balances
+	testUsers := make([]uuid.UUID, 100)
 	for i := 0; i < len(testUsers); i++ {
 		testUsers[i] = uuid.New()
 		mockBookkeeper.SetBalance(testUsers[i].String(), "BTC", decimal.NewFromFloat(1.0))
@@ -65,7 +65,7 @@ func BenchmarkTradingEngine(b *testing.B) {
 			userIndex := 0
 			for pb.Next() {
 				user := testUsers[userIndex%len(testUsers)]
-				_, _ = mockBookkeeper.GetBalance(user, "USDT")
+				_, _ = mockBookkeeper.GetBalance(user.String(), "USDT")
 				userIndex++
 			}
 		})
@@ -126,11 +126,11 @@ func BenchmarkOrderBookOperations(b *testing.B) { // Mock order book operations
 			ID:        uuid.New(),
 			UserID:    uuid.New(),
 			Symbol:    "BTCUSDT",
-			Side:      models.SideBuy,
-			Type:      models.OrderTypeLimit,
+			Side:      "BUY",
+			Type:      "LIMIT",
 			Price:     50000 + float64(i%1000),
 			Quantity:  0.001 + float64(i%100)*0.001,
-			Status:    models.OrderStatusPending,
+			Status:    "NEW",
 			CreatedAt: time.Now(),
 		}
 	}
@@ -154,14 +154,15 @@ func BenchmarkOrderBookOperations(b *testing.B) { // Mock order book operations
 			time.Sleep(time.Nanosecond * 50) // Simulate processing time
 		}
 	})
-
 	b.Run("PriceMatching", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			buyOrder := orders[i%len(orders)]
 			sellOrder := orders[(i+1)%len(orders)]
 			// Simulate price matching logic
-			_ = buyOrder.Price.Cmp(sellOrder.Price)
+			if buyOrder.Price >= sellOrder.Price {
+				// Would match
+			}
 			time.Sleep(time.Nanosecond * 200) // Simulate matching time
 		}
 	})
@@ -195,17 +196,17 @@ func submitBenchmarkOrder(bookkeeper *MockBookkeeperStressTest, wsHub *MockWSHub
 		ID:        uuid.New(),
 		UserID:    user,
 		Symbol:    "BTCUSDT",
-		Side:      models.SideBuy,
-		Type:      models.OrderTypeLimit,
+		Side:      "BUY",
+		Type:      "LIMIT",
 		Price:     50000 + rand.Float64()*1000,
 		Quantity:  0.001 + rand.Float64()*0.01,
-		Status:    models.OrderStatusPending,
+		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
 
 	// Simulate order processing
 	_, _ = bookkeeper.GetBalance(user.String(), "USDT")
-	reservationID, _ := bookkeeper.ReserveBalance(user.String(), "USDT", order.Price*order.Quantity)
+	reservationID, _ := bookkeeper.ReserveBalance(user.String(), "USDT", decimal.NewFromFloat(order.Price*order.Quantity))
 	_ = bookkeeper.CommitReservation(reservationID)
 	// Simulate WebSocket notification
 	message := fmt.Sprintf(`{"type":"order","id":"%s","status":"filled"}`, order.ID)
@@ -218,30 +219,28 @@ func performBenchmarkMatching(bookkeeper *MockBookkeeperStressTest, wsHub *MockW
 
 	price := 50000.0
 	quantity := 0.001
-
 	// Simulate buy order processing
 	buyOrder := &models.Order{
 		ID:        uuid.New(),
 		UserID:    buyUser,
 		Symbol:    "BTCUSDT",
-		Side:      models.SideBuy,
-		Type:      models.OrderTypeLimit,
+		Side:      "BUY",
+		Type:      "LIMIT",
 		Price:     price,
 		Quantity:  quantity,
-		Status:    models.OrderStatusPending,
+		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
-
 	// Simulate sell order processing
 	sellOrder := &models.Order{
 		ID:        uuid.New(),
 		UserID:    sellUser,
 		Symbol:    "BTCUSDT",
-		Side:      models.SideSell,
-		Type:      models.OrderTypeLimit,
+		Side:      "SELL",
+		Type:      "LIMIT",
 		Price:     price,
 		Quantity:  quantity,
-		Status:    models.OrderStatusPending,
+		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
 
@@ -249,8 +248,8 @@ func performBenchmarkMatching(bookkeeper *MockBookkeeperStressTest, wsHub *MockW
 	_, _ = bookkeeper.GetBalance(buyUser.String(), "USDT")
 	_, _ = bookkeeper.GetBalance(sellUser.String(), "BTC")
 
-	reservationID1, _ := bookkeeper.ReserveBalance(buyUser.String(), "USDT", price*quantity)
-	reservationID2, _ := bookkeeper.ReserveBalance(sellUser.String(), "BTC", quantity)
+	reservationID1, _ := bookkeeper.ReserveBalance(buyUser.String(), "USDT", decimal.NewFromFloat(price*quantity))
+	reservationID2, _ := bookkeeper.ReserveBalance(sellUser.String(), "BTC", decimal.NewFromFloat(quantity))
 
 	_ = bookkeeper.CommitReservation(reservationID1)
 	_ = bookkeeper.CommitReservation(reservationID2)
@@ -315,24 +314,23 @@ func benchmarkFlashCrashScenario(b *testing.B) {
 			user := testUsers[i%numUsers]
 			price := startPrice * (1 - crashDepth*float64(i)/100)
 
-			order := &models.Order{
-				ID:        uuid.New(),
+			order := &models.Order{ID: uuid.New(),
 				UserID:    user,
 				Symbol:    "BTCUSDT",
-				Side:      models.SideSell,
-				Type:      models.OrderTypeMarket,
+				Side:      "SELL",
+				Type:      "MARKET",
 				Price:     price,
 				Quantity:  0.01 + rand.Float64()*0.1,
-				Status:    models.OrderStatusPending,
+				Status:    "NEW",
 				CreatedAt: time.Now(),
 			}
 
 			// Process sell order quickly
-			_, _ = bookkeeper.GetBalance(user.String(), "BTC")
+			_, _ = mockBookkeeper.GetBalance(user.String(), "BTC")
 
 			// Broadcast price update
 			priceMessage := fmt.Sprintf(`{"type":"price","pair":"BTCUSDT","price":"%.2f"}`, price)
-			wsHub.Broadcast("price.BTCUSDT", []byte(priceMessage))
+			mockWSHub.Broadcast("price.BTCUSDT", []byte(priceMessage))
 
 			_ = order // Use order variable
 		}
@@ -361,26 +359,25 @@ func benchmarkBullMarketScenario(b *testing.B) {
 			user := testUsers[i%numUsers]
 			price := startPrice * (1 + priceIncrease*float64(i)/200)
 
-			order := &models.Order{
-				ID:        uuid.New(),
+			order := &models.Order{ID: uuid.New(),
 				UserID:    user,
 				Symbol:    "BTCUSDT",
-				Side:      models.SideBuy,
-				Type:      models.OrderTypeLimit,
+				Side:      "BUY",
+				Type:      "LIMIT",
 				Price:     price,
 				Quantity:  0.001 + rand.Float64()*0.01,
-				Status:    models.OrderStatusPending,
+				Status:    "NEW",
 				CreatedAt: time.Now(),
 			}
 
 			// Process buy order
-			_, _ = bookkeeper.GetBalance(user.String(), "USDT")
+			_, _ = mockBookkeeper.GetBalance(user.String(), "USDT")
 
 			// Broadcast volume update every 10 orders
 			if i%10 == 0 {
 				volumeMessage := fmt.Sprintf(`{"type":"volume","pair":"BTCUSDT","volume":"%.3f"}`,
 					float64(i)*0.001)
-				wsHub.Broadcast("volume.BTCUSDT", []byte(volumeMessage))
+				mockWSHub.Broadcast("volume.BTCUSDT", []byte(volumeMessage))
 			}
 
 			_ = order // Use order variable
@@ -411,11 +408,11 @@ func benchmarkHFTScenario(b *testing.B) {
 				ID:        uuid.New(),
 				UserID:    hftUser,
 				Symbol:    "BTCUSDT",
-				Side:      models.SideBuy,
-				Type:      models.OrderTypeLimit,
+				Side:      "BUY",
+				Type:      "LIMIT",
 				Price:     price - 1,
 				Quantity:  quantity,
-				Status:    models.OrderStatusPending,
+				Status:    "NEW",
 				CreatedAt: time.Now(),
 			}
 
@@ -424,22 +421,20 @@ func benchmarkHFTScenario(b *testing.B) {
 				ID:        uuid.New(),
 				UserID:    hftUser,
 				Symbol:    "BTCUSDT",
-				Side:      models.SideSell,
-				Type:      models.OrderTypeLimit,
+				Side:      "SELL",
+				Type:      "LIMIT",
 				Price:     price + 1,
 				Quantity:  quantity,
-				Status:    models.OrderStatusPending,
+				Status:    "NEW",
 				CreatedAt: time.Now(),
 			}
 
 			// Quick balance checks
-			_, _ = bookkeeper.GetBalance(hftUser.String(), "USDT")
-			_, _ = bookkeeper.GetBalance(hftUser.String(), "BTC")
-
-			// Simulate rapid order updates
+			_, _ = mockBookkeeper.GetBalance(hftUser.String(), "USDT")
+			_, _ = mockBookkeeper.GetBalance(hftUser.String(), "BTC") // Simulate rapid order updates
 			if i%3 == 0 {
-				buyOrder.Status = models.OrderStatusCancelled
-				sellOrder.Status = models.OrderStatusCancelled
+				buyOrder.Status = "CANCELED"
+				sellOrder.Status = "CANCELED"
 			}
 
 			_ = buyOrder
@@ -472,24 +467,24 @@ func benchmarkLargeOrderScenario(b *testing.B) {
 				ID:        uuid.New(),
 				UserID:    whaleUser,
 				Symbol:    "BTCUSDT",
-				Side:      models.SideBuy,
-				Type:      models.OrderTypeLimit,
+				Side:      "BUY",
+				Type:      "LIMIT",
 				Price:     price,
 				Quantity:  chunkSize,
-				Status:    models.OrderStatusPending,
+				Status:    "NEW",
 				CreatedAt: time.Now(),
 			}
 
 			// Simulate order processing with larger amounts
-			_, _ = bookkeeper.GetBalance(whaleUser.String(), "USDT")
-			reservationID, _ := bookkeeper.ReserveBalance(whaleUser.String(), "USDT", price*chunkSize)
-			_ = bookkeeper.CommitReservation(reservationID)
+			_, _ = mockBookkeeper.GetBalance(whaleUser.String(), "USDT")
+			reservationID, _ := mockBookkeeper.ReserveBalance(whaleUser.String(), "USDT", decimal.NewFromFloat(price*chunkSize))
+			_ = mockBookkeeper.CommitReservation(reservationID)
 
 			// Broadcast large trade
 			if i%5 == 0 {
 				tradeMessage := fmt.Sprintf(`{"type":"large_trade","pair":"BTCUSDT","price":"%.2f","qty":"%.3f"}`,
 					price, chunkSize*5)
-				wsHub.Broadcast("trades.BTCUSDT", []byte(tradeMessage))
+				mockWSHub.Broadcast("trades.BTCUSDT", []byte(tradeMessage))
 			}
 
 			_ = order
