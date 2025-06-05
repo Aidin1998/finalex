@@ -6,6 +6,72 @@ import (
 	"github.com/google/uuid"
 )
 
+// Order type constants
+type OrderType string
+
+const (
+	OrderTypeLimit      OrderType = "LIMIT"
+	OrderTypeMarket     OrderType = "MARKET"
+	OrderTypeStopLimit  OrderType = "STOP_LIMIT"
+	OrderTypeStopMarket OrderType = "STOP_MARKET"
+	OrderTypeIOC        OrderType = "IOC"
+	OrderTypeFOK        OrderType = "FOK"
+	OrderTypeIceberg    OrderType = "ICEBERG"
+	OrderTypeHidden     OrderType = "HIDDEN"
+	OrderTypeGTD        OrderType = "GTD"
+	OrderTypeOCO        OrderType = "OCO"
+	OrderTypeTrailing   OrderType = "TRAILING_STOP"
+	OrderTypeTWAP       OrderType = "TWAP"
+	OrderTypeVWAP       OrderType = "VWAP"
+)
+
+// Order side constants
+type OrderSide string
+
+const (
+	SideBuy  OrderSide = "BUY"
+	SideSell OrderSide = "SELL"
+)
+
+// Order status constants
+const (
+	OrderStatusNew             = "NEW"
+	OrderStatusPartiallyFilled = "PARTIALLY_FILLED"
+	OrderStatusFilled          = "FILLED"
+	OrderStatusCanceled        = "CANCELED"
+	OrderStatusRejected        = "REJECTED"
+	OrderStatusTriggered       = "TRIGGERED"
+)
+
+// Time in force constants
+const (
+	TimeInForceGTC = "GTC" // Good Till Cancel
+	TimeInForceIOC = "IOC" // Immediate or Cancel
+	TimeInForceFOK = "FOK" // Fill or Kill
+	TimeInForceGTD = "GTD" // Good Till Date
+)
+
+// Convenience constants for backward compatibility with string types used in tests
+const (
+	Market OrderType = OrderTypeMarket
+	Limit  OrderType = OrderTypeLimit
+)
+
+// PlaceOrderRequest represents a request to place an order
+type PlaceOrderRequest struct {
+	Symbol          string     `json:"symbol" validate:"required"`
+	Side            OrderSide  `json:"side" validate:"required"`
+	Type            OrderType  `json:"type" validate:"required"`
+	Quantity        float64    `json:"quantity" validate:"required,gt=0"`
+	Price           *float64   `json:"price,omitempty" validate:"omitempty,gt=0"`
+	TimeInForce     string     `json:"time_in_force,omitempty" validate:"omitempty,oneof=GTC IOC FOK GTD"`
+	StopPrice       *float64   `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
+	DisplayQuantity *float64   `json:"display_quantity,omitempty" validate:"omitempty,gt=0"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	ReduceOnly      *bool      `json:"reduce_only,omitempty"`
+	PostOnly        *bool      `json:"post_only,omitempty"`
+}
+
 // User represents a user in the system
 type User struct {
 	ID              uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`

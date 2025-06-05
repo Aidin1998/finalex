@@ -130,11 +130,7 @@ type MockBookkeeperStressTest struct {
 	mu           sync.RWMutex
 }
 
-type ReservationInfo struct {
-	UserID string
-	Asset  string
-	Amount decimal.Decimal
-}
+// ReservationInfo is defined in common_test_types.go
 
 func (m *MockBookkeeperStressTest) GetBalance(userID, asset string) (decimal.Decimal, error) {
 	atomic.AddInt64(&m.totalOps, 1)
@@ -194,19 +190,16 @@ type MockWSHubStressTest struct {
 	mu          sync.RWMutex
 }
 
-type MockConnection struct {
-	UserID   string
-	Messages [][]byte
-	mu       sync.Mutex
-	IsActive bool
-}
+// MockConnection is defined in common_test_types.go
 
 func (m *MockWSHubStressTest) Connect(userID string) {
 	atomic.AddInt64(&m.totalOps, 1)
 	conn := &MockConnection{
-		UserID:   userID,
-		Messages: make([][]byte, 0),
-		IsActive: true,
+		UserID:      userID,
+		Messages:    make([]WSMessage, 0),
+		MessagesRaw: make([][]byte, 0),
+		IsActive:    true,
+		IsConnected: true,
 	}
 	m.connections.Store(userID, conn)
 }
@@ -238,7 +231,7 @@ func (m *MockWSHubStressTest) BroadcastToUser(userID string, message []byte) {
 		connection := conn.(*MockConnection)
 		connection.mu.Lock()
 		if connection.IsActive {
-			connection.Messages = append(connection.Messages, message)
+			connection.MessagesRaw = append(connection.MessagesRaw, message)
 		}
 		connection.mu.Unlock()
 	}

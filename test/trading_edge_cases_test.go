@@ -171,13 +171,7 @@ type MockWSHubEdgeCase struct {
 	mu              sync.RWMutex
 }
 
-type WSMessage struct {
-	Target    string
-	Topic     string
-	Data      interface{}
-	Timestamp time.Time
-	Failed    bool
-}
+// WSMessage is defined in common_test_types.go
 
 func NewMockWSHubEdgeCase() *MockWSHubEdgeCase {
 	return &MockWSHubEdgeCase{

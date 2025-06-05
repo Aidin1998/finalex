@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/Aidin1998/finalex/api/marketdata"
+	// pb "github.com/Aidin1998/finalex/api/marketdata" // TODO: Generate proto files
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/distribution"
 	"google.golang.org/grpc"
 )

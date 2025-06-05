@@ -141,11 +141,7 @@ type MockWSHubIntegration struct {
 	mu       sync.RWMutex
 }
 
-type WSMessage struct {
-	Topic  string
-	Data   []byte
-	UserID string
-}
+// WSMessage is defined in common_test_types.go
 
 func NewMockWSHubIntegration() *MockWSHubIntegration {
 	return &MockWSHubIntegration{

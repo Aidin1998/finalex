@@ -74,6 +74,34 @@ func DefaultTransactionOptions() *TransactionOptions {
 	}
 }
 
+// BalanceReservation represents a balance reservation for trading operations
+type BalanceReservation struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Asset     string    `json:"asset"`
+	Amount    float64   `json:"amount"`
+	Purpose   string    `json:"purpose"`
+	OrderID   string    `json:"order_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// TradeProcessRequest represents a request to process a trade
+type TradeProcessRequest struct {
+	TradeID       string    `json:"trade_id"`
+	BuyerID       string    `json:"buyer_id"`
+	SellerID      string    `json:"seller_id"`
+	Symbol        string    `json:"symbol"`
+	Quantity      float64   `json:"quantity"`
+	Price         float64   `json:"price"`
+	BuyOrderID    string    `json:"buy_order_id"`
+	SellOrderID   string    `json:"sell_order_id"`
+	ExecutedAt    time.Time `json:"executed_at"`
+	TakerSide     string    `json:"taker_side"` // "buy" or "sell"
+	MakerFeeRate  float64   `json:"maker_fee_rate"`
+	TakerFeeRate  float64   `json:"taker_fee_rate"`
+}
+
 // BookkeeperService defines bookkeeping operations and supports transaction and account lifecycle
 type BookkeeperService interface {
 	Start() error

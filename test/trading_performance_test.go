@@ -39,11 +39,7 @@ type MockBookkeeperPerformance struct {
 	mu           sync.RWMutex
 }
 
-type ReservationInfo struct {
-	UserID string
-	Asset  string
-	Amount decimal.Decimal
-}
+// ReservationInfo is defined in common_test_types.go
 
 func (m *MockBookkeeperPerformance) GetBalance(userID, asset string) (decimal.Decimal, error) {
 	atomic.AddInt64(&m.totalOps, 1)

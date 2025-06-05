@@ -28,7 +28,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	_ "github.com/Aidin1998/finalex/docs" // Swagger docs
+	// _ "github.com/Aidin1998/finalex/docs" // Swagger docs - TODO: Generate swagger docs
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/internal/fiat"
