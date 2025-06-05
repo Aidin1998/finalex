@@ -173,44 +173,7 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-// Conversion helpers between models.Order and model.Order
-func toModelOrder(o *models.Order) *model2.Order {
-	if o == nil {
-		return nil
-	}
-	return &model2.Order{
-		ID:          o.ID,
-		UserID:      o.UserID,
-		Pair:        o.Symbol,
-		Side:        strings.ToUpper(o.Side),
-		Type:        strings.ToUpper(o.Type),
-		Price:       decimal.NewFromFloat(o.Price),
-		Quantity:    decimal.NewFromFloat(o.Quantity),
-		TimeInForce: strings.ToUpper(o.TimeInForce),
-		Status:      strings.ToUpper(o.Status),
-		CreatedAt:   o.CreatedAt,
-		UpdatedAt:   o.UpdatedAt,
-	}
-}
-
-func toAPIOrder(o *model2.Order) *models.Order {
-	if o == nil {
-		return nil
-	}
-	return &models.Order{
-		ID:          o.ID,
-		UserID:      o.UserID,
-		Symbol:      o.Pair,
-		Side:        strings.ToLower(o.Side),
-		Type:        strings.ToLower(o.Type),
-		Price:       o.Price.InexactFloat64(),
-		Quantity:    o.Quantity.InexactFloat64(),
-		TimeInForce: strings.ToUpper(o.TimeInForce),
-		Status:      strings.ToLower(o.Status),
-		CreatedAt:   o.CreatedAt,
-		UpdatedAt:   o.UpdatedAt,
-	}
-}
+// Use the toModelOrder and toAPIOrder functions from model_conversions.go
 
 // PlaceOrder places an order
 func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {

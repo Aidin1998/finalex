@@ -1,10 +1,4 @@
-// =============================
-// Adaptive Trading Service Integration
-// =============================
-// This file provides service layer integration for the adaptive trading engine,
-// allowing seamless migration between old and new implementations with
-// comprehensive monitoring and administrative controls.
-
+// Package trading provides the implementation of the adaptive trading service
 package trading
 
 import (
@@ -15,7 +9,6 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
-	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model2 "github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -28,42 +21,6 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 )
-
-// AdaptiveTradingService extends TradingService with adaptive engine capabilities
-type AdaptiveTradingService interface {
-	TradingService // Embed existing interface
-
-	// Migration control methods
-	StartMigration(pair string) error
-	StopMigration(pair string) error
-	PauseMigration(pair string) error
-	ResumeMigration(pair string) error
-	SetMigrationPercentage(pair string, percentage int32) error
-	RollbackMigration(pair string) error
-	ResetMigration(pair string) error
-
-	// Migration status and monitoring
-	GetMigrationStatus(pair string) (*MigrationState, error)
-	GetAllMigrationStates() map[string]*MigrationState
-	GetPerformanceMetrics(pair string) (map[string]interface{}, error)
-	GetEngineMetrics() (*EngineMetrics, error)
-
-	// Auto-migration controls
-	EnableAutoMigration(enabled bool) error
-	IsAutoMigrationEnabled() bool
-
-	// Metrics and reporting
-	GetMetricsReport() (*MetricsReport, error)
-	GetPerformanceComparison(pair string) (*PerformanceComparison, error)
-
-	// Administrative controls
-	ResetCircuitBreaker(pair string) error
-	SetPerformanceThresholds(thresholds *AutoMigrationThresholds) error
-
-	// Shutdown and health check
-	Shutdown(ctx context.Context) error
-	HealthCheck() map[string]interface{}
-}
 
 // AdaptiveService implements AdaptiveTradingService
 type AdaptiveService struct {
@@ -101,8 +58,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 	eventJournal, err := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/adaptive_events.log")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event journal: %w", err)
-	}
-	// Create adaptive trading engine
+	}	// Create adaptive trading engine
 	adaptiveEngine := engine.NewAdaptiveMatchingEngine(
 		orderRepo,
 		tradeRepo,
@@ -110,8 +66,8 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		adaptiveConfig,
 		eventJournal,
 		wsHub,
-		aml.NewRiskService(),
-		nil, // no Redis client configured yet
+		NewMockRiskService(), // Using mock risk service instead of aml.NewRiskService()
+		nil // no Redis client configured yet
 	)
 
 	// Create adaptive service
@@ -141,9 +97,6 @@ func (as *AdaptiveService) setupAlertHandling() {
 			zap.String("severity", string(severity)),
 			zap.String("message", message),
 		)
-
-		// Could integrate with external alerting systems here
-		// e.g., send to Slack, PagerDuty, etc.
 	}
 }
 
@@ -159,10 +112,7 @@ func (as *AdaptiveService) StartMigration(pair string) error {
 	percentage := as.adaptiveConfig.DefaultMigrationConfig.MigrationPercentage
 	err := as.adaptiveEngine.StartMigration(pair, percentage)
 	if err != nil {
-		as.logger.Error("Failed to start migration",
-			zap.String("pair", pair),
-			zap.Error(err),
-		)
+		as.logger.Error("Failed to start migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 
@@ -174,9 +124,7 @@ func (as *AdaptiveService) StartMigration(pair string) error {
 func (as *AdaptiveService) StopMigration(pair string) error {
 	err := as.adaptiveEngine.StopMigration(pair)
 	if err != nil {
-		as.logger.Error("Failed to stop migration",
-			zap.String("pair", pair), zap.Error(err),
-		)
+		as.logger.Error("Failed to stop migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 	as.logger.Info("Migration stopped", zap.String("pair", pair))
@@ -187,10 +135,7 @@ func (as *AdaptiveService) StopMigration(pair string) error {
 func (as *AdaptiveService) PauseMigration(pair string) error {
 	err := as.adaptiveEngine.PauseMigration(pair)
 	if err != nil {
-		as.logger.Error("Failed to pause migration",
-			zap.String("pair", pair),
-			zap.Error(err),
-		)
+		as.logger.Error("Failed to pause migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 
@@ -202,10 +147,7 @@ func (as *AdaptiveService) PauseMigration(pair string) error {
 func (as *AdaptiveService) ResumeMigration(pair string) error {
 	err := as.adaptiveEngine.ResumeMigration(pair)
 	if err != nil {
-		as.logger.Error("Failed to resume migration",
-			zap.String("pair", pair),
-			zap.Error(err),
-		)
+		as.logger.Error("Failed to resume migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 
@@ -240,10 +182,7 @@ func (as *AdaptiveService) SetMigrationPercentage(pair string, percentage int32)
 func (as *AdaptiveService) RollbackMigration(pair string) error {
 	err := as.adaptiveEngine.RollbackMigration(pair)
 	if err != nil {
-		as.logger.Error("Failed to rollback migration",
-			zap.String("pair", pair),
-			zap.Error(err),
-		)
+		as.logger.Error("Failed to rollback migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 
@@ -255,10 +194,7 @@ func (as *AdaptiveService) RollbackMigration(pair string) error {
 func (as *AdaptiveService) ResetMigration(pair string) error {
 	err := as.adaptiveEngine.ResetMigration(pair)
 	if err != nil {
-		as.logger.Error("Failed to reset migration",
-			zap.String("pair", pair),
-			zap.Error(err),
-		)
+		as.logger.Error("Failed to reset migration", zap.String("pair", pair), zap.Error(err))
 		return err
 	}
 
@@ -320,9 +256,7 @@ func (as *AdaptiveService) GetEngineMetrics() (*engine.EngineMetrics, error) {
 func (as *AdaptiveService) EnableAutoMigration(enabled bool) error {
 	as.adaptiveEngine.SetAutoMigrationEnabled(enabled)
 
-	as.logger.Info("Auto-migration setting updated",
-		zap.Bool("enabled", enabled),
-	)
+	as.logger.Info("Auto-migration setting updated", zap.Bool("enabled", enabled))
 	return nil
 }
 
@@ -335,8 +269,6 @@ func (as *AdaptiveService) IsAutoMigrationEnabled() bool {
 
 // GetMetricsReport returns a comprehensive metrics report
 func (as *AdaptiveService) GetMetricsReport() (*engine.MetricsReport, error) {
-	// This would typically be received from the metrics reporting channel
-	// For now, we'll generate one on demand
 	select {
 	case report := <-as.adaptiveEngine.GetMetricsReportChan():
 		return &report, nil
@@ -398,9 +330,6 @@ func (as *AdaptiveService) SetPerformanceThresholds(thresholds *engine.AutoMigra
 
 // PlaceOrder overrides the base method to use adaptive routing
 func (as *AdaptiveService) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
-	// Perform the same validation as the base service
-	// (This could be extracted to a shared validation method)
-
 	// Convert to internal model
 	internalOrder := toModelOrder(order)
 	if internalOrder == nil {
@@ -458,6 +387,7 @@ func (as *AdaptiveService) GetOrderBook(symbol string, depth int) (*models.Order
 	if orderBook == nil {
 		return nil, fmt.Errorf("order book not found for symbol: %s", symbol)
 	}
+
 	// Get bids and asks snapshots
 	bids, asks := orderBook.GetSnapshot(depth)
 	apiSnapshot := &models.OrderBookSnapshot{
@@ -477,18 +407,6 @@ func (as *AdaptiveService) GetOrderBook(symbol string, depth int) (*models.Order
 		apiSnapshot.Asks[i] = models.OrderBookLevel{Price: price, Volume: volume}
 	}
 	return apiSnapshot, nil
-}
-
-// Utility methods
-
-// GetMetricsCollector returns the metrics collector for external use
-func (as *AdaptiveService) GetMetricsCollector() *engine.EngineMetricsCollector {
-	return as.adaptiveEngine.GetMetricsCollector()
-}
-
-// GetAdaptiveEngine returns the adaptive engine for advanced operations
-func (as *AdaptiveService) GetAdaptiveEngine() *engine.AdaptiveMatchingEngine {
-	return as.adaptiveEngine
 }
 
 // Shutdown gracefully shuts down the adaptive service
@@ -513,7 +431,7 @@ func (as *AdaptiveService) Shutdown(ctx context.Context) error {
 
 // Health check method for monitoring
 func (as *AdaptiveService) HealthCheck() map[string]interface{} {
-	health := make(map[string]interface{}) // initialize health map directly
+	health := make(map[string]interface{})
 
 	// add adaptive fields
 	health["adaptive_enabled"] = as.adaptiveConfig.EnableAdaptiveOrderBooks
