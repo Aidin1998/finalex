@@ -12,11 +12,11 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
+	
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
+	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
 )
@@ -24,11 +24,11 @@ import (
 // OrderEngine is a wrapper around the more advanced engine.MatchingEngine
 // It provides backward compatibility with older code while using the new standardized types
 type OrderEngine struct {
-	logger  *zap.Logger
-	db      *gorm.DB
-	engine  *engine.MatchingEngine
-	mu      sync.RWMutex
-	running bool
+	logger    *zap.Logger
+	db        *gorm.DB
+	engine    *engine.MatchingEngine
+	mu        sync.RWMutex
+	running   bool
 }
 
 // NewOrderEngine creates a new order engine that wraps the actual engine implementation
@@ -53,25 +53,25 @@ func NewOrderEngine(logger *zap.Logger, db *gorm.DB) (*OrderEngine, error) {
 			},
 		},
 	}
-
+	
 	// Initialize repositories
 	orderRepo := repository.NewGormRepository(db, logger)
 	tradeRepo := repository.NewGormTradeRepository(db, logger)
-
+	
 	// Create event journal
 	eventJournal, _ := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/events.log")
-
+	
 	// Create settlement engine
 	settlementEngine := settlement.NewSettlementEngine()
-
+	
 	// Create trigger monitor for stop orders and other conditional orders
 	triggerMonitor := trigger.NewTriggerMonitor(logger.Sugar(), orderRepo, time.Millisecond*100)
-
+	
 	// Create the actual engine implementation
 	matchingEngine, err := engine.NewMatchingEngine(
 		orderRepo,
 		tradeRepo,
-		logger.Sugar(),
+		logger.Sugar(), 
 		engineConfig,
 		eventJournal,
 		nil, // No WebSocket hub
@@ -79,11 +79,11 @@ func NewOrderEngine(logger *zap.Logger, db *gorm.DB) (*OrderEngine, error) {
 		settlementEngine,
 		triggerMonitor,
 	)
-
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to create matching engine: %w", err)
 	}
-
+	
 	return &OrderEngine{
 		logger: logger,
 		db:     db,
@@ -99,7 +99,7 @@ func (e *OrderEngine) ProcessOrder(ctx context.Context, order *model.Order) erro
 	if !e.running {
 		return fmt.Errorf("order engine is not running")
 	}
-
+	
 	// Just delegate to the actual engine implementation
 	_, _, _, err := e.engine.ProcessOrder(ctx, order, "API")
 	return err
@@ -109,11 +109,11 @@ func (e *OrderEngine) ProcessOrder(ctx context.Context, order *model.Order) erro
 func (e *OrderEngine) Start() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
+	
 	if e.running {
 		return nil
 	}
-
+	
 	// The matching engine doesn't have an explicit Start method
 	// But we'll mark our wrapper as running
 	e.running = true
@@ -125,11 +125,11 @@ func (e *OrderEngine) Start() error {
 func (e *OrderEngine) Stop() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
+	
 	if !e.running {
 		return nil
 	}
-
+	
 	// The matching engine doesn't have an explicit Stop method
 	// But we'll mark our wrapper as stopped
 	e.running = false
@@ -141,27 +141,11 @@ func (e *OrderEngine) Stop() error {
 func (e *OrderEngine) GetOrderBook(pair string) (map[string]interface{}, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-
+	
 	if !e.running {
 		return nil, fmt.Errorf("order engine is not running")
 	}
-
-	// Get the orderbook and then get a snapshot with depth 100
-	orderBook := e.engine.GetOrderBook(pair)
-	if orderBook == nil {
-		return nil, fmt.Errorf("order book not found for pair: %s", pair)
-	}
-
-	// Get top 100 price levels
-	bids, asks := orderBook.GetSnapshot(100)
-
-	// Convert to a map for the API
-	result := map[string]interface{}{
-		"pair":      pair,
-		"timestamp": time.Now().UnixNano() / int64(time.Millisecond),
-		"bids":      bids,
-		"asks":      asks,
-	}
-
-	return result, nil
+	
+	// The matching engine takes a depth parameter
+	return e.engine.GetOrderBookSnapshot(pair, 100)
 }

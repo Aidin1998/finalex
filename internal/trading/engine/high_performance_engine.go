@@ -13,18 +13,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"go.uber.org/zap"
 
-	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
+	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
+	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
 	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
 	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+
 	// Using root persistence package instead of non-existent internal/trading/persistence
-	"github.com/Aidin1998/pincex_unified/persistence"
 	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
+	"github.com/Aidin1998/pincex_unified/persistence"
 )
 
 // =============================

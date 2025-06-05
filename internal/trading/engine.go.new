@@ -1,0 +1,119 @@
+// This file has been migrated to use the standardized model package
+// Avoid duplication of code and use the engine implementation in internal/trading/engine instead
+
+package trading
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+	
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+)
+
+// OrderEngine is a wrapper around the more advanced engine.MatchingEngine
+// It provides backward compatibility with older code while using the new standardized types
+type OrderEngine struct {
+	logger    *zap.Logger
+	db        *gorm.DB
+	engine    *engine.MatchingEngine
+	mu        sync.RWMutex
+	running   bool
+}
+
+// NewOrderEngine creates a new order engine that wraps the actual engine implementation
+func NewOrderEngine(logger *zap.Logger, db *gorm.DB) (*OrderEngine, error) {
+	// Create the actual engine implementation
+	engineConfig := &engine.Config{
+		PriceDecimalPlaces: 8,
+		QuantityDecimalPlaces: 8,
+		EnableRiskChecks: true,
+		MaxOrdersPerUser: 1000,
+		DefaultFeeRate: 0.001, // 0.1% fee
+	}
+	
+	matchingEngine, err := engine.NewMatchingEngine(
+		logger.Sugar(), 
+		nil, // No specific repository, will use the default
+		engineConfig,
+		nil, // No event journal
+		nil, // No WebSocket hub
+		nil, // No risk service
+	)
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to create matching engine: %w", err)
+	}
+	
+	return &OrderEngine{
+		logger: logger,
+		db:     db,
+		engine: matchingEngine,
+	}, nil
+}
+
+// ProcessOrder processes an order through the matching engine
+func (e *OrderEngine) ProcessOrder(ctx context.Context, order *model.Order) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.running {
+		return fmt.Errorf("order engine is not running")
+	}
+	
+	// Just delegate to the actual engine implementation
+	_, err := e.engine.PlaceOrder(ctx, order)
+	return err
+}
+
+// Start starts the order engine
+func (e *OrderEngine) Start() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	
+	if e.running {
+		return nil
+	}
+	
+	if err := e.engine.Start(); err != nil {
+		return err
+	}
+	
+	e.running = true
+	e.logger.Info("Order engine started")
+	return nil
+}
+
+// Stop stops the order engine
+func (e *OrderEngine) Stop() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	
+	if !e.running {
+		return nil
+	}
+	
+	if err := e.engine.Stop(); err != nil {
+		return err
+	}
+	
+	e.running = false
+	e.logger.Info("Order engine stopped")
+	return nil
+}
+
+// GetOrderBook returns the current state of the order book for a specific market/pair
+func (e *OrderEngine) GetOrderBook(pair string) (map[string]interface{}, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	
+	if !e.running {
+		return nil, fmt.Errorf("order engine is not running")
+	}
+	
+	return e.engine.GetOrderBookSnapshot(pair)
+}
