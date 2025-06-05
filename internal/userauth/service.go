@@ -5,9 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	twofa "github.com/Aidin1998/pincex_unified/internal/userauth/2FA"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/audit"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/compliance"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/encryption"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/identities"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/notification"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/password"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -15,35 +21,67 @@ import (
 	"gorm.io/gorm"
 )
 
+// ServiceConfig holds configuration for the UserAuth service
+type ServiceConfig struct {
+	JWTSecret              string
+	JWTExpiration          time.Duration
+	RefreshTokenSecret     string
+	RefreshTokenExpiration time.Duration
+	Issuer                 string
+	TwoFAGracePeriodDays   int
+	EmailConfig            notification.EmailConfig
+	SMSConfig              notification.SMSConfig
+}
+
 // Service provides unified user authentication and identity management
 type Service struct {
-	authService       auth.AuthService // Changed from auth.Service to auth.AuthService
-	identityService   identities.Service
-	kycService        kyc.Service
+	// Core services
+	authService         auth.AuthService
+	identityService     identities.Service
+	kycService          kyc.Service
+	auditService        *audit.Service
+	notificationService *notification.Service
+	passwordService     *password.Service
+	complianceService   *compliance.Service
+	encryptionService   *encryption.Service
+	twoFAService        *twofa.Service
+
+	// Infrastructure
 	tieredRateLimiter *auth.TieredRateLimiter
 	logger            *zap.Logger
 	db                *gorm.DB
+	redis             *redis.Client
+
+	// Configuration
+	config ServiceConfig
 }
 
 // NewService creates a new unified user authentication service
-func NewService(logger *zap.Logger, db *gorm.DB, redisClient *redis.Client) (*Service, error) { // Initialize sub-services with simplified constructors
-	// TODO: Implement proper auth service initialization with all required parameters
+func NewService(logger *zap.Logger, db *gorm.DB, redisClient *redis.Client, config ServiceConfig) (*Service, error) {
+	// Initialize auth service
 	authSvc, err := auth.NewAuthService(
 		logger,
 		db,
-		"temp-jwt-secret",     // TODO: Get from config
-		time.Hour*24,          // TODO: Get from config
-		"temp-refresh-secret", // TODO: Get from config
-		time.Hour*24*7,        // TODO: Get from config
-		"pincex",              // TODO: Get from config
-		nil,                   // TODO: Initialize proper rate limiter
+		config.JWTSecret,
+		config.JWTExpiration,
+		config.RefreshTokenSecret,
+		config.RefreshTokenExpiration,
+		config.Issuer,
+		nil, // Rate limiter will be set after creation
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create auth service: %w", err)
 	}
 
+	// Initialize other services
 	identitySvc := identities.NewService(logger, db)
 	kycSvc := kyc.NewService(logger, db)
+	auditSvc := audit.NewService(logger, db)
+	notificationSvc := notification.NewService(logger, db, redisClient, config.EmailConfig, config.SMSConfig)
+	passwordSvc := password.NewService(logger, db, redisClient)
+	complianceSvc := compliance.NewService(logger, db, redisClient)
+	encryptionSvc := encryption.NewService(logger)
+	twoFASvc := twofa.NewService(logger, db, config.Issuer)
 
 	// Create user service adapter for rate limiter
 	userService := auth.NewAuthUserService(db)
@@ -51,14 +89,23 @@ func NewService(logger *zap.Logger, db *gorm.DB, redisClient *redis.Client) (*Se
 	// Initialize tiered rate limiter
 	tieredRateLimiter := auth.NewTieredRateLimiter(redisClient, logger, userService)
 
-	return &Service{
-		authService:       authSvc,
-		identityService:   identitySvc,
-		kycService:        kycSvc,
-		tieredRateLimiter: tieredRateLimiter,
-		logger:            logger,
-		db:                db,
-	}, nil
+	service := &Service{
+		authService:         authSvc,
+		identityService:     identitySvc,
+		kycService:          kycSvc,
+		auditService:        auditSvc,
+		notificationService: notificationSvc,
+		passwordService:     passwordSvc,
+		complianceService:   complianceSvc,
+		encryptionService:   encryptionSvc,
+		twoFAService:        twoFASvc,
+		tieredRateLimiter:   tieredRateLimiter,
+		logger:              logger,
+		db:                  db,
+		redis:               redisClient,
+		config:              config,
+	}
+	return service, nil
 }
 
 // AuthService returns the authentication service
