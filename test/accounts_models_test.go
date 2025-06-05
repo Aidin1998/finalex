@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"c:/Orbit CEX/Finalex/internal/accounts"
 )
@@ -21,17 +20,17 @@ func TestAccountModel(t *testing.T) {
 	t.Run("CreateValidAccount", func(t *testing.T) {
 		userID := uuid.New()
 		account := &accounts.Account{
-			ID:        uuid.New(),
-			UserID:    userID,
-			Currency:  "BTC",
-			Balance:   decimal.NewFromFloat(1.5),
-			Available: decimal.NewFromFloat(1.2),
-			Locked:    decimal.NewFromFloat(0.3),
-			Version:   1,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ID:          uuid.New(),
+			UserID:      userID,
+			Currency:    "BTC",
+			Balance:     decimal.NewFromFloat(1.5),
+			Available:   decimal.NewFromFloat(1.2),
+			Locked:      decimal.NewFromFloat(0.3),
+			Version:     1,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 			AccountType: accounts.AccountTypeSpot,
-			Status:    accounts.AccountStatusActive,
+			Status:      accounts.AccountStatusActive,
 		}
 
 		assert.Equal(t, userID, account.UserID)
@@ -53,7 +52,7 @@ func TestAccountModel(t *testing.T) {
 
 		// Balance should equal Available + Locked
 		expectedBalance := account.Available.Add(account.Locked)
-		assert.True(t, account.Balance.Equal(expectedBalance), 
+		assert.True(t, account.Balance.Equal(expectedBalance),
 			"Balance should equal Available + Locked")
 	})
 
@@ -170,11 +169,11 @@ func TestLedgerTransactionModel(t *testing.T) {
 
 	t.Run("IdempotencyKeyUniqueness", func(t *testing.T) {
 		key := uuid.New().String()
-		
+
 		transaction1 := &accounts.LedgerTransaction{
 			IdempotencyKey: key,
 		}
-		
+
 		transaction2 := &accounts.LedgerTransaction{
 			IdempotencyKey: key,
 		}
@@ -204,16 +203,16 @@ func TestBalanceSnapshotModel(t *testing.T) {
 	t.Run("CreateValidBalanceSnapshot", func(t *testing.T) {
 		userID := uuid.New()
 		date := time.Now().Truncate(24 * time.Hour)
-		
+
 		snapshot := &accounts.BalanceSnapshot{
-			ID:        uuid.New(),
-			UserID:    userID,
-			Currency:  "BTC",
-			Balance:   decimal.NewFromFloat(0.5),
-			Available: decimal.NewFromFloat(0.4),
-			Locked:    decimal.NewFromFloat(0.1),
-			Date:      date,
-			CreatedAt: time.Now(),
+			ID:                   uuid.New(),
+			UserID:               userID,
+			Currency:             "BTC",
+			Balance:              decimal.NewFromFloat(0.5),
+			Available:            decimal.NewFromFloat(0.4),
+			Locked:               decimal.NewFromFloat(0.1),
+			Date:                 date,
+			CreatedAt:            time.Now(),
 			ReconciliationStatus: "pending",
 		}
 
@@ -227,17 +226,17 @@ func TestBalanceSnapshotModel(t *testing.T) {
 	t.Run("DailySnapshotConstraint", func(t *testing.T) {
 		userID := uuid.New()
 		date := time.Now().Truncate(24 * time.Hour)
-		
+
 		// Should only have one snapshot per user/currency/date
 		snapshot1 := &accounts.BalanceSnapshot{
 			UserID:   userID,
 			Currency: "ETH",
 			Date:     date,
 		}
-		
+
 		snapshot2 := &accounts.BalanceSnapshot{
 			UserID:   userID,
-			Currency: "ETH", 
+			Currency: "ETH",
 			Date:     date,
 		}
 
@@ -251,7 +250,7 @@ func TestBalanceSnapshotModel(t *testing.T) {
 func TestTransactionJournalModel(t *testing.T) {
 	t.Run("CreateValidJournalEntry", func(t *testing.T) {
 		userID := uuid.New()
-		
+
 		journal := &accounts.TransactionJournal{
 			ID:              uuid.New(),
 			UserID:          userID,
@@ -284,9 +283,9 @@ func TestTransactionJournalModel(t *testing.T) {
 	t.Run("DoubleEntryConsistency", func(t *testing.T) {
 		// Test that total balance = available + locked
 		journal := &accounts.TransactionJournal{
-			BalanceAfter:    decimal.NewFromFloat(1000.00),
-			AvailableAfter:  decimal.NewFromFloat(800.00),
-			LockedAfter:     decimal.NewFromFloat(200.00),
+			BalanceAfter:   decimal.NewFromFloat(1000.00),
+			AvailableAfter: decimal.NewFromFloat(800.00),
+			LockedAfter:    decimal.NewFromFloat(200.00),
 		}
 
 		expectedBalance := journal.AvailableAfter.Add(journal.LockedAfter)
@@ -298,7 +297,7 @@ func TestTransactionJournalModel(t *testing.T) {
 func TestAuditLogModel(t *testing.T) {
 	t.Run("CreateValidAuditLog", func(t *testing.T) {
 		userID := uuid.New()
-		
+
 		auditLog := &accounts.AuditLog{
 			ID:         uuid.New(),
 			UserID:     userID,
@@ -397,18 +396,18 @@ func TestDecimalPrecision(t *testing.T) {
 		// Test high precision decimal operations
 		amount1 := decimal.NewFromString("0.123456789012345678")
 		amount2 := decimal.NewFromString("0.987654321098765432")
-		
+
 		result := amount1.Add(amount2)
 		expected := decimal.NewFromString("1.11111111011111111")
-		
-		assert.True(t, result.Equal(expected), 
+
+		assert.True(t, result.Equal(expected),
 			"High precision decimal calculation should be accurate")
 	})
 
 	t.Run("ZeroHandling", func(t *testing.T) {
 		zero := decimal.Zero
 		amount := decimal.NewFromFloat(100.0)
-		
+
 		assert.True(t, zero.IsZero())
 		assert.True(t, amount.Add(zero).Equal(amount))
 		assert.True(t, amount.Sub(amount).IsZero())
@@ -417,10 +416,10 @@ func TestDecimalPrecision(t *testing.T) {
 	t.Run("NegativeHandling", func(t *testing.T) {
 		positive := decimal.NewFromFloat(100.0)
 		negative := decimal.NewFromFloat(-50.0)
-		
+
 		assert.False(t, positive.IsNegative())
 		assert.True(t, negative.IsNegative())
-		
+
 		result := positive.Add(negative)
 		assert.Equal(t, decimal.NewFromFloat(50.0), result)
 	})
@@ -428,7 +427,7 @@ func TestDecimalPrecision(t *testing.T) {
 
 func BenchmarkAccountModelOperations(b *testing.B) {
 	userID := uuid.New()
-	
+
 	b.Run("AccountCreation", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -448,7 +447,7 @@ func BenchmarkAccountModelOperations(b *testing.B) {
 	b.Run("DecimalOperations", func(b *testing.B) {
 		amount1 := decimal.NewFromFloat(100.123456789)
 		amount2 := decimal.NewFromFloat(50.987654321)
-		
+
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = amount1.Add(amount2)

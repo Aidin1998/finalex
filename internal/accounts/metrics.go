@@ -125,8 +125,8 @@ var (
 
 	balanceAmount = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "accounts_balance_amount",
-			Help: "Balance amounts by operation type",
+			Name:    "accounts_balance_amount",
+			Help:    "Balance amounts by operation type",
 			Buckets: prometheus.ExponentialBuckets(0.01, 10, 10),
 		},
 		[]string{"operation", "currency"},
@@ -277,11 +277,11 @@ func (m *MetricsCollector) RecordLockOperation(operation, result string, waitDur
 	}
 
 	lockOperationsTotal.WithLabelValues(operation, result).Inc()
-	
+
 	if waitDuration > 0 {
 		lockWaitDuration.WithLabelValues(lockType).Observe(waitDuration.Seconds())
 	}
-	
+
 	if holdDuration > 0 {
 		lockHoldDuration.WithLabelValues(lockType).Observe(holdDuration.Seconds())
 	}
@@ -294,7 +294,7 @@ func (m *MetricsCollector) RecordBalanceOperation(operation, result, currency st
 	}
 
 	balanceOperationsTotal.WithLabelValues(operation, result, currency).Inc()
-	
+
 	if amount > 0 {
 		balanceAmount.WithLabelValues(operation, currency).Observe(amount)
 	}
@@ -382,7 +382,7 @@ func (m *MetricsCollector) UpdateSystemMetrics(goroutines int, memoryByComponent
 	}
 
 	goroutinesActive.Set(float64(goroutines))
-	
+
 	for component, memory := range memoryByComponent {
 		memoryUsage.WithLabelValues(component).Set(float64(memory))
 	}
@@ -438,7 +438,7 @@ func (h *HealthChecker) CheckHealth(ctx context.Context) error {
 
 	// Implement health check logic here
 	// This would check database connectivity, cache availability, etc.
-	
+
 	return nil
 }
 
@@ -447,7 +447,7 @@ func RecordBalanceQuery(currency string, duration time.Duration, cached bool) {
 	labels := []string{"balance_query", "success", currency}
 	accountOperationsTotal.WithLabelValues(labels...).Inc()
 	accountOperationDuration.WithLabelValues("balance_query", currency).Observe(duration.Seconds())
-	
+
 	if cached {
 		cacheOperationsTotal.WithLabelValues("get", "hit", "hot").Inc()
 	} else {
@@ -460,7 +460,7 @@ func RecordBalanceUpdate(currency string, duration time.Duration, amount float64
 	accountOperationsTotal.WithLabelValues(labels...).Inc()
 	accountOperationDuration.WithLabelValues("balance_update", currency).Observe(duration.Seconds())
 	balanceAmount.WithLabelValues("update", currency).Observe(amount)
-	
+
 	if conflicts > 0 {
 		for i := 0; i < conflicts; i++ {
 			concurrencyConflictsTotal.WithLabelValues("balance_update", "version_mismatch").Inc()

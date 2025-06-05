@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,14 +20,14 @@ import (
 
 // PartitionManager handles database partitioning and sharding strategies
 type PartitionManager struct {
-	db              *gorm.DB
-	logger          *zap.Logger
-	partitions      map[string]*PartitionInfo
-	shardMap        map[string]string // Maps user_id hash to partition
-	mutex           sync.RWMutex
-	metrics         *PartitionMetrics
-	config          *PartitionConfig
-	rebalancer      *PartitionRebalancer
+	db         *gorm.DB
+	logger     *zap.Logger
+	partitions map[string]*PartitionInfo
+	shardMap   map[string]string // Maps user_id hash to partition
+	mutex      sync.RWMutex
+	metrics    *PartitionMetrics
+	config     *PartitionConfig
+	rebalancer *PartitionRebalancer
 }
 
 // PartitionInfo contains metadata about a partition
@@ -52,34 +51,34 @@ type HashRange struct {
 
 // PartitionConfig represents partitioning configuration
 type PartitionConfig struct {
-	Strategy            string   `json:"strategy"`             // hash, range, list
-	PartitionCount      int      `json:"partition_count"`
-	MaxPartitionSize    int64    `json:"max_partition_size"`   // in bytes
-	MaxRecordsPerPartition int64 `json:"max_records_per_partition"`
-	RebalanceThreshold  float64  `json:"rebalance_threshold"`  // 0.8 = 80% capacity
-	EnableAutoPartition bool     `json:"enable_auto_partition"`
-	ShardNodes          []string `json:"shard_nodes"`
-	ReplicationFactor   int      `json:"replication_factor"`
+	Strategy               string   `json:"strategy"` // hash, range, list
+	PartitionCount         int      `json:"partition_count"`
+	MaxPartitionSize       int64    `json:"max_partition_size"` // in bytes
+	MaxRecordsPerPartition int64    `json:"max_records_per_partition"`
+	RebalanceThreshold     float64  `json:"rebalance_threshold"` // 0.8 = 80% capacity
+	EnableAutoPartition    bool     `json:"enable_auto_partition"`
+	ShardNodes             []string `json:"shard_nodes"`
+	ReplicationFactor      int      `json:"replication_factor"`
 }
 
 // PartitionMetrics holds metrics for partition operations
 type PartitionMetrics struct {
-	PartitionSize     *prometheus.GaugeVec
-	PartitionRecords  *prometheus.GaugeVec
-	PartitionAccess   *prometheus.CounterVec
+	PartitionSize       *prometheus.GaugeVec
+	PartitionRecords    *prometheus.GaugeVec
+	PartitionAccess     *prometheus.CounterVec
 	RebalanceOperations *prometheus.CounterVec
-	ShardDistribution *prometheus.GaugeVec
-	PartitionHealth   *prometheus.GaugeVec
+	ShardDistribution   *prometheus.GaugeVec
+	PartitionHealth     *prometheus.GaugeVec
 }
 
 // PartitionRebalancer handles automatic partition rebalancing
 type PartitionRebalancer struct {
-	manager     *PartitionManager
-	logger      *zap.Logger
-	stopCh      chan struct{}
-	interval    time.Duration
-	mutex       sync.Mutex
-	isRunning   bool
+	manager   *PartitionManager
+	logger    *zap.Logger
+	stopCh    chan struct{}
+	interval  time.Duration
+	mutex     sync.Mutex
+	isRunning bool
 }
 
 // NewPartitionManager creates a new partition manager
@@ -88,7 +87,7 @@ func NewPartitionManager(db *gorm.DB, logger *zap.Logger) *PartitionManager {
 		Strategy:               "hash",
 		PartitionCount:         16,
 		MaxPartitionSize:       10 * 1024 * 1024 * 1024, // 10GB
-		MaxRecordsPerPartition: 10000000,                 // 10M records
+		MaxRecordsPerPartition: 10000000,                // 10M records
 		RebalanceThreshold:     0.8,
 		EnableAutoPartition:    true,
 		ReplicationFactor:      3,
@@ -151,7 +150,7 @@ func (pm *PartitionManager) GetAccountPartition(userID uuid.UUID) string {
 	defer pm.mutex.RUnlock()
 
 	hashKey := pm.hashUserID(userID)
-	
+
 	if partition, exists := pm.shardMap[hashKey]; exists {
 		pm.metrics.PartitionAccess.WithLabelValues(partition, "get_account").Inc()
 		return partition
@@ -168,10 +167,10 @@ func (pm *PartitionManager) GetTransactionPartition(userID uuid.UUID, timestamp 
 	// For transactions, we can use time-based partitioning
 	// Format: YYYY_MM for monthly partitions
 	partition := fmt.Sprintf("transactions_%s", timestamp.Format("2006_01"))
-	
+
 	pm.mutex.RLock()
 	defer pm.mutex.RUnlock()
-	
+
 	pm.metrics.PartitionAccess.WithLabelValues(partition, "get_transaction").Inc()
 	return partition
 }
@@ -183,7 +182,7 @@ func (pm *PartitionManager) CreatePartition(ctx context.Context, tableName, part
 
 	// Create partition table
 	partitionTableName := fmt.Sprintf("%s_%s", tableName, partitionName)
-	
+
 	switch tableName {
 	case "accounts":
 		if err := pm.createAccountPartition(ctx, partitionTableName, hashRange); err != nil {
@@ -274,7 +273,7 @@ func (pm *PartitionManager) MigratePartition(ctx context.Context, sourcePartitio
 		}
 
 		offset += batchSize
-		
+
 		// Add delay to avoid overwhelming the system
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -313,7 +312,7 @@ func (pm *PartitionManager) GetPartitionStats(ctx context.Context) (map[string]*
 	// Update partition statistics
 	for name, partition := range pm.partitions {
 		if err := pm.updatePartitionStats(ctx, name, partition); err != nil {
-			pm.logger.Error("Failed to update partition stats", 
+			pm.logger.Error("Failed to update partition stats",
 				zap.String("partition", name), zap.Error(err))
 		}
 	}
@@ -343,19 +342,19 @@ func (pm *PartitionManager) initializePartitions() {
 	// Initialize default partitions based on configuration
 	partitionCount := pm.config.PartitionCount
 	hashSpace := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-	
+
 	for i := 0; i < partitionCount; i++ {
 		partitionName := fmt.Sprintf("p%02d", i)
-		
+
 		// Calculate hash range for this partition
 		startHash := pm.calculatePartitionHash(i, partitionCount)
 		endHash := pm.calculatePartitionHash(i+1, partitionCount)
-		
+
 		hashRange := HashRange{
 			Start: startHash,
 			End:   endHash,
 		}
-		
+
 		partition := &PartitionInfo{
 			Name:         partitionName,
 			ShardID:      pm.getShardForPartition(partitionName),
@@ -367,12 +366,12 @@ func (pm *PartitionManager) initializePartitions() {
 			SizeBytes:    0,
 			LastAccessed: time.Now(),
 		}
-		
+
 		pm.partitions[partitionName] = partition
 	}
-	
+
 	pm.updateShardMap()
-	
+
 	pm.logger.Info("Initialized partitions", zap.Int("count", partitionCount))
 }
 
@@ -400,7 +399,7 @@ func (pm *PartitionManager) calculatePartitionHash(index, total int) string {
 	if index >= total {
 		return maxHash
 	}
-	
+
 	// Simple calculation - in production, use more sophisticated distribution
 	portion := float64(index) / float64(total)
 	hashInt := uint64(portion * float64(^uint64(0)))
@@ -413,7 +412,7 @@ func (pm *PartitionManager) getShardForPartition(partitionName string) string {
 	if shardCount == 0 {
 		return "shard_01" // Default shard
 	}
-	
+
 	// Extract partition number and map to shard
 	partitionNum := 0
 	if len(partitionName) > 1 && partitionName[0] == 'p' {
@@ -421,7 +420,7 @@ func (pm *PartitionManager) getShardForPartition(partitionName string) string {
 			partitionNum = num
 		}
 	}
-	
+
 	shardIndex := partitionNum % shardCount
 	return fmt.Sprintf("shard_%02d", shardIndex+1)
 }
@@ -429,16 +428,16 @@ func (pm *PartitionManager) getShardForPartition(partitionName string) string {
 func (pm *PartitionManager) updateShardMap() {
 	// Rebuild shard map based on current partitions
 	pm.shardMap = make(map[string]string)
-	
+
 	for name, partition := range pm.partitions {
 		if partition.Status != "active" {
 			continue
 		}
-		
+
 		// Map hash range to partition
 		startHash := partition.HashRange.Start
 		endHash := partition.HashRange.End
-		
+
 		// For simplicity, map the entire range to this partition
 		// In production, you'd have a more sophisticated mapping
 		pm.shardMap[name] = name
@@ -521,14 +520,14 @@ func (pm *PartitionManager) getPartitionRemainder(tableName string) int {
 func (pm *PartitionManager) migrateAccountBatch(ctx context.Context, source, target string, batchSize, offset int) error {
 	sourceTable := fmt.Sprintf("accounts_%s", source)
 	targetTable := fmt.Sprintf("accounts_%s", target)
-	
+
 	// Copy data in batch
 	copySQL := fmt.Sprintf(`
 		INSERT INTO %s 
 		SELECT * FROM %s 
 		LIMIT %d OFFSET %d
 	`, targetTable, sourceTable, batchSize, offset)
-	
+
 	return pm.db.Exec(copySQL).Error
 }
 
@@ -536,23 +535,23 @@ func (pm *PartitionManager) updatePartitionStats(ctx context.Context, name strin
 	// Update record count
 	var recordCount int64
 	accountTable := fmt.Sprintf("accounts_%s", name)
-	
+
 	if err := pm.db.Table(accountTable).Count(&recordCount).Error; err == nil {
 		partition.RecordCount = recordCount
 		pm.metrics.PartitionRecords.WithLabelValues(name, partition.ShardID).Set(float64(recordCount))
 	}
-	
+
 	// Update size (simplified - in production, query actual table size)
 	partition.SizeBytes = recordCount * 500 // Estimated 500 bytes per record
 	pm.metrics.PartitionSize.WithLabelValues(name, partition.ShardID).Set(float64(partition.SizeBytes))
-	
+
 	// Update health status
 	healthStatus := 1.0
 	if partition.Status != "active" {
 		healthStatus = 0.0
 	}
 	pm.metrics.PartitionHealth.WithLabelValues(name, partition.ShardID).Set(healthStatus)
-	
+
 	partition.UpdatedAt = time.Now()
 	return nil
 }
@@ -623,16 +622,16 @@ func (r *PartitionRebalancer) checkAndRebalance() {
 
 func (r *PartitionRebalancer) needsRebalancing(partition *PartitionInfo) bool {
 	config := r.manager.config
-	
+
 	// Check size threshold
 	if partition.SizeBytes > int64(float64(config.MaxPartitionSize)*config.RebalanceThreshold) {
 		return true
 	}
-	
+
 	// Check record count threshold
 	if partition.RecordCount > int64(float64(config.MaxRecordsPerPartition)*config.RebalanceThreshold) {
 		return true
 	}
-	
+
 	return false
 }

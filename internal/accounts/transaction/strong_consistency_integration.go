@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"	"github.com/Aidin1998/pincex_unified/internal/trading/consensus"
+	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/pincex_unified/internal/trading/consensus"
 	"github.com/Aidin1998/pincex_unified/internal/trading/consistency"
 	"github.com/Aidin1998/pincex_unified/internal/trading/coordination"
 	"github.com/google/uuid"

@@ -43,12 +43,12 @@ type RepositoryMetrics struct {
 
 // BalanceUpdate represents an atomic balance update operation
 type BalanceUpdate struct {
-	UserID       uuid.UUID
-	Currency     string
-	BalanceDelta decimal.Decimal
-	LockedDelta  decimal.Decimal
-	Type         string
-	ReferenceID  string
+	UserID          uuid.UUID
+	Currency        string
+	BalanceDelta    decimal.Decimal
+	LockedDelta     decimal.Decimal
+	Type            string
+	ReferenceID     string
 	ExpectedVersion int64
 }
 
@@ -119,16 +119,16 @@ func (r *Repository) GetAccount(ctx context.Context, userID uuid.UUID, currency 
 	// Try cache first
 	if cachedAccount, err := r.cache.GetAccount(ctx, userID, currency); err == nil {
 		account := &Account{
-			ID:           cachedAccount.ID,
-			UserID:       cachedAccount.UserID,
-			Currency:     cachedAccount.Currency,
-			Balance:      cachedAccount.Balance,
-			Available:    cachedAccount.Available,
-			Locked:       cachedAccount.Locked,
-			Version:      cachedAccount.Version,
-			AccountType:  cachedAccount.AccountType,
-			Status:       cachedAccount.Status,
-			UpdatedAt:    cachedAccount.UpdatedAt,
+			ID:          cachedAccount.ID,
+			UserID:      cachedAccount.UserID,
+			Currency:    cachedAccount.Currency,
+			Balance:     cachedAccount.Balance,
+			Available:   cachedAccount.Available,
+			Locked:      cachedAccount.Locked,
+			Version:     cachedAccount.Version,
+			AccountType: cachedAccount.AccountType,
+			Status:      cachedAccount.Status,
+			UpdatedAt:   cachedAccount.UpdatedAt,
 		}
 		r.metrics.QueryCount.WithLabelValues("get_account", "accounts", "cache_hit").Inc()
 		return account, nil
@@ -137,7 +137,7 @@ func (r *Repository) GetAccount(ctx context.Context, userID uuid.UUID, currency 
 	// Cache miss - query database
 	var account Account
 	partition := r.partitions.GetAccountPartition(userID)
-	
+
 	err := r.readDB.Table(fmt.Sprintf("accounts_%s", partition)).
 		Where("user_id = ? AND currency = ?", userID, currency).
 		First(&account).Error
@@ -182,7 +182,7 @@ func (r *Repository) GetAccountBalance(ctx context.Context, userID uuid.UUID, cu
 
 	// Cache miss - query database with optimized query
 	partition := r.partitions.GetAccountPartition(userID)
-	
+
 	var result struct {
 		Balance   decimal.Decimal `gorm:"column:balance"`
 		Available decimal.Decimal `gorm:"column:available"`
@@ -209,7 +209,7 @@ func (r *Repository) GetAccountBalance(ctx context.Context, userID uuid.UUID, cu
 // UpdateBalanceAtomic performs atomic balance updates with optimistic concurrency control
 func (r *Repository) UpdateBalanceAtomic(ctx context.Context, update *BalanceUpdate) error {
 	maxRetries := 3
-	
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			r.metrics.OptimisticRetries.WithLabelValues("update_balance").Inc()
@@ -223,10 +223,10 @@ func (r *Repository) UpdateBalanceAtomic(ctx context.Context, update *BalanceUpd
 			}
 			return err
 		}
-		
+
 		return nil
 	}
-	
+
 	return fmt.Errorf("failed to update balance after %d attempts", maxRetries)
 }
 
@@ -238,14 +238,14 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 	// Acquire distributed lock
 	lockKey := fmt.Sprintf("account:lock:%s:%s", update.UserID.String(), update.Currency)
 	mutex := r.redsync.NewMutex(lockKey, redsync.WithExpiry(LockTTL))
-	
+
 	lockStart := time.Now()
 	if err := mutex.Lock(); err != nil {
 		r.metrics.LockAcquisitions.WithLabelValues("account", "failed").Inc()
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	defer mutex.Unlock()
-	
+
 	r.metrics.LockWaitTime.WithLabelValues("account").Observe(time.Since(lockStart).Seconds())
 	r.metrics.LockAcquisitions.WithLabelValues("account", "success").Inc()
 
@@ -267,13 +267,13 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 		WHERE user_id = $1 AND currency = $2 
 		FOR UPDATE
 	`, tableName)
-	
+
 	err = tx.QueryRow(ctx, query, update.UserID, update.Currency).Scan(
 		&account.ID, &account.UserID, &account.Currency,
 		&account.Balance, &account.Available, &account.Locked,
 		&account.Version, &account.AccountType, &account.Status, &account.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		r.metrics.TransactionCount.WithLabelValues("update_balance", "error").Inc()
 		return fmt.Errorf("failed to get account: %w", err)
@@ -293,7 +293,7 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 	// Validate balance constraints
 	if newBalance.IsNegative() || newAvailable.IsNegative() || newLocked.IsNegative() {
 		r.metrics.TransactionCount.WithLabelValues("update_balance", "insufficient_funds").Inc()
-		return fmt.Errorf("insufficient funds: balance=%s, available=%s, locked=%s", 
+		return fmt.Errorf("insufficient funds: balance=%s, available=%s, locked=%s",
 			newBalance, newAvailable, newLocked)
 	}
 
@@ -303,15 +303,15 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 		SET balance = $1, available = $2, locked = $3, version = version + 1, updated_at = NOW()
 		WHERE user_id = $4 AND currency = $5 AND version = $6
 	`, tableName)
-	
-	cmdTag, err := tx.Exec(ctx, updateQuery, newBalance, newAvailable, newLocked, 
+
+	cmdTag, err := tx.Exec(ctx, updateQuery, newBalance, newAvailable, newLocked,
 		update.UserID, update.Currency, account.Version)
-	
+
 	if err != nil {
 		r.metrics.TransactionCount.WithLabelValues("update_balance", "error").Inc()
 		return fmt.Errorf("failed to update account: %w", err)
 	}
-	
+
 	if cmdTag.RowsAffected() == 0 {
 		r.metrics.TransactionCount.WithLabelValues("update_balance", "optimistic_lock_failed").Inc()
 		return fmt.Errorf("optimistic lock failed: no rows affected")
@@ -342,7 +342,7 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 		 reference_id, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
-	
+
 	_, err = tx.Exec(ctx, journalQuery,
 		journalEntry.ID, journalEntry.UserID, journalEntry.Currency,
 		journalEntry.Type, journalEntry.Amount, journalEntry.BalanceBefore,
@@ -351,7 +351,7 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 		journalEntry.LockedAfter, journalEntry.ReferenceID,
 		journalEntry.Status, journalEntry.CreatedAt,
 	)
-	
+
 	if err != nil {
 		r.metrics.TransactionCount.WithLabelValues("update_balance", "error").Inc()
 		return fmt.Errorf("failed to create journal entry: %w", err)
@@ -365,7 +365,7 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 
 	// Update cache
 	r.cache.SetAccountBalance(ctx, update.UserID, update.Currency, newBalance, newAvailable, account.Version+1)
-	
+
 	// Invalidate related cache entries
 	r.cache.InvalidateAccount(ctx, update.UserID, update.Currency)
 
@@ -381,13 +381,13 @@ func (r *Repository) CreateReservation(ctx context.Context, reservation *Reserva
 	// Acquire distributed lock
 	lockKey := fmt.Sprintf("account:lock:%s:%s", reservation.UserID.String(), reservation.Currency)
 	mutex := r.redsync.NewMutex(lockKey, redsync.WithExpiry(LockTTL))
-	
+
 	if err := mutex.Lock(); err != nil {
 		r.metrics.LockAcquisitions.WithLabelValues("reservation", "failed").Inc()
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	defer mutex.Unlock()
-	
+
 	r.metrics.LockAcquisitions.WithLabelValues("reservation", "success").Inc()
 
 	// Start transaction
@@ -418,14 +418,14 @@ func (r *Repository) CreateReservation(ctx context.Context, reservation *Reserva
 		(id, user_id, currency, amount, type, reference_id, status, expires_at, version, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
-	
+
 	_, err = tx.Exec(ctx, query,
 		reservation.ID, reservation.UserID, reservation.Currency,
 		reservation.Amount, reservation.Type, reservation.ReferenceID,
 		reservation.Status, reservation.ExpiresAt, reservation.Version,
 		reservation.CreatedAt, reservation.UpdatedAt,
 	)
-	
+
 	if err != nil {
 		r.metrics.TransactionCount.WithLabelValues("create_reservation", "error").Inc()
 		return fmt.Errorf("failed to create reservation: %w", err)
@@ -463,13 +463,13 @@ func (r *Repository) ReleaseReservation(ctx context.Context, reservationID uuid.
 	// Acquire distributed lock
 	lockKey := fmt.Sprintf("account:lock:%s:%s", reservation.UserID.String(), reservation.Currency)
 	mutex := r.redsync.NewMutex(lockKey, redsync.WithExpiry(LockTTL))
-	
+
 	if err := mutex.Lock(); err != nil {
 		r.metrics.LockAcquisitions.WithLabelValues("reservation", "failed").Inc()
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	defer mutex.Unlock()
-	
+
 	r.metrics.LockAcquisitions.WithLabelValues("reservation", "success").Inc()
 
 	// Start transaction
@@ -485,12 +485,12 @@ func (r *Repository) ReleaseReservation(ctx context.Context, reservationID uuid.
 		SET status = 'released', updated_at = NOW(), version = version + 1
 		WHERE id = $1 AND status = 'active' AND version = $2
 	`
-	
+
 	cmdTag, err := tx.Exec(ctx, updateQuery, reservationID, reservation.Version)
 	if err != nil {
 		return fmt.Errorf("failed to update reservation: %w", err)
 	}
-	
+
 	if cmdTag.RowsAffected() == 0 {
 		return fmt.Errorf("reservation update failed: optimistic lock conflict")
 	}
@@ -551,7 +551,7 @@ func (r *Repository) performBalanceUpdateInTx(ctx context.Context, tx pgx.Tx, up
 	// This is a simplified version - in a real implementation,
 	// you would need to implement the full balance update logic within the transaction
 	// Similar to performBalanceUpdate but using the existing transaction
-	
+
 	partition := r.partitions.GetAccountPartition(update.UserID)
 	tableName := fmt.Sprintf("accounts_%s", partition)
 
@@ -563,11 +563,11 @@ func (r *Repository) performBalanceUpdateInTx(ctx context.Context, tx pgx.Tx, up
 		WHERE user_id = $1 AND currency = $2 
 		FOR UPDATE
 	`, tableName)
-	
+
 	err := tx.QueryRow(ctx, query, update.UserID, update.Currency).Scan(
 		&account.Balance, &account.Available, &account.Locked, &account.Version,
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to get account: %w", err)
 	}
@@ -588,14 +588,14 @@ func (r *Repository) performBalanceUpdateInTx(ctx context.Context, tx pgx.Tx, up
 		SET balance = $1, available = $2, locked = $3, version = version + 1, updated_at = NOW()
 		WHERE user_id = $4 AND currency = $5 AND version = $6
 	`, tableName)
-	
-	cmdTag, err := tx.Exec(ctx, updateQuery, newBalance, newAvailable, newLocked, 
+
+	cmdTag, err := tx.Exec(ctx, updateQuery, newBalance, newAvailable, newLocked,
 		update.UserID, update.Currency, account.Version)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to update account: %w", err)
 	}
-	
+
 	if cmdTag.RowsAffected() == 0 {
 		return fmt.Errorf("optimistic lock failed")
 	}
@@ -605,8 +605,7 @@ func (r *Repository) performBalanceUpdateInTx(ctx context.Context, tx pgx.Tx, up
 
 func isOptimisticLockError(err error) bool {
 	// Check if error is related to optimistic locking
-	return err != nil && (
-		err.Error() == "optimistic lock failed" ||
+	return err != nil && (err.Error() == "optimistic lock failed" ||
 		err.Error() == "optimistic lock failed: no rows affected")
 }
 
@@ -617,7 +616,7 @@ func (r *Repository) Health(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get write DB: %w", err)
 	}
-	
+
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("write DB unhealthy: %w", err)
 	}
@@ -626,7 +625,7 @@ func (r *Repository) Health(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get read DB: %w", err)
 	}
-	
+
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("read DB unhealthy: %w", err)
 	}

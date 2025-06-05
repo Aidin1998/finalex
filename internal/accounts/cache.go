@@ -18,29 +18,29 @@ import (
 
 // Cache TTL configurations for different data tiers
 const (
-	HotDataTTL    = 5 * time.Minute   // Frequently accessed data (active accounts)
-	WarmDataTTL   = 30 * time.Minute  // Moderately accessed data (recent transactions)
-	ColdDataTTL   = 2 * time.Hour     // Rarely accessed data (historical data)
-	LockTTL       = 30 * time.Second  // Distributed lock TTL
-	BackgroundTTL = 24 * time.Hour    // Background job cache
+	HotDataTTL    = 5 * time.Minute  // Frequently accessed data (active accounts)
+	WarmDataTTL   = 30 * time.Minute // Moderately accessed data (recent transactions)
+	ColdDataTTL   = 2 * time.Hour    // Rarely accessed data (historical data)
+	LockTTL       = 30 * time.Second // Distributed lock TTL
+	BackgroundTTL = 24 * time.Hour   // Background job cache
 )
 
 // Redis key patterns for different data types
 const (
-	AccountBalanceKey     = "account:balance:%s:%s"      // user_id:currency
-	AccountLockKey        = "account:lock:%s:%s"         // user_id:currency
-	AccountVersionKey     = "account:version:%s:%s"      // user_id:currency
-	AccountMetaKey        = "account:meta:%s:%s"         // user_id:currency
-	ReservationKey        = "reservation:%s"             // reservation_id
-	ReservationUserKey    = "reservation:user:%s:%s"    // user_id:currency
-	TransactionKey        = "transaction:%s"             // transaction_id
-	TransactionUserKey    = "transaction:user:%s"       // user_id
-	BalanceSnapshotKey    = "snapshot:balance:%s:%s:%s" // user_id:currency:date
-	AuditLogKey           = "audit:%s:%s"               // table:record_id
-	UserPartitionKey      = "partition:user:%s"         // user_id
-	CurrencyStatsKey      = "stats:currency:%s"         // currency
-	SystemHealthKey       = "health:system"
-	JobStatusKey          = "job:status:%s"             // job_id
+	AccountBalanceKey  = "account:balance:%s:%s"     // user_id:currency
+	AccountLockKey     = "account:lock:%s:%s"        // user_id:currency
+	AccountVersionKey  = "account:version:%s:%s"     // user_id:currency
+	AccountMetaKey     = "account:meta:%s:%s"        // user_id:currency
+	ReservationKey     = "reservation:%s"            // reservation_id
+	ReservationUserKey = "reservation:user:%s:%s"    // user_id:currency
+	TransactionKey     = "transaction:%s"            // transaction_id
+	TransactionUserKey = "transaction:user:%s"       // user_id
+	BalanceSnapshotKey = "snapshot:balance:%s:%s:%s" // user_id:currency:date
+	AuditLogKey        = "audit:%s:%s"               // table:record_id
+	UserPartitionKey   = "partition:user:%s"         // user_id
+	CurrencyStatsKey   = "stats:currency:%s"         // currency
+	SystemHealthKey    = "health:system"
+	JobStatusKey       = "job:status:%s" // job_id
 )
 
 // CachedAccount represents account data in cache
@@ -89,12 +89,12 @@ type CacheMetrics struct {
 
 // CacheLayer provides high-performance caching with data tiering
 type CacheLayer struct {
-	hotClient    redis.UniversalClient
-	warmClient   redis.UniversalClient
-	coldClient   redis.UniversalClient
-	logger       *zap.Logger
-	metrics      *CacheMetrics
-	config       *CacheConfig
+	hotClient  redis.UniversalClient
+	warmClient redis.UniversalClient
+	coldClient redis.UniversalClient
+	logger     *zap.Logger
+	metrics    *CacheMetrics
+	config     *CacheConfig
 }
 
 // CacheConfig represents cache layer configuration
@@ -123,38 +123,38 @@ func NewCacheLayer(config *CacheConfig, logger *zap.Logger) (*CacheLayer, error)
 
 	// Hot data client (high-performance, low latency)
 	hotClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:       config.HotRedisAddr,
-		MaxRetries:  config.MaxRetries,
-		DialTimeout: dialTimeout,
-		ReadTimeout: readTimeout,
+		Addrs:        config.HotRedisAddr,
+		MaxRetries:   config.MaxRetries,
+		DialTimeout:  dialTimeout,
+		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
-		PoolSize:    config.PoolSize,
-		PoolTimeout: poolTimeout,
-		IdleTimeout: idleTimeout,
+		PoolSize:     config.PoolSize,
+		PoolTimeout:  poolTimeout,
+		IdleTimeout:  idleTimeout,
 	})
 
 	// Warm data client (balanced performance)
 	warmClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:       config.WarmRedisAddr,
-		MaxRetries:  config.MaxRetries,
-		DialTimeout: dialTimeout,
-		ReadTimeout: readTimeout,
+		Addrs:        config.WarmRedisAddr,
+		MaxRetries:   config.MaxRetries,
+		DialTimeout:  dialTimeout,
+		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
-		PoolSize:    config.PoolSize / 2,
-		PoolTimeout: poolTimeout,
-		IdleTimeout: idleTimeout,
+		PoolSize:     config.PoolSize / 2,
+		PoolTimeout:  poolTimeout,
+		IdleTimeout:  idleTimeout,
 	})
 
 	// Cold data client (cost-optimized)
 	coldClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:       config.ColdRedisAddr,
-		MaxRetries:  config.MaxRetries,
-		DialTimeout: dialTimeout * 2,
-		ReadTimeout: readTimeout * 2,
+		Addrs:        config.ColdRedisAddr,
+		MaxRetries:   config.MaxRetries,
+		DialTimeout:  dialTimeout * 2,
+		ReadTimeout:  readTimeout * 2,
 		WriteTimeout: writeTimeout * 2,
-		PoolSize:    config.PoolSize / 4,
-		PoolTimeout: poolTimeout * 2,
-		IdleTimeout: idleTimeout,
+		PoolSize:     config.PoolSize / 4,
+		PoolTimeout:  poolTimeout * 2,
+		IdleTimeout:  idleTimeout,
 	})
 
 	// Initialize metrics
@@ -211,28 +211,28 @@ func NewCacheLayer(config *CacheConfig, logger *zap.Logger) (*CacheLayer, error)
 // GetAccount retrieves account from appropriate cache tier
 func (c *CacheLayer) GetAccount(ctx context.Context, userID uuid.UUID, currency string) (*CachedAccount, error) {
 	key := fmt.Sprintf(AccountBalanceKey, userID.String(), currency)
-	
+
 	// Try hot cache first
 	if account, err := c.getAccountFromTier(ctx, c.hotClient, "hot", key); err == nil {
 		c.metrics.CacheHits.WithLabelValues("hot", "get_account").Inc()
 		c.promoteToHot(ctx, key, account)
 		return account, nil
 	}
-	
+
 	// Try warm cache
 	if account, err := c.getAccountFromTier(ctx, c.warmClient, "warm", key); err == nil {
 		c.metrics.CacheHits.WithLabelValues("warm", "get_account").Inc()
 		c.promoteToHot(ctx, key, account)
 		return account, nil
 	}
-	
+
 	// Try cold cache
 	if account, err := c.getAccountFromTier(ctx, c.coldClient, "cold", key); err == nil {
 		c.metrics.CacheHits.WithLabelValues("cold", "get_account").Inc()
 		c.promoteToWarm(ctx, key, account)
 		return account, nil
 	}
-	
+
 	c.metrics.CacheMisses.WithLabelValues("all", "get_account").Inc()
 	return nil, redis.Nil
 }
@@ -243,15 +243,15 @@ func (c *CacheLayer) SetAccount(ctx context.Context, account *CachedAccount) err
 	account.CachedAt = time.Now()
 	account.AccessCount++
 	account.LastAccessed = time.Now()
-	
+
 	data, err := json.Marshal(account)
 	if err != nil {
 		return fmt.Errorf("failed to marshal account: %w", err)
 	}
-	
+
 	// Determine tier based on access patterns
 	tier := c.determineTier(account)
-	
+
 	switch tier {
 	case "hot":
 		err = c.hotClient.Set(ctx, key, data, HotDataTTL).Err()
@@ -263,42 +263,42 @@ func (c *CacheLayer) SetAccount(ctx context.Context, account *CachedAccount) err
 		err = c.coldClient.Set(ctx, key, data, ColdDataTTL).Err()
 		c.metrics.CacheWrites.WithLabelValues("cold", "set_account").Inc()
 	}
-	
+
 	return err
 }
 
 // GetAccountBalance retrieves only balance information (optimized for high frequency)
 func (c *CacheLayer) GetAccountBalance(ctx context.Context, userID uuid.UUID, currency string) (decimal.Decimal, decimal.Decimal, int64, error) {
 	key := fmt.Sprintf(AccountBalanceKey, userID.String(), currency)
-	
+
 	// Use pipeline for atomic retrieval of balance data
 	pipe := c.hotClient.Pipeline()
 	balanceCmd := pipe.HMGet(ctx, key, "balance", "available", "version")
 	_, err := pipe.Exec(ctx)
-	
+
 	if err != nil {
 		c.metrics.CacheMisses.WithLabelValues("hot", "get_balance").Inc()
 		return decimal.Zero, decimal.Zero, 0, err
 	}
-	
+
 	c.metrics.CacheHits.WithLabelValues("hot", "get_balance").Inc()
-	
+
 	values := balanceCmd.Val()
 	if len(values) != 3 || values[0] == nil {
 		return decimal.Zero, decimal.Zero, 0, redis.Nil
 	}
-	
+
 	balance, _ := decimal.NewFromString(values[0].(string))
 	available, _ := decimal.NewFromString(values[1].(string))
 	version, _ := strconv.ParseInt(values[2].(string), 10, 64)
-	
+
 	return balance, available, version, nil
 }
 
 // SetAccountBalance stores balance information in hot cache
 func (c *CacheLayer) SetAccountBalance(ctx context.Context, userID uuid.UUID, currency string, balance, available decimal.Decimal, version int64) error {
 	key := fmt.Sprintf(AccountBalanceKey, userID.String(), currency)
-	
+
 	pipe := c.hotClient.Pipeline()
 	pipe.HMSet(ctx, key, map[string]interface{}{
 		"balance":       balance.String(),
@@ -309,24 +309,24 @@ func (c *CacheLayer) SetAccountBalance(ctx context.Context, userID uuid.UUID, cu
 	})
 	pipe.Expire(ctx, key, HotDataTTL)
 	_, err := pipe.Exec(ctx)
-	
+
 	if err == nil {
 		c.metrics.CacheWrites.WithLabelValues("hot", "set_balance").Inc()
 	}
-	
+
 	return err
 }
 
 // GetReservations retrieves user reservations from cache
 func (c *CacheLayer) GetReservations(ctx context.Context, userID uuid.UUID, currency string) ([]*CachedReservation, error) {
 	key := fmt.Sprintf(ReservationUserKey, userID.String(), currency)
-	
+
 	// Try hot cache first
 	if reservations, err := c.getReservationsFromTier(ctx, c.hotClient, "hot", key); err == nil {
 		c.metrics.CacheHits.WithLabelValues("hot", "get_reservations").Inc()
 		return reservations, nil
 	}
-	
+
 	// Try warm cache
 	if reservations, err := c.getReservationsFromTier(ctx, c.warmClient, "warm", key); err == nil {
 		c.metrics.CacheHits.WithLabelValues("warm", "get_reservations").Inc()
@@ -334,7 +334,7 @@ func (c *CacheLayer) GetReservations(ctx context.Context, userID uuid.UUID, curr
 		c.setReservationsInTier(ctx, c.hotClient, key, reservations, HotDataTTL)
 		return reservations, nil
 	}
-	
+
 	c.metrics.CacheMisses.WithLabelValues("all", "get_reservations").Inc()
 	return nil, redis.Nil
 }
@@ -342,19 +342,19 @@ func (c *CacheLayer) GetReservations(ctx context.Context, userID uuid.UUID, curr
 // InvalidateAccount removes account from all cache tiers
 func (c *CacheLayer) InvalidateAccount(ctx context.Context, userID uuid.UUID, currency string) error {
 	key := fmt.Sprintf(AccountBalanceKey, userID.String(), currency)
-	
+
 	// Remove from all tiers
 	c.hotClient.Del(ctx, key)
 	c.warmClient.Del(ctx, key)
 	c.coldClient.Del(ctx, key)
-	
+
 	return nil
 }
 
 // WarmupCache preloads frequently accessed data
 func (c *CacheLayer) WarmupCache(ctx context.Context, accounts []*Account) error {
 	pipe := c.hotClient.Pipeline()
-	
+
 	for _, account := range accounts {
 		cachedAccount := &CachedAccount{
 			ID:           account.ID,
@@ -371,12 +371,12 @@ func (c *CacheLayer) WarmupCache(ctx context.Context, accounts []*Account) error
 			AccessCount:  0,
 			LastAccessed: time.Now(),
 		}
-		
+
 		key := fmt.Sprintf(AccountBalanceKey, account.UserID.String(), account.Currency)
 		data, _ := json.Marshal(cachedAccount)
 		pipe.Set(ctx, key, data, HotDataTTL)
 	}
-	
+
 	_, err := pipe.Exec(ctx)
 	c.logger.Info("Cache warmup completed", zap.Int("accounts", len(accounts)))
 	return err
@@ -389,20 +389,20 @@ func (c *CacheLayer) getAccountFromTier(ctx context.Context, client redis.Univer
 	defer func() {
 		c.metrics.CacheLatency.WithLabelValues(tier, "get").Observe(time.Since(start).Seconds())
 	}()
-	
+
 	data, err := client.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var account CachedAccount
 	if err := json.Unmarshal([]byte(data), &account); err != nil {
 		return nil, err
 	}
-	
+
 	account.AccessCount++
 	account.LastAccessed = time.Now()
-	
+
 	return &account, nil
 }
 
@@ -411,17 +411,17 @@ func (c *CacheLayer) getReservationsFromTier(ctx context.Context, client redis.U
 	defer func() {
 		c.metrics.CacheLatency.WithLabelValues(tier, "get_reservations").Observe(time.Since(start).Seconds())
 	}()
-	
+
 	data, err := client.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var reservations []*CachedReservation
 	if err := json.Unmarshal([]byte(data), &reservations); err != nil {
 		return nil, err
 	}
-	
+
 	return reservations, nil
 }
 
@@ -430,7 +430,7 @@ func (c *CacheLayer) setReservationsInTier(ctx context.Context, client redis.Uni
 	if err != nil {
 		return err
 	}
-	
+
 	return client.Set(ctx, key, data, ttl).Err()
 }
 
@@ -449,12 +449,12 @@ func (c *CacheLayer) determineTier(account *CachedAccount) string {
 	if time.Since(account.LastAccessed) < 5*time.Minute || account.AccessCount > 100 {
 		return "hot"
 	}
-	
+
 	// Warm tier: moderately accessed
 	if time.Since(account.LastAccessed) < 30*time.Minute || account.AccessCount > 10 {
 		return "warm"
 	}
-	
+
 	// Cold tier: rarely accessed
 	return "cold"
 }
@@ -465,15 +465,15 @@ func (c *CacheLayer) Health(ctx context.Context) error {
 	if err := c.hotClient.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("hot cache unhealthy: %w", err)
 	}
-	
+
 	if err := c.warmClient.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("warm cache unhealthy: %w", err)
 	}
-	
+
 	if err := c.coldClient.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("cold cache unhealthy: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -482,10 +482,10 @@ func (c *CacheLayer) Close() error {
 	if err := c.hotClient.Close(); err != nil {
 		return err
 	}
-	
+
 	if err := c.warmClient.Close(); err != nil {
 		return err
 	}
-	
+
 	return c.coldClient.Close()
 }

@@ -1,20 +1,18 @@
+// Legacy service implementation - DEPRECATED
+// This file is kept for backward compatibility only
+// All new functionality should use service_integration.go (UltraHighConcurrencyService)
 package accounts
 
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync"
-	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/models"
-	"github.com/google/uuid"
+	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-// Enhanced error types for better error handling
+// Legacy errors - use the ones in service_integration.go instead
 var (
 	ErrInsufficientFunds   = errors.New("insufficient funds")
 	ErrAccountNotFound     = errors.New("account not found")
@@ -25,80 +23,10 @@ var (
 	ErrConcurrencyConflict = errors.New("concurrency conflict")
 )
 
-// BatchOperationResult holds the result of a batch operation
-type BatchOperationResult struct {
-	SuccessCount int
-	FailedItems  map[string]error
-	Duration     time.Duration
-}
-
-// AccountBalance represents account balance for batch operations
-type AccountBalance struct {
-	UserID    string
-	Currency  string
-	Balance   float64
-	Available float64
-	Locked    float64
-}
-
-// FundsOperation represents a funds lock/unlock operation
-type FundsOperation struct {
-	UserID   string
-	Currency string
-	Amount   float64
-	OrderID  string
-	Reason   string
-}
-
-// TransactionOptions defines options for enhanced transaction handling
-type TransactionOptions struct {
-	Timeout             time.Duration
-	MaxRetries          int
-	RetryBackoff        time.Duration
-	RequireRowLocking   bool
-	PreValidationChecks bool
-	AuditLogging        bool
-	DeadlockDetection   bool
-}
-
-// DefaultTransactionOptions returns default transaction options
-func DefaultTransactionOptions() *TransactionOptions {
-	return &TransactionOptions{
-		Timeout:             30 * time.Second,
-		MaxRetries:          3,
-		RetryBackoff:        100 * time.Millisecond,
-		RequireRowLocking:   true,
-		PreValidationChecks: true,
-		AuditLogging:        true,
-		DeadlockDetection:   true,
-	}
-}
-
-// BookkeeperService defines bookkeeping operations and supports transaction and account lifecycle
-type BookkeeperService interface {
-	Start() error
-	Stop() error
-	GetAccounts(ctx context.Context, userID string) ([]*models.Account, error)
-	GetAccount(ctx context.Context, userID, currency string) (*models.Account, error)
-	CreateAccount(ctx context.Context, userID, currency string) (*models.Account, error)
-	GetAccountTransactions(ctx context.Context, userID, currency string, limit, offset int) ([]*models.Transaction, int64, error)
-	CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error)
-	CompleteTransaction(ctx context.Context, transactionID string) error
-	FailTransaction(ctx context.Context, transactionID string) error
-	LockFunds(ctx context.Context, userID, currency string, amount float64) error
-	UnlockFunds(ctx context.Context, userID, currency string, amount float64) error
-	// Batch operations for N+1 query resolution
-	BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error)
-	BatchLockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
-	BatchUnlockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
-}
-
-// Service implements BookkeeperService
-type Service struct {
-	logger    *zap.Logger
-	db        *gorm.DB
-	muMap     map[string]*sync.Mutex
-	muMapLock sync.Mutex // protects muMap
+// LegacyService is a deprecated wrapper for backward compatibility
+// New code should use UltraHighConcurrencyService instead
+type LegacyService struct {
+	bookkeeper bookkeeper.BookkeeperService
 }
 
 // NewService creates a new BookkeeperService

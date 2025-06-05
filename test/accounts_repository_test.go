@@ -7,15 +7,14 @@ package test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	goredislib "github.com/go-redis/redis/v8"
 	"github.com/go-redsync/redsync/v4"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v8"
-	goredislib "github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
@@ -48,7 +47,7 @@ func (suite *RepositoryTestSuite) SetupSuite() {
 
 	// Setup PostgreSQL connection for testing
 	dsn := "host=localhost user=test password=test dbname=test_accounts port=5432 sslmode=disable"
-	
+
 	writeDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	require.NoError(suite.T(), err, "PostgreSQL should be available for integration tests")
 	suite.writeDB = writeDB
@@ -92,7 +91,7 @@ func (suite *RepositoryTestSuite) SetupSuite() {
 
 	// Create repository
 	suite.repo = accounts.NewRepository(
-		suite.writeDB, suite.readDB, suite.pgxPool, 
+		suite.writeDB, suite.readDB, suite.pgxPool,
 		suite.cache, suite.redsync, suite.logger)
 
 	// Create test tables
@@ -132,14 +131,14 @@ func (suite *RepositoryTestSuite) createTestTables() {
 func (suite *RepositoryTestSuite) cleanTestData() {
 	// Clean all test tables
 	tables := []string{
-		"accounts", "reservations", "ledger_transactions", 
+		"accounts", "reservations", "ledger_transactions",
 		"transaction_journal", "balance_snapshots", "audit_logs",
 	}
-	
+
 	for _, table := range tables {
 		suite.writeDB.Exec(fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table))
 	}
-	
+
 	// Clean Redis cache
 	suite.redisClient.FlushDB(suite.ctx)
 }
@@ -243,7 +242,7 @@ func (suite *RepositoryTestSuite) TestUpdateBalanceAtomic() {
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), decimal.NewFromFloat(1500.0).Equal(balance))
 	assert.True(suite.T(), decimal.NewFromFloat(1450.0).Equal(available)) // 1500 - 50
-	assert.Equal(suite.T(), int64(2), version) // Version incremented
+	assert.Equal(suite.T(), int64(2), version)                            // Version incremented
 }
 
 func (suite *RepositoryTestSuite) TestOptimisticConcurrencyControl() {
@@ -319,7 +318,7 @@ func (suite *RepositoryTestSuite) TestConcurrentBalanceUpdates() {
 	// Concurrent updates
 	numUpdates := 10
 	updateAmount := decimal.NewFromFloat(1.0)
-	
+
 	var wg sync.WaitGroup
 	successCount := int32(0)
 	errorCount := int32(0)
@@ -408,7 +407,7 @@ func (suite *RepositoryTestSuite) TestCreateReservation() {
 	// Verify account balance was updated (funds locked)
 	balance, available, _, err := suite.repo.GetAccountBalance(suite.ctx, userID, currency)
 	assert.NoError(suite.T(), err)
-	assert.True(suite.T(), decimal.NewFromFloat(2.0).Equal(balance)) // Balance unchanged
+	assert.True(suite.T(), decimal.NewFromFloat(2.0).Equal(balance))   // Balance unchanged
 	assert.True(suite.T(), decimal.NewFromFloat(1.5).Equal(available)) // Available reduced
 }
 
@@ -462,7 +461,7 @@ func (suite *RepositoryTestSuite) TestReleaseReservation() {
 	// Verify funds were unlocked
 	balance, available, _, err := suite.repo.GetAccountBalance(suite.ctx, userID, currency)
 	assert.NoError(suite.T(), err)
-	assert.True(suite.T(), decimal.NewFromFloat(10.0).Equal(balance)) // Balance unchanged
+	assert.True(suite.T(), decimal.NewFromFloat(10.0).Equal(balance))   // Balance unchanged
 	assert.True(suite.T(), decimal.NewFromFloat(10.0).Equal(available)) // Available increased
 }
 
@@ -502,7 +501,7 @@ func (suite *RepositoryTestSuite) TestGetUserAccounts() {
 	}
 
 	for _, currency := range currencies {
-		assert.True(suite.T(), foundCurrencies[currency], 
+		assert.True(suite.T(), foundCurrencies[currency],
 			fmt.Sprintf("Currency %s should be found", currency))
 	}
 }

@@ -15,15 +15,15 @@ import (
 
 // JobScheduler manages all background jobs for the accounts system
 type JobScheduler struct {
-	repository     *Repository
-	cache          *CacheLayer
-	partitions     *PartitionManager
-	logger         *zap.Logger
-	metrics        *JobMetrics
-	jobs           map[string]*Job
-	mutex          sync.RWMutex
-	stopChannels   map[string]chan struct{}
-	isRunning      bool
+	repository   *Repository
+	cache        *CacheLayer
+	partitions   *PartitionManager
+	logger       *zap.Logger
+	metrics      *JobMetrics
+	jobs         map[string]*Job
+	mutex        sync.RWMutex
+	stopChannels map[string]chan struct{}
+	isRunning    bool
 }
 
 // Job represents a background job configuration
@@ -31,9 +31,9 @@ type Job struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
 	Description string        `json:"description"`
-	Schedule    string        `json:"schedule"`    // cron expression
-	Interval    time.Duration `json:"interval"`   // for interval-based jobs
-	Type        string        `json:"type"`       // cache_warmup, sync, maintenance, cleanup
+	Schedule    string        `json:"schedule"` // cron expression
+	Interval    time.Duration `json:"interval"` // for interval-based jobs
+	Type        string        `json:"type"`     // cache_warmup, sync, maintenance, cleanup
 	Enabled     bool          `json:"enabled"`
 	LastRun     *time.Time    `json:"last_run"`
 	NextRun     *time.Time    `json:"next_run"`
@@ -49,22 +49,22 @@ type JobConfig struct {
 	TimeoutDuration     time.Duration `json:"timeout_duration"`
 	RetryAttempts       int           `json:"retry_attempts"`
 	RetryDelay          time.Duration `json:"retry_delay"`
-	WarmupCriteria      string        `json:"warmup_criteria"`      // hot, warm, cold
+	WarmupCriteria      string        `json:"warmup_criteria"` // hot, warm, cold
 	CleanupOlderThan    time.Duration `json:"cleanup_older_than"`
 	SyncPartitions      []string      `json:"sync_partitions"`
-	MaintenanceType     string        `json:"maintenance_type"`     // vacuum, analyze, reindex
+	MaintenanceType     string        `json:"maintenance_type"` // vacuum, analyze, reindex
 	NotificationWebhook string        `json:"notification_webhook"`
 }
 
 // JobMetrics holds Prometheus metrics for job operations
 type JobMetrics struct {
-	JobExecutions     *prometheus.CounterVec
-	JobDuration       *prometheus.HistogramVec
-	JobErrors         *prometheus.CounterVec
-	JobLastExecution  *prometheus.GaugeVec
-	CacheWarmupStats  *prometheus.GaugeVec
-	SyncOperations    *prometheus.CounterVec
-	MaintenanceOps    *prometheus.CounterVec
+	JobExecutions    *prometheus.CounterVec
+	JobDuration      *prometheus.HistogramVec
+	JobErrors        *prometheus.CounterVec
+	JobLastExecution *prometheus.GaugeVec
+	CacheWarmupStats *prometheus.GaugeVec
+	SyncOperations   *prometheus.CounterVec
+	MaintenanceOps   *prometheus.CounterVec
 }
 
 // CacheWarmupJob handles cache warming for frequently accessed data
@@ -258,18 +258,18 @@ func (js *JobScheduler) runJob(ctx context.Context, job *Job, stopCh chan struct
 // executeJob executes a single job
 func (js *JobScheduler) executeJob(ctx context.Context, job *Job) {
 	start := time.Now()
-	
+
 	js.logger.Info("Starting job execution", zap.String("job_id", job.ID), zap.String("job_type", job.Type))
-	
+
 	defer func() {
 		duration := time.Since(start)
 		js.metrics.JobDuration.WithLabelValues(job.ID, job.Type).Observe(duration.Seconds())
 		js.metrics.JobLastExecution.WithLabelValues(job.ID, job.Type).SetToCurrentTime()
-		
+
 		now := time.Now()
 		job.LastRun = &now
 		job.RunCount++
-		
+
 		nextRun := now.Add(job.Interval)
 		job.NextRun = &nextRun
 	}()
@@ -293,15 +293,15 @@ func (js *JobScheduler) executeJob(ctx context.Context, job *Job) {
 		job.LastError = err.Error()
 		js.metrics.JobExecutions.WithLabelValues(job.ID, job.Type, "error").Inc()
 		js.metrics.JobErrors.WithLabelValues(job.ID, job.Type, "execution").Inc()
-		js.logger.Error("Job execution failed", 
-			zap.String("job_id", job.ID), 
-			zap.String("job_type", job.Type), 
+		js.logger.Error("Job execution failed",
+			zap.String("job_id", job.ID),
+			zap.String("job_type", job.Type),
 			zap.Error(err))
 	} else {
 		job.LastError = ""
 		js.metrics.JobExecutions.WithLabelValues(job.ID, job.Type, "success").Inc()
-		js.logger.Info("Job execution completed", 
-			zap.String("job_id", job.ID), 
+		js.logger.Info("Job execution completed",
+			zap.String("job_id", job.ID),
 			zap.String("job_type", job.Type),
 			zap.Duration("duration", time.Since(start)))
 	}
@@ -433,7 +433,7 @@ func (js *JobScheduler) initializeDefaultJobs() {
 // Execute executes cache warmup job
 func (cw *CacheWarmupJob) Execute(ctx context.Context) error {
 	start := time.Now()
-	
+
 	// Get hot accounts based on recent activity
 	query := `
 		SELECT user_id, currency, COUNT(*) as access_count
@@ -462,11 +462,11 @@ func (cw *CacheWarmupJob) Execute(ctx context.Context) error {
 			Currency    string
 			AccessCount int64
 		}
-		
+
 		if err := rows.Scan(&account.UserID, &account.Currency, &account.AccessCount); err != nil {
 			continue
 		}
-		
+
 		hotAccounts = append(hotAccounts, account)
 	}
 
@@ -483,7 +483,7 @@ func (cw *CacheWarmupJob) Execute(ctx context.Context) error {
 	cw.metrics.CacheWarmupStats.WithLabelValues("accounts_warmed").Set(float64(warmedCount))
 	cw.metrics.CacheWarmupStats.WithLabelValues("warmup_duration_ms").Set(float64(time.Since(start).Milliseconds()))
 
-	cw.logger.Info("Cache warmup completed", 
+	cw.logger.Info("Cache warmup completed",
 		zap.Int("accounts_warmed", warmedCount),
 		zap.Duration("duration", time.Since(start)))
 
@@ -494,7 +494,7 @@ func (cw *CacheWarmupJob) Execute(ctx context.Context) error {
 func (ds *DataSyncJob) Execute(ctx context.Context) error {
 	// This would implement cache-to-database synchronization
 	// For now, we'll implement a health check and basic sync validation
-	
+
 	if err := ds.cache.Health(ctx); err != nil {
 		ds.metrics.SyncOperations.WithLabelValues("health_check", "failed").Inc()
 		return fmt.Errorf("cache health check failed: %w", err)
@@ -506,7 +506,7 @@ func (ds *DataSyncJob) Execute(ctx context.Context) error {
 	}
 
 	ds.metrics.SyncOperations.WithLabelValues("health_check", "success").Inc()
-	
+
 	ds.logger.Info("Data sync job completed - all systems healthy")
 	return nil
 }
@@ -607,8 +607,8 @@ func (cj *CleanupJob) cleanupOldJournalEntries(ctx context.Context) (int64, erro
 	`
 
 	var count int64
-	err := cj.repository.pgxPool.QueryRow(ctx, 
+	err := cj.repository.pgxPool.QueryRow(ctx,
 		fmt.Sprintf(query, int(cj.config.CleanupOlderThan.Hours()))).Scan(&count)
-	
+
 	return count, err
 }

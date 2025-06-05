@@ -23,10 +23,10 @@ import (
 
 type CacheTestSuite struct {
 	suite.Suite
-	cache    *accounts.CacheLayer
+	cache       *accounts.CacheLayer
 	redisClient redis.UniversalClient
-	logger   *zap.Logger
-	ctx      context.Context
+	logger      *zap.Logger
+	ctx         context.Context
 }
 
 func (suite *CacheTestSuite) SetupSuite() {
@@ -46,16 +46,16 @@ func (suite *CacheTestSuite) SetupSuite() {
 
 	// Setup cache configuration
 	config := &accounts.CacheConfig{
-		HotRedisAddr:   []string{"localhost:6379"},
-		WarmRedisAddr:  []string{"localhost:6379"},
-		ColdRedisAddr:  []string{"localhost:6379"},
-		PoolSize:       10,
-		MaxRetries:     3,
-		DialTimeout:    "5s",
-		ReadTimeout:    "3s",
-		WriteTimeout:   "3s",
-		PoolTimeout:    "4s",
-		IdleTimeout:    "300s",
+		HotRedisAddr:  []string{"localhost:6379"},
+		WarmRedisAddr: []string{"localhost:6379"},
+		ColdRedisAddr: []string{"localhost:6379"},
+		PoolSize:      10,
+		MaxRetries:    3,
+		DialTimeout:   "5s",
+		ReadTimeout:   "3s",
+		WriteTimeout:  "3s",
+		PoolTimeout:   "4s",
+		IdleTimeout:   "300s",
 	}
 
 	cache, err := accounts.NewCacheLayer(config, suite.logger)
@@ -269,7 +269,7 @@ func (suite *CacheTestSuite) TestConcurrentAccess() {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer func() { done <- true }()
-			
+
 			_, err := suite.cache.GetAccount(suite.ctx, userID, currency)
 			if err != nil {
 				errors <- err
@@ -321,7 +321,7 @@ func (suite *CacheTestSuite) TestCacheExpiry() {
 	currency := "BTC"
 
 	// Set account with short TTL for testing
-	err := suite.cache.SetAccountBalance(suite.ctx, userID, currency, 
+	err := suite.cache.SetAccountBalance(suite.ctx, userID, currency,
 		decimal.NewFromFloat(1.0), decimal.NewFromFloat(0.8), 1)
 	assert.NoError(suite.T(), err)
 
@@ -427,7 +427,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 
 	b.Run("GetAccountBalance", func(b *testing.B) {
 		// Pre-populate cache
-		cache.SetAccountBalance(ctx, userID, currency, 
+		cache.SetAccountBalance(ctx, userID, currency,
 			decimal.NewFromFloat(1.0), decimal.NewFromFloat(0.8), 1)
 
 		b.ResetTimer()

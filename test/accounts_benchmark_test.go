@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	goredislib "github.com/go-redis/redis/v8"
 	"github.com/go-redsync/redsync/v4"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v8"
-	goredislib "github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
@@ -31,15 +31,15 @@ import (
 
 // BenchmarkSuite provides comprehensive performance testing for 100k+ RPS
 type BenchmarkSuite struct {
-	repo        *accounts.Repository
-	writeDB     *gorm.DB
-	readDB      *gorm.DB
-	pgxPool     *pgxpool.Pool
-	cache       *accounts.CacheLayer
-	redsync     *redsync.Redsync
-	redisClient goredislib.UniversalClient
-	logger      *zap.Logger
-	ctx         context.Context
+	repo         *accounts.Repository
+	writeDB      *gorm.DB
+	readDB       *gorm.DB
+	pgxPool      *pgxpool.Pool
+	cache        *accounts.CacheLayer
+	redsync      *redsync.Redsync
+	redisClient  goredislib.UniversalClient
+	logger       *zap.Logger
+	ctx          context.Context
 	testAccounts []TestAccount
 }
 
@@ -59,7 +59,7 @@ func setupBenchmarkSuite(b *testing.B) *BenchmarkSuite {
 		"pool_max_conn_idle_time=30m application_name=accounts_benchmark"
 
 	writeDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		PrepareStmt:              true,
+		PrepareStmt:                              true,
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	require.NoError(b, err)
@@ -84,9 +84,9 @@ func setupBenchmarkSuite(b *testing.B) *BenchmarkSuite {
 
 	// Redis setup with clustering simulation
 	redisClient := goredislib.NewClusterClient(&goredislib.ClusterOptions{
-		Addrs:    []string{"localhost:6379"}, // In real setup, this would be multiple nodes
-		Password: "",
-		PoolSize: 1000,
+		Addrs:        []string{"localhost:6379"}, // In real setup, this would be multiple nodes
+		Password:     "",
+		PoolSize:     1000,
 		MinIdleConns: 100,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  1 * time.Second,
@@ -236,7 +236,7 @@ func BenchmarkAccountBalanceQueries100K(b *testing.B) {
 	// Calculate and report RPS
 	rps := float64(b.N) / b.Elapsed().Seconds()
 	b.ReportMetric(rps, "rps")
-	
+
 	if rps < 100000 {
 		b.Logf("WARNING: RPS %.0f is below 100k target", rps)
 	} else {
@@ -255,7 +255,7 @@ func BenchmarkAccountUpdates(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
-			
+
 			update := &accounts.BalanceUpdate{
 				UserID:       account.UserID,
 				Currency:     account.Currency,
@@ -288,7 +288,7 @@ func BenchmarkCacheOperations100K(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
-			
+
 			// Mix of cache operations
 			switch rand.Intn(3) {
 			case 0: // Get account balance (most common)
@@ -304,7 +304,7 @@ func BenchmarkCacheOperations100K(b *testing.B) {
 
 	rps := float64(b.N) / b.Elapsed().Seconds()
 	b.ReportMetric(rps, "rps")
-	
+
 	if rps < 100000 {
 		b.Logf("WARNING: Cache RPS %.0f is below 100k target", rps)
 	} else {
@@ -323,7 +323,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
-			
+
 			// Simulate real trading workload distribution:
 			// 70% reads, 20% updates, 10% reservations
 			switch rand.Intn(10) {
@@ -383,7 +383,7 @@ func BenchmarkSustainedLoad(b *testing.B) {
 		go func() {
 			defer wg.Done()
 			ops := 0
-			
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -392,7 +392,7 @@ func BenchmarkSustainedLoad(b *testing.B) {
 					account := suite.getRandomAccount()
 					suite.repo.GetAccountBalance(suite.ctx, account.UserID, account.Currency)
 					ops++
-					
+
 					if ops%1000 == 0 {
 						// Periodically add to total
 						totalOps += 1000
@@ -404,7 +404,7 @@ func BenchmarkSustainedLoad(b *testing.B) {
 	}
 
 	wg.Wait()
-	
+
 	rps := float64(totalOps) / duration.Seconds()
 	b.ReportMetric(rps, "sustained_rps")
 	b.Logf("Sustained load: %.0f RPS over %v", rps, duration)
@@ -451,13 +451,13 @@ func BenchmarkConnectionPool(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
-			
+
 			// Direct database query to test connection pool
 			var balance decimal.Decimal
 			err := suite.pgxPool.QueryRow(suite.ctx,
 				"SELECT balance FROM accounts WHERE user_id = $1 AND currency = $2",
 				account.UserID, account.Currency).Scan(&balance)
-			
+
 			if err != nil && err != sql.ErrNoRows {
 				b.Errorf("Database query failed: %v", err)
 			}
@@ -466,7 +466,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 
 	// Check connection pool stats
 	stats := suite.pgxPool.Stat()
-	b.Logf("Connection pool - Total: %d, Idle: %d, Used: %d", 
+	b.Logf("Connection pool - Total: %d, Idle: %d, Used: %d",
 		stats.TotalConns(), stats.IdleConns(), stats.AcquiredConns())
 }
 
@@ -482,7 +482,7 @@ func BenchmarkDistributedLocking(b *testing.B) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
 			lockKey := fmt.Sprintf("account:lock:%s:%s", account.UserID.String(), account.Currency)
-			
+
 			mutex := suite.redsync.NewMutex(lockKey)
 			if err := mutex.Lock(); err == nil {
 				// Simulate work under lock
@@ -509,7 +509,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 		for pb.Next() {
 			// Try operations on non-existent accounts to test error paths
 			nonExistentUserID := uuid.New()
-			
+
 			_, _, _, err := suite.repo.GetAccountBalance(suite.ctx, nonExistentUserID, "BTC")
 			// Error is expected, just ensure it's handled gracefully
 			_ = err
@@ -535,10 +535,10 @@ func BenchmarkFullSystem100K(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			account := suite.getRandomAccount()
-			
+
 			// Distribute operations based on real-world patterns
 			opType := rand.Intn(100)
-			
+
 			switch {
 			case opType < 50: // 50% balance queries
 				suite.repo.GetAccountBalance(suite.ctx, account.UserID, account.Currency)
