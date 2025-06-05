@@ -38,6 +38,7 @@ type AdaptiveService struct {
 func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.BookkeeperService, adaptiveConfig *engine.AdaptiveEngineConfig, wsHub *ws.Hub) (AdaptiveTradingService, error) {
 	// Initialize settlement engine
 	settlementEngine := settlement.NewSettlementEngine()
+
 	// Initialize base trading service
 	baseSvcIface, err := NewService(logger, db, bookkeeperSvc, wsHub, settlementEngine)
 	if err != nil {
@@ -48,6 +49,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 	// Initialize repositories
 	orderRepo := repository.NewGormRepository(db, logger)
 	tradeRepo := repository.NewGormTradeRepository(db, logger)
+
 	// Validate adaptive configuration
 	validator := engine.NewValidation()
 	if err := validator.ValidateConfig(adaptiveConfig); err != nil {
@@ -58,7 +60,9 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 	eventJournal, err := eventjournal.NewEventJournal(logger.Sugar(), "./logs/trading/adaptive_events.log")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event journal: %w", err)
-	}	// Create adaptive trading engine
+	}
+
+	// Create adaptive trading engine
 	adaptiveEngine := engine.NewAdaptiveMatchingEngine(
 		orderRepo,
 		tradeRepo,
@@ -67,7 +71,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		eventJournal,
 		wsHub,
 		NewMockRiskService(), // Using mock risk service instead of aml.NewRiskService()
-		nil // no Redis client configured yet
+		nil,                  // no Redis client configured yet
 	)
 
 	// Create adaptive service
@@ -225,7 +229,7 @@ func (as *AdaptiveService) GetAllMigrationStates() map[string]*engine.MigrationS
 func (as *AdaptiveService) GetPerformanceMetrics(pair string) (map[string]interface{}, error) {
 	orderBook := as.adaptiveEngine.GetOrderBook(pair)
 	if orderBook == nil {
-		return nil, fmt.Errorf("no order book found for pair: %s", pair)
+		return nil, fmt.Errorf("order book not found for pair: %s", pair)
 	}
 
 	// If it's an adaptive order book, get its metrics
@@ -429,7 +433,7 @@ func (as *AdaptiveService) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// Health check method for monitoring
+// HealthCheck method for monitoring
 func (as *AdaptiveService) HealthCheck() map[string]interface{} {
 	health := make(map[string]interface{})
 

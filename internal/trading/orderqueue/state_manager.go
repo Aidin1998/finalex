@@ -11,6 +11,25 @@ import (
 	"go.uber.org/zap"
 )
 
+// SnapshotStore defines the interface for storing and retrieving order book snapshots
+type SnapshotStore interface {
+	Save(ctx context.Context, data interface{}) error
+	Load(ctx context.Context) (interface{}, error)
+	SaveSnapshot(ctx context.Context, symbol string, snapshot []byte) error
+	LoadSnapshot(ctx context.Context, symbol string) ([]byte, error)
+	DeleteSnapshot(ctx context.Context, symbol string) error
+	ListSnapshots(ctx context.Context) ([]string, error)
+}
+
+// Queue defines the interface for order queue operations
+type Queue interface {
+	Enqueue(ctx context.Context, item interface{}) error
+	Dequeue(ctx context.Context) (interface{}, error)
+	ReplayPending(ctx context.Context) ([]interface{}, error)
+	Size() int
+	Clear() error
+}
+
 // StateManager handles order book state persistence, checkpointing, and recovery.
 type StateManager struct {
 	snapshotStore SnapshotStore
@@ -183,16 +202,21 @@ func (sm *StateManager) FastRecovery(ctx context.Context) error {
 	defer cancel()
 
 	sm.logger.Info("Starting fast recovery from latest snapshot")
-
 	// Load latest snapshot
 	data, err := sm.snapshotStore.Load(recoveryCtx)
 	if err != nil {
 		return fmt.Errorf("failed to load snapshot: %w", err)
 	}
 
+	// Convert interface{} to []byte
+	dataBytes, ok := data.([]byte)
+	if !ok {
+		return fmt.Errorf("unexpected data type from snapshot store")
+	}
+
 	// Deserialize snapshot
 	var snapshot StateSnapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
+	if err := json.Unmarshal(dataBytes, &snapshot); err != nil {
 		return fmt.Errorf("failed to deserialize snapshot: %w", err)
 	}
 
@@ -228,12 +252,17 @@ func (sm *StateManager) FastRecovery(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to replay pending orders: %w", err)
 	}
-
 	sm.logger.Infow("Replaying pending orders", "count", len(pendingOrders))
-	for _, order := range pendingOrders {
+	for _, orderInterface := range pendingOrders {
 		// Note: In practice, you'd need to integrate with the trading engine
 		// to properly replay these orders through the matching engine
-		sm.logger.Debugw("Replaying order", "id", order.ID, "priority", order.Priority)
+		if orderMap, ok := orderInterface.(map[string]interface{}); ok {
+			orderID, _ := orderMap["id"]
+			priority, _ := orderMap["priority"]
+			sm.logger.Debugw("Replaying order", "id", orderID, "priority", priority)
+		} else {
+			sm.logger.Debugw("Replaying order", "order", orderInterface)
+		}
 	}
 
 	// Record recovery metrics

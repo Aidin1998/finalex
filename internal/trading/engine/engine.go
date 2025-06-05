@@ -33,9 +33,9 @@ import (
 	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
 	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
 	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
-	persistence "github.com/Aidin1998/pincex_unified/internal/trading/persistence"
 	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
 	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
+	"github.com/Aidin1998/pincex_unified/persistence"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"

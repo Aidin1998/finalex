@@ -6,10 +6,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+// CoordinationTrade represents a trade for coordination purposes
+type CoordinationTrade struct {
+	ID             uuid.UUID       `json:"id"`
+	OrderID        uuid.UUID       `json:"order_id"`
+	CounterOrderID uuid.UUID       `json:"counter_order_id"`
+	UserID         uuid.UUID       `json:"user_id"`
+	CounterUserID  uuid.UUID       `json:"counter_user_id"`
+	Pair           string          `json:"pair"`
+	Price          decimal.Decimal `json:"price"`
+	Quantity       decimal.Decimal `json:"quantity"`
+	Side           string          `json:"side"`
+	Maker          bool            `json:"maker"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
 
 // CoordinationService handles trade coordination and workflow
 type CoordinationService struct {
@@ -47,13 +63,12 @@ func NewCoordinationService(logger *zap.Logger, db *gorm.DB) (*CoordinationServi
 }
 
 // CoordinateTrade coordinates the execution of a trade
-func (c *CoordinationService) CoordinateTrade(ctx context.Context, trade *Trade) error {
+func (c *CoordinationService) CoordinateTrade(ctx context.Context, trade *CoordinationTrade) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	workflow := &TradeWorkflow{
-		ID:      fmt.Sprintf("workflow_%s", trade.ID),
-		TradeID: trade.ID,
+		ID:      fmt.Sprintf("workflow_%s", trade.ID.String()),
+		TradeID: trade.ID.String(),
 		Status:  "pending",
 		Steps: []WorkflowStep{
 			{Name: "validate_trade", Status: "pending"},
@@ -71,13 +86,12 @@ func (c *CoordinationService) CoordinateTrade(ctx context.Context, trade *Trade)
 }
 
 // executeWorkflow executes the trade workflow steps
-func (c *CoordinationService) executeWorkflow(ctx context.Context, workflow *TradeWorkflow, trade *Trade) error {
+func (c *CoordinationService) executeWorkflow(ctx context.Context, workflow *TradeWorkflow, trade *CoordinationTrade) error {
 	workflow.Status = "coordinating"
 	workflow.UpdatedAt = time.Now()
-
 	c.logger.Info("Starting trade coordination",
 		zap.String("workflow_id", workflow.ID),
-		zap.String("trade_id", trade.ID))
+		zap.String("trade_id", trade.ID.String()))
 
 	for i := range workflow.Steps {
 		step := &workflow.Steps[i]
@@ -97,23 +111,21 @@ func (c *CoordinationService) executeWorkflow(ctx context.Context, workflow *Tra
 
 	workflow.Status = "completed"
 	workflow.UpdatedAt = time.Now()
-
 	c.logger.Info("Trade coordination completed",
 		zap.String("workflow_id", workflow.ID),
-		zap.String("trade_id", trade.ID))
+		zap.String("trade_id", trade.ID.String()))
 
 	return nil
 }
 
 // executeStep executes a single workflow step
-func (c *CoordinationService) executeStep(ctx context.Context, step *WorkflowStep, trade *Trade) error {
+func (c *CoordinationService) executeStep(ctx context.Context, step *WorkflowStep, trade *CoordinationTrade) error {
 	step.Status = "processing"
 	now := time.Now()
 	step.StartedAt = &now
-
 	c.logger.Debug("Executing workflow step",
 		zap.String("step", step.Name),
-		zap.String("trade_id", trade.ID))
+		zap.String("trade_id", trade.ID.String()))
 
 	// Simulate step execution
 	switch step.Name {
@@ -159,9 +171,9 @@ func (c *CoordinationService) executeStep(ctx context.Context, step *WorkflowSte
 }
 
 // validateTrade validates the trade details
-func (c *CoordinationService) validateTrade(ctx context.Context, trade *Trade) error {
-	if trade.Amount.LessThanOrEqual(decimal.Zero) {
-		return fmt.Errorf("invalid trade amount")
+func (c *CoordinationService) validateTrade(ctx context.Context, trade *CoordinationTrade) error {
+	if trade.Quantity.LessThanOrEqual(decimal.Zero) {
+		return fmt.Errorf("invalid trade quantity")
 	}
 	if trade.Price.LessThanOrEqual(decimal.Zero) {
 		return fmt.Errorf("invalid trade price")
@@ -170,28 +182,28 @@ func (c *CoordinationService) validateTrade(ctx context.Context, trade *Trade) e
 }
 
 // reserveBalances reserves the required balances for the trade
-func (c *CoordinationService) reserveBalances(ctx context.Context, trade *Trade) error {
+func (c *CoordinationService) reserveBalances(ctx context.Context, trade *CoordinationTrade) error {
 	// This would integrate with the accounts service to reserve balances
 	time.Sleep(time.Millisecond * 5) // Simulate processing time
 	return nil
 }
 
 // executeSettlement executes the trade settlement
-func (c *CoordinationService) executeSettlement(ctx context.Context, trade *Trade) error {
+func (c *CoordinationService) executeSettlement(ctx context.Context, trade *CoordinationTrade) error {
 	// This would integrate with the settlement engine
 	time.Sleep(time.Millisecond * 10) // Simulate processing time
 	return nil
 }
 
 // updateOrderbook updates the orderbook with the trade execution
-func (c *CoordinationService) updateOrderbook(ctx context.Context, trade *Trade) error {
+func (c *CoordinationService) updateOrderbook(ctx context.Context, trade *CoordinationTrade) error {
 	// This would update the orderbook
 	time.Sleep(time.Millisecond * 2) // Simulate processing time
 	return nil
 }
 
 // notifyParticipants notifies trade participants
-func (c *CoordinationService) notifyParticipants(ctx context.Context, trade *Trade) error {
+func (c *CoordinationService) notifyParticipants(ctx context.Context, trade *CoordinationTrade) error {
 	// This would send notifications via WebSocket or other means
 	time.Sleep(time.Millisecond * 3) // Simulate processing time
 	return nil

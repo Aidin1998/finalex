@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
 	"github.com/Aidin1998/pincex_unified/internal/trading/migration"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
@@ -29,6 +28,38 @@ type RiskAdjustment struct {
 	RecommendedAction string  `json:"recommended_action"`
 	RiskLevel         string  `json:"risk_level"`
 	Reason            string  `json:"reason,omitempty"`
+}
+
+// Risk and compliance types to replace aml package references
+type RiskService interface {
+	// Basic checks
+	IsEnabled() bool
+
+	// Position and risk checks
+	CheckPositionLimit(ctx context.Context, orderID, pair string, quantity, price decimal.Decimal) (bool, error)
+	CalculateRisk(ctx context.Context, userID string) (map[string]interface{}, error)
+
+	// Trade processing
+	ProcessTrade(ctx context.Context, tradeID, orderID, pair string, quantity, price decimal.Decimal) error
+	UpdateMarketData(ctx context.Context, pair string, price decimal.Decimal, volatility float64) error
+
+	// Compliance
+	ComplianceCheck(ctx context.Context, tradeID, orderID string, tradeAmount decimal.Decimal, metadata map[string]interface{}) (map[string]interface{}, error)
+
+	// Batch operations
+	BatchCalculateRisk(ctx context.Context, userIDs []string) (map[string]interface{}, error)
+	GetActiveComplianceAlerts(ctx context.Context) ([]ComplianceAlert, error)
+}
+
+type ComplianceAlert struct {
+	AlertID    string     `json:"alert_id"`
+	UserID     string     `json:"user_id"`
+	AlertType  string     `json:"alert_type"`
+	Severity   string     `json:"severity"`
+	Message    string     `json:"message"`
+	Timestamp  time.Time  `json:"timestamp"`
+	Resolved   bool       `json:"resolved"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
 // RiskMetrics contains metrics for risk assessment
@@ -73,7 +104,7 @@ type EngineParticipant struct {
 	id                 string
 	pair               string
 	engine             *engine.AdaptiveMatchingEngine
-	riskManager        aml.RiskService // Risk management integration
+	riskManager        RiskService // Risk management integration
 	logger             *zap.SugaredLogger
 	migrationMu        sync.RWMutex
 	currentMigrationID uuid.UUID
@@ -296,7 +327,7 @@ type EngineCircuitBreaker struct {
 func NewEngineParticipant(
 	pair string,
 	engine *engine.AdaptiveMatchingEngine,
-	riskManager aml.RiskService,
+	riskManager RiskService,
 	logger *zap.SugaredLogger,
 ) *EngineParticipant {
 	p := &EngineParticipant{
@@ -1138,10 +1169,20 @@ func (p *EngineParticipant) validateMarketRisk(ctx context.Context, t *model.Tra
 	if err != nil {
 		return fmt.Errorf("failed to calculate risk for trade: %w", err)
 	}
-
 	// Check if the trade would exceed risk thresholds
 	tradeValue := t.Quantity.Mul(t.Price)
-	currentExposure := riskProfile.CurrentExposure.Add(tradeValue)
+
+	// Extract current exposure from risk profile map
+	var currentExposure decimal.Decimal
+	if exposureVal, ok := riskProfile["current_exposure"]; ok {
+		if exposureDec, ok := exposureVal.(decimal.Decimal); ok {
+			currentExposure = exposureDec.Add(tradeValue)
+		} else {
+			currentExposure = tradeValue // Default if not found
+		}
+	} else {
+		currentExposure = tradeValue // Default if not found
+	}
 
 	// Simple risk check - in a real implementation this would be more sophisticated
 	maxExposure := decimal.NewFromFloat(1000000) // $1M limit for example
@@ -1171,10 +1212,10 @@ func (p *EngineParticipant) updateRiskMetrics(ctx context.Context, trades []*mod
 				errCh <- fmt.Errorf("failed to process trade %s: %w", trade.ID.String(), err)
 				return
 			}
-
 			// Update market data
 			volatility := decimal.NewFromFloat(0.02) // Default 2% volatility
-			if err := p.riskManager.UpdateMarketData(ctx, trade.Pair, trade.Price, volatility); err != nil {
+			volatilityFloat, _ := volatility.Float64()
+			if err := p.riskManager.UpdateMarketData(ctx, trade.Pair, trade.Price, volatilityFloat); err != nil {
 				errCh <- fmt.Errorf("failed to update market data for trade %s: %w", trade.ID.String(), err)
 				return
 			}
@@ -1232,15 +1273,18 @@ func (p *EngineParticipant) monitorCompliance(ctx context.Context, trades []*mod
 			)
 			return fmt.Errorf("compliance check failed for trade %s: %w", t.ID, err)
 		}
-
 		// Handle compliance violations
-		if complianceResult.IsSuspicious || complianceResult.AlertRaised {
+		isSuspicious, _ := complianceResult["is_suspicious"].(bool)
+		alertRaised, _ := complianceResult["alert_raised"].(bool)
+		flags, _ := complianceResult["flags"].([]string)
+
+		if isSuspicious || alertRaised {
 			p.logger.Warnw("Compliance violations detected",
 				"trade_id", t.ID,
 				"order_id", t.OrderID,
-				"suspicious", complianceResult.IsSuspicious,
-				"alert_raised", complianceResult.AlertRaised,
-				"flags", complianceResult.Flags,
+				"suspicious", isSuspicious,
+				"alert_raised", alertRaised,
+				"flags", flags,
 			)
 		}
 	}
@@ -1287,17 +1331,29 @@ func (p *EngineParticipant) calculateRiskAdjustment(ctx context.Context, trades 
 		AdjustmentFactor:  1.0,
 		RecommendedAction: "proceed",
 		RiskLevel:         "normal",
-	}
-	// Analyze risk metrics to determine adjustment
+	} // Analyze risk metrics to determine adjustment
 	var highRiskUsers int
 	for _, metrics := range riskMetricsMap {
-		// Convert RiskMetrics to our internal format for calculation
-		varFloat := metrics.ValueAtRisk.InexactFloat64()
-		exposureFloat := metrics.TotalExposure.InexactFloat64()
+		// Convert interface{} metrics to our internal format for calculation
+		if metricsMap, ok := metrics.(map[string]interface{}); ok {
+			var varFloat, exposureFloat float64
 
-		// High risk conditions (example thresholds)
-		if varFloat > 10000 || exposureFloat > 500000 { // $10K VaR or $500K exposure
-			highRiskUsers++
+			if varVal, exists := metricsMap["value_at_risk"]; exists {
+				if varDec, ok := varVal.(decimal.Decimal); ok {
+					varFloat = varDec.InexactFloat64()
+				}
+			}
+
+			if exposureVal, exists := metricsMap["total_exposure"]; exists {
+				if exposureDec, ok := exposureVal.(decimal.Decimal); ok {
+					exposureFloat = exposureDec.InexactFloat64()
+				}
+			}
+
+			// High risk conditions (example thresholds)
+			if varFloat > 10000 || exposureFloat > 500000 { // $10K VaR or $500K exposure
+				highRiskUsers++
+			}
 		}
 	}
 
@@ -1351,7 +1407,7 @@ func (p *EngineParticipant) generateRiskReport(ctx context.Context) (*RiskReport
 	alerts, err := p.riskManager.GetActiveComplianceAlerts(ctx)
 	if err != nil {
 		p.logger.Warnw("Failed to get compliance alerts", "error", err)
-		alerts = []aml.ComplianceAlert{} // Use empty slice if error
+		alerts = []ComplianceAlert{} // Use empty slice if error
 	}
 
 	// Calculate aggregate risk metrics (using placeholder values in absence of dashboard metrics)
