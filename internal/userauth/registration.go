@@ -108,6 +108,10 @@ type EnterpriseRegistrationResponse struct {
 
 // RegisterUser performs enterprise-grade user registration with comprehensive compliance
 func (ers *EnterpriseRegistrationService) RegisterUser(ctx context.Context, req *EnterpriseRegistrationRequest) (*EnterpriseRegistrationResponse, error) {
+	// Add a timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	// Start audit trail
 	auditCtx := ers.auditService.BeginRegistration(ctx, req.Email, req.IPAddress, req.UserAgent)
 	defer ers.auditService.EndRegistration(auditCtx)

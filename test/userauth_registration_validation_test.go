@@ -1,0 +1,420 @@
+//go:build userauth
+
+package test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Aidin1998/pincex_unified/internal/userauth"
+	usermodels "github.com/Aidin1998/pincex_unified/internal/userauth/models"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+// Mock for strict password policy
+type mockStrictPasswordPolicy struct{}
+
+func (m *mockStrictPasswordPolicy) ValidateNewPassword(password, email string) error {
+	// Simple validation for test purposes:
+	// At least 8 characters, 1 uppercase, 1 lowercase, 1 number, 1 special char
+	hasUpper := false
+	hasLower := false
+	hasNumber := false
+	hasSpecial := false
+
+	if len(password) < 8 {
+		return userauth.ErrPasswordTooShort
+	}
+
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasNumber = true
+		case char == '!' || char == '@' || char == '#' || char == '$' || char == '%' || char == '^' || char == '&' || char == '*':
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper || !hasLower || !hasNumber || !hasSpecial {
+		return userauth.ErrPasswordRequirements
+	}
+
+	// Check if password contains the email
+	if len(email) > 0 && password == email {
+		return userauth.ErrPasswordContainsPersonalInfo
+	}
+
+	return nil
+}
+
+// Mock for compliance service that blocks certain countries
+type mockComplianceServiceWithRestrictions struct{}
+
+func (m *mockComplianceServiceWithRestrictions) PerformRegistrationChecks(ctx context.Context, req *userauth.EnterpriseRegistrationRequest) (*userauth.ComplianceResult, error) {
+	// Block users from restricted countries
+	restrictedCountries := []string{"BLOCKED", "RESTRICTED"}
+	for _, country := range restrictedCountries {
+		if req.Country == country {
+			return &userauth.ComplianceResult{
+				Blocked: true,
+				Reason:  "Registration not allowed from your country",
+				Flags:   []string{"restricted_jurisdiction"},
+			}, nil
+		}
+	}
+
+	// Require enhanced KYC for certain countries
+	highRiskCountries := []string{"HIGHRISK"}
+	for _, country := range highRiskCountries {
+		if req.Country == country {
+			return &userauth.ComplianceResult{
+				Blocked:          false,
+				KYCRequired:      true,
+				RequiredKYCLevel: "enhanced",
+				InitialTier:      "restricted",
+				Flags:            []string{"high_risk_jurisdiction"},
+				RiskScore:        75,
+			}, nil
+		}
+	}
+
+	// Default response for allowed countries
+	return &userauth.ComplianceResult{
+		Blocked:          false,
+		KYCRequired:      false,
+		RequiredKYCLevel: "basic",
+		InitialTier:      "basic",
+		Flags:            []string{},
+		RiskScore:        0,
+	}, nil
+}
+
+// Setup test environment for strict registration validation
+func setupStrictRegistrationEnvironment(t *testing.T) *userauth.EnterpriseRegistrationService {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	db.AutoMigrate(&usermodels.UserProfile{}, &usermodels.TwoFactorAuth{}, &usermodels.DeviceFingerprint{}, &usermodels.PasswordPolicy{})
+	db.AutoMigrate(&models.User{})
+
+	return userauth.NewEnterpriseRegistrationService(
+		db,
+		nil,
+		&mockEncryptionService{},
+		&mockComplianceServiceWithRestrictions{},
+		&mockAuditService{},
+		&mockStrictPasswordPolicy{},
+		&mockKYCIntegrationService{},
+		&mockNotificationService{},
+	)
+}
+
+func TestRegisterUser_PasswordValidation(t *testing.T) {
+	svc := setupStrictRegistrationEnvironment(t)
+	dob := time.Now().AddDate(-20, 0, 0)
+
+	testCases := []struct {
+		name          string
+		password      string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "Password too short",
+			password:      "Short1!",
+			expectError:   true,
+			errorContains: "too short",
+		},
+		{
+			name:          "Password missing uppercase",
+			password:      "password123!",
+			expectError:   true,
+			errorContains: "requirements",
+		},
+		{
+			name:          "Password missing lowercase",
+			password:      "PASSWORD123!",
+			expectError:   true,
+			errorContains: "requirements",
+		},
+		{
+			name:          "Password missing number",
+			password:      "Password!",
+			expectError:   true,
+			errorContains: "requirements",
+		},
+		{
+			name:          "Password missing special character",
+			password:      "Password123",
+			expectError:   true,
+			errorContains: "requirements",
+		},
+		{
+			name:        "Valid password",
+			password:    "Password123!",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &userauth.EnterpriseRegistrationRequest{
+				Email:                 "testuser@example.com",
+				Username:              "testuser",
+				Password:              tc.password,
+				FirstName:             "Test",
+				LastName:              "User",
+				PhoneNumber:           "+12345678901",
+				DateOfBirth:           &dob,
+				Country:               "USA",
+				AddressLine1:          "123 Main St",
+				AddressLine2:          "Apt 4B",
+				City:                  "Metropolis",
+				State:                 "NY",
+				PostalCode:            "10001",
+				AcceptTerms:           true,
+				AcceptPrivacyPolicy:   true,
+				AcceptKYCRequirements: true,
+				MarketingConsent:      false,
+				ReferralCode:          "",
+				PreferredLanguage:     "en",
+				Timezone:              "UTC",
+				DeviceFingerprint:     "devicefp123",
+				UserAgent:             "Mozilla/5.0",
+				IPAddress:             "127.0.0.1",
+				GeolocationData:       map[string]interface{}{"lat": 40.7128, "lon": -74.0060},
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := svc.RegisterUser(ctx, req)
+
+			if tc.expectError {
+				assert.Error(t, err, "Expected an error with password: "+tc.password)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains, "Expected error message to contain: "+tc.errorContains)
+				}
+			} else {
+				assert.NoError(t, err, "Expected no error with valid password: "+tc.password)
+			}
+		})
+	}
+}
+
+func TestRegisterUser_ComplianceCheck(t *testing.T) {
+	svc := setupStrictRegistrationEnvironment(t)
+	dob := time.Now().AddDate(-20, 0, 0)
+
+	testCases := []struct {
+		name          string
+		country       string
+		expectBlocked bool
+		kycLevel      string
+	}{
+		{
+			name:          "Blocked country",
+			country:       "BLOCKED",
+			expectBlocked: true,
+		},
+		{
+			name:          "Restricted country",
+			country:       "RESTRICTED",
+			expectBlocked: true,
+		},
+		{
+			name:          "High risk country",
+			country:       "HIGHRISK",
+			expectBlocked: false,
+			kycLevel:      "enhanced",
+		},
+		{
+			name:          "Allowed country",
+			country:       "USA",
+			expectBlocked: false,
+			kycLevel:      "basic",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &userauth.EnterpriseRegistrationRequest{
+				Email:                 "testuser_" + tc.country + "@example.com",
+				Username:              "testuser_" + tc.country,
+				Password:              "Password123!",
+				FirstName:             "Test",
+				LastName:              "User",
+				PhoneNumber:           "+12345678901",
+				DateOfBirth:           &dob,
+				Country:               tc.country,
+				AddressLine1:          "123 Main St",
+				AddressLine2:          "Apt 4B",
+				City:                  "Metropolis",
+				State:                 "NY",
+				PostalCode:            "10001",
+				AcceptTerms:           true,
+				AcceptPrivacyPolicy:   true,
+				AcceptKYCRequirements: true,
+				MarketingConsent:      false,
+				ReferralCode:          "",
+				PreferredLanguage:     "en",
+				Timezone:              "UTC",
+				DeviceFingerprint:     "devicefp123",
+				UserAgent:             "Mozilla/5.0",
+				IPAddress:             "127.0.0.1",
+				GeolocationData:       map[string]interface{}{"lat": 40.7128, "lon": -74.0060},
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			resp, err := svc.RegisterUser(ctx, req)
+
+			if tc.expectBlocked {
+				assert.Error(t, err, "Expected registration to be blocked for country: "+tc.country)
+				assert.Contains(t, err.Error(), "blocked", "Expected error message to mention being blocked")
+			} else {
+				assert.NoError(t, err, "Expected registration to succeed for country: "+tc.country)
+				assert.NotNil(t, resp, "Expected response object for successful registration")
+				if tc.kycLevel != "" {
+					assert.Equal(t, tc.kycLevel, resp.KYCLevel, "Expected KYC level to match")
+				}
+			}
+		})
+	}
+}
+
+func TestRegisterUser_RequiredFields(t *testing.T) {
+	svc := setupStrictRegistrationEnvironment(t)
+	dob := time.Now().AddDate(-20, 0, 0)
+
+	// Start with a valid request
+	validReq := &userauth.EnterpriseRegistrationRequest{
+		Email:                 "testuser@example.com",
+		Username:              "testuser",
+		Password:              "Password123!",
+		FirstName:             "Test",
+		LastName:              "User",
+		PhoneNumber:           "+12345678901",
+		DateOfBirth:           &dob,
+		Country:               "USA",
+		AddressLine1:          "123 Main St",
+		AddressLine2:          "Apt 4B",
+		City:                  "Metropolis",
+		State:                 "NY",
+		PostalCode:            "10001",
+		AcceptTerms:           true,
+		AcceptPrivacyPolicy:   true,
+		AcceptKYCRequirements: true,
+		MarketingConsent:      false,
+		ReferralCode:          "",
+		PreferredLanguage:     "en",
+		Timezone:              "UTC",
+		DeviceFingerprint:     "devicefp123",
+		UserAgent:             "Mozilla/5.0",
+		IPAddress:             "127.0.0.1",
+		GeolocationData:       map[string]interface{}{"lat": 40.7128, "lon": -74.0060},
+	}
+
+	// Test missing fields one at a time
+	testCases := []struct {
+		name          string
+		modifyRequest func(req *userauth.EnterpriseRegistrationRequest)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Missing email",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.Email = ""
+			},
+			expectError:   true,
+			errorContains: "email",
+		},
+		{
+			name: "Missing username",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.Username = ""
+			},
+			expectError:   true,
+			errorContains: "username",
+		},
+		{
+			name: "Missing password",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.Password = ""
+			},
+			expectError:   true,
+			errorContains: "password",
+		},
+		{
+			name: "Missing first name",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.FirstName = ""
+			},
+			expectError:   true,
+			errorContains: "first name",
+		},
+		{
+			name: "Missing terms acceptance",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.AcceptTerms = false
+			},
+			expectError:   true,
+			errorContains: "terms",
+		},
+		{
+			name: "Missing date of birth",
+			modifyRequest: func(req *userauth.EnterpriseRegistrationRequest) {
+				req.DateOfBirth = nil
+			},
+			expectError:   true,
+			errorContains: "date of birth",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a copy of the valid request
+			reqCopy := *validReq
+
+			// Modify the request for this test case
+			tc.modifyRequest(&reqCopy)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := svc.RegisterUser(ctx, &reqCopy)
+
+			if tc.expectError {
+				assert.Error(t, err, "Expected an error for "+tc.name)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains, "Expected error to contain: "+tc.errorContains)
+				}
+			} else {
+				assert.NoError(t, err, "Did not expect an error for "+tc.name)
+			}
+		})
+	}
+}
+
+// Error types for password validation
+// These registration errors are now defined in userauth_mocks.go
+var (
+	ErrPasswordTooShort             = RegistrationError("password_too_short")
+	ErrPasswordRequirements         = RegistrationError("password_requirements")
+	ErrPasswordContainsPersonalInfo = RegistrationError("password_contains_personal_info")
+)
+
+func (e RegistrationError) Error() string {
+	return e.Message
+}
