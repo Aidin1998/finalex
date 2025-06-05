@@ -5,7 +5,6 @@ package test
 
 import (
 	"fmt"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -16,11 +15,11 @@ import (
 
 // OrderType test constants
 const (
-	OrderTypeLimit      = "limit"
-	OrderTypeMarket     = "market"
-	OrderTypeStopLimit  = "stop-limit"
-	OrderTypeStop       = "stop"
-	OrderTypeIceberg    = "iceberg"
+	OrderTypeLimit     = "limit"
+	OrderTypeMarket    = "market"
+	OrderTypeStopLimit = "stop-limit"
+	OrderTypeStop      = "stop"
+	OrderTypeIceberg   = "iceberg"
 )
 
 // Order side constants
@@ -81,7 +80,7 @@ func NewSimpleMockBookkeeper() *SimpleMockBookkeeper {
 func (m *SimpleMockBookkeeper) SetBalance(userID, asset string, amount float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if _, exists := m.balances[userID]; !exists {
 		m.balances[userID] = make(map[string]float64)
 	}
@@ -91,7 +90,7 @@ func (m *SimpleMockBookkeeper) SetBalance(userID, asset string, amount float64) 
 func (m *SimpleMockBookkeeper) GetBalance(userID, asset string) (float64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if userBalances, exists := m.balances[userID]; exists {
 		if balance, exists := userBalances[asset]; exists {
 			return balance, nil
@@ -103,7 +102,7 @@ func (m *SimpleMockBookkeeper) GetBalance(userID, asset string) (float64, error)
 func (m *SimpleMockBookkeeper) ReserveBalance(userID, asset string, amount float64) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	reservationID := fmt.Sprintf("res_%d", time.Now().UnixNano())
 	m.reservations[reservationID] = ReservationSimple{
 		UserID: userID,
@@ -116,15 +115,15 @@ func (m *SimpleMockBookkeeper) ReserveBalance(userID, asset string, amount float
 func (m *SimpleMockBookkeeper) CommitReservation(reservationID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if res, exists := m.reservations[reservationID]; exists {
 		delete(m.reservations, reservationID)
-		
+
 		// Update user balance
 		if _, exists := m.balances[res.UserID]; !exists {
 			m.balances[res.UserID] = make(map[string]float64)
 		}
-		
+
 		m.balances[res.UserID][res.Asset] -= res.Amount
 		return nil
 	}
@@ -185,7 +184,7 @@ func BenchmarkSimpleOrderTypeComparison(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				user := testUsers[i%len(testUsers)]
-				
+
 				// Create order with specific type
 				order := &TestOrder{
 					ID:       fmt.Sprintf("bench_%s_%d", orderType, i),
@@ -202,12 +201,12 @@ func BenchmarkSimpleOrderTypeComparison(b *testing.B) {
 				if orderType != OrderTypeMarket {
 					order.Price = 50000.0
 				}
-				
+
 				if orderType == OrderTypeStop || orderType == OrderTypeStopLimit {
 					stopPrice := 51000.0
 					order.StopPrice = &stopPrice
 				}
-				
+
 				if orderType == OrderTypeIceberg {
 					visibleQty := 0.0002
 					order.VisibleQty = &visibleQty
@@ -216,7 +215,7 @@ func BenchmarkSimpleOrderTypeComparison(b *testing.B) {
 
 				// Simulate order processing with specific latency by order type
 				_, _ = mockBookkeeper.GetBalance(user, "USDT")
-				
+
 				// Simulate processing time differences based on order type
 				switch orderType {
 				case OrderTypeMarket:
@@ -228,13 +227,13 @@ func BenchmarkSimpleOrderTypeComparison(b *testing.B) {
 				case OrderTypeIceberg:
 					time.Sleep(time.Nanosecond * 200) // Iceberg orders slowest
 				}
-				
+
 				// Complete order processing simulation
 				if orderType != OrderTypeMarket {
-					reservationID, _ := mockBookkeeper.ReserveBalance(user, "USDT", order.Price * order.Quantity)
+					reservationID, _ := mockBookkeeper.ReserveBalance(user, "USDT", order.Price*order.Quantity)
 					_ = mockBookkeeper.CommitReservation(reservationID)
 				} else {
-					reservationID, _ := mockBookkeeper.ReserveBalance(user, "USDT", 50000.0 * order.Quantity)
+					reservationID, _ := mockBookkeeper.ReserveBalance(user, "USDT", 50000.0*order.Quantity)
 					_ = mockBookkeeper.CommitReservation(reservationID)
 				}
 			}
@@ -255,7 +254,7 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 		mockBookkeeper.SetBalance(testUsers[i], "USDT", 500000.0)
 		mockWSHub.Connect(testUsers[i])
 	}
-	
+
 	// Test different order types
 	orderTypes := []string{
 		OrderTypeMarket,
@@ -271,7 +270,7 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				buyerID := testUsers[i%len(testUsers)]
 				sellerID := testUsers[(i+len(testUsers)/2)%len(testUsers)]
-				
+
 				// Create buy order
 				buyOrder := &TestOrder{
 					ID:       fmt.Sprintf("buy_%s_%d", orderType, i),
@@ -283,7 +282,7 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 					Status:   "pending",
 					Created:  time.Now(),
 				}
-				
+
 				// Create sell order
 				sellOrder := &TestOrder{
 					ID:       fmt.Sprintf("sell_%s_%d", orderType, i),
@@ -295,20 +294,20 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 					Status:   "pending",
 					Created:  time.Now(),
 				}
-				
+
 				// Set prices based on order type
 				if orderType != OrderTypeMarket {
 					buyOrder.Price = 50000.0
 					sellOrder.Price = 50000.0
 				}
-				
+
 				if orderType == OrderTypeStop || orderType == OrderTypeStopLimit {
 					buyStopPrice := 51000.0
 					sellStopPrice := 49000.0
 					buyOrder.StopPrice = &buyStopPrice
 					sellOrder.StopPrice = &sellStopPrice
 				}
-				
+
 				if orderType == OrderTypeIceberg {
 					buyVisibleQty := 0.0002
 					sellVisibleQty := 0.0002
@@ -317,7 +316,7 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 					buyOrder.TotalQty = buyOrder.Quantity
 					sellOrder.TotalQty = sellOrder.Quantity
 				}
-				
+
 				// Simulate matching process with order-type-specific timing
 				switch orderType {
 				case OrderTypeMarket:
@@ -329,22 +328,28 @@ func BenchmarkSimpleOrderMatching(b *testing.B) {
 				case OrderTypeIceberg:
 					time.Sleep(time.Microsecond * 45) // Iceberg orders need partial fill logic
 				}
-				
 				// Simulate successful match
+				var tradePrice float64
+				if orderType == OrderTypeMarket {
+					tradePrice = 50000.0
+				} else {
+					tradePrice = buyOrder.Price
+				}
+
 				trade := &TestTrade{
 					ID:          fmt.Sprintf("trade_%d", i),
 					OrderID:     buyOrder.ID,
-					Price:       orderType == OrderTypeMarket ? 50000.0 : buyOrder.Price,
+					Price:       tradePrice,
 					Quantity:    buyOrder.Quantity,
 					Side:        buyOrder.Side,
 					Timestamp:   time.Now(),
 					TakerUserID: buyOrder.UserID,
 					MakerUserID: sellOrder.UserID,
 				}
-				
+
 				// Broadcast trade
 				mockWSHub.Broadcast("trades.BTCUSDT", []byte(fmt.Sprintf(`{"trade":"%s"}`, trade.ID)))
-				
+
 				// Update balances
 				reserveBuyerID, _ := mockBookkeeper.ReserveBalance(buyerID, "USDT", trade.Price*trade.Quantity)
 				reserveSellerID, _ := mockBookkeeper.ReserveBalance(sellerID, "BTC", trade.Quantity)
