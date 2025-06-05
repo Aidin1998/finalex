@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
-// Service defines the consolidated trading service interface with enterprise-level features
-type Service interface {
+// LegacyService defines the legacy consolidated trading service interface
+// DEPRECATED: This interface is deprecated in favor of the more focused TradingService interface.
+// Use TradingService from service.go for new code.
+type LegacyService interface {
 	// Order operations with enhanced features
 	PlaceOrder(ctx context.Context, userID, market string, side string, orderType string, price, amount float64) (interface{}, error)
 	PlaceOrderBatch(ctx context.Context, orders []OrderRequest) ([]OrderResult, error)

@@ -43,22 +43,22 @@ type AdaptiveTradingService interface {
 	ResetMigration(pair string) error
 
 	// Migration status and monitoring
-	GetMigrationStatus(pair string) (*MigrationState, error)
-	GetAllMigrationStates() map[string]*MigrationState
+	GetMigrationStatus(pair string) (*engine.MigrationState, error)
+	GetAllMigrationStates() map[string]*engine.MigrationState
 	GetPerformanceMetrics(pair string) (map[string]interface{}, error)
-	GetEngineMetrics() (*EngineMetrics, error)
+	GetEngineMetrics() (*engine.EngineMetrics, error)
 
 	// Auto-migration controls
 	EnableAutoMigration(enabled bool) error
 	IsAutoMigrationEnabled() bool
 
 	// Metrics and reporting
-	GetMetricsReport() (*MetricsReport, error)
-	GetPerformanceComparison(pair string) (*PerformanceComparison, error)
+	GetMetricsReport() (*engine.MetricsReport, error)
+	GetPerformanceComparison(pair string) (*engine.PerformanceComparison, error)
 
 	// Administrative controls
 	ResetCircuitBreaker(pair string) error
-	SetPerformanceThresholds(thresholds *AutoMigrationThresholds) error
+	SetPerformanceThresholds(thresholds *engine.AutoMigrationThresholds) error
 
 	// Shutdown and health check
 	Shutdown(ctx context.Context) error
@@ -397,6 +397,8 @@ func (as *AdaptiveService) SetPerformanceThresholds(thresholds *engine.AutoMigra
 // Enhanced order processing methods that leverage adaptive features
 
 // PlaceOrder overrides the base method to use adaptive routing
+// This override will need signature matching with the TradingService interface
+// Implementation would combine Service.PlaceOrder with adaptive routing
 func (as *AdaptiveService) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
 	// Perform the same validation as the base service
 	// (This could be extracted to a shared validation method)
