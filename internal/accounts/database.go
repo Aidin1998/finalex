@@ -12,12 +12,12 @@ import (
 	"github.com/go-redsync/redsync/v4"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v8"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus"
+	promclient "github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"gorm.io/plugin/prometheus"
+	gormprometheus "gorm.io/plugin/prometheus"
 )
 
 // DatabaseConfig represents database configuration for ultra-high concurrency
@@ -174,15 +174,15 @@ type DatabaseManager struct {
 
 	// Connection management
 	connTracker *ConnectionTracker
-	healthCheck *HealthChecker
+	healthCheck *DatabaseHealthChecker
 }
 
 // ConnectionTracker tracks database connections and their usage
 type ConnectionTracker struct {
-	activeConnections prometheus.Gauge
-	totalConnections  prometheus.Counter
-	connectionErrors  prometheus.Counter
-	queryDuration     prometheus.HistogramVec
+	activeConnections promclient.Gauge
+	totalConnections  promclient.Counter
+	connectionErrors  promclient.Counter
+	queryDuration     promclient.HistogramVec
 
 	// Connection pools
 	writePool *ConnectionPool
@@ -203,8 +203,8 @@ type ConnectionPool struct {
 	Healthy         bool
 }
 
-// HealthChecker provides health checking for database connections
-type HealthChecker struct {
+// DatabaseHealthChecker provides health checking for database connections
+type DatabaseHealthChecker struct {
 	config   *DatabaseConfig
 	logger   *zap.Logger
 	interval time.Duration
@@ -214,12 +214,12 @@ type HealthChecker struct {
 
 // DatabaseMetrics represents database operation metrics
 type DatabaseMetrics struct {
-	QueryCount       prometheus.CounterVec
-	QueryDuration    prometheus.HistogramVec
-	ConnectionCount  prometheus.GaugeVec
-	TransactionCount prometheus.CounterVec
-	ErrorCount       prometheus.CounterVec
-	LockWaitTime     prometheus.HistogramVec
+	QueryCount       promclient.CounterVec
+	QueryDuration    promclient.HistogramVec
+	ConnectionCount  promclient.GaugeVec
+	TransactionCount promclient.CounterVec
+	ErrorCount       promclient.CounterVec
+	LockWaitTime     promclient.HistogramVec
 }
 
 // NewDatabaseManager creates a new database manager with ultra-high concurrency support
@@ -264,62 +264,55 @@ func (dm *DatabaseManager) initializeMetrics() error {
 		namespace = "accounts_db"
 	}
 
-	dm.dbMetrics = &DatabaseMetrics{
-		QueryCount: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "queries_total",
-				Help:      "Total number of database queries",
-			},
-			[]string{"operation", "table", "status"},
-		),
-		QueryDuration: *prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "query_duration_seconds",
-				Help:      "Database query duration in seconds",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
-			},
-			[]string{"operation", "table"},
-		),
-		ConnectionCount: *prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "connections_active",
-				Help:      "Number of active database connections",
-			},
-			[]string{"pool", "type"},
-		),
-		TransactionCount: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "transactions_total",
-				Help:      "Total number of database transactions",
-			},
-			[]string{"status"},
-		),
-		ErrorCount: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "errors_total",
-				Help:      "Total number of database errors",
-			},
-			[]string{"operation", "error_type"},
-		),
-		LockWaitTime: *prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "lock_wait_duration_seconds",
-				Help:      "Time spent waiting for locks",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
-			},
-			[]string{"lock_type"},
-		),
+	dm.dbMetrics = &DatabaseMetrics{QueryCount: *promclient.NewCounterVec(
+		promclient.CounterOpts{
+			Namespace: namespace,
+			Name:      "queries_total",
+			Help:      "Total number of database queries",
+		},
+		[]string{"operation", "table", "status"},
+	), QueryDuration: *promclient.NewHistogramVec(
+		promclient.HistogramOpts{
+			Namespace: namespace,
+			Name:      "query_duration_seconds",
+			Help:      "Database query duration in seconds",
+			Buckets:   promclient.ExponentialBuckets(0.001, 2, 15),
+		},
+		[]string{"operation", "table"},
+	), ConnectionCount: *promclient.NewGaugeVec(
+		promclient.GaugeOpts{
+			Namespace: namespace,
+			Name:      "connections_active",
+			Help:      "Number of active database connections",
+		},
+		[]string{"pool", "type"},
+	), TransactionCount: *promclient.NewCounterVec(
+		promclient.CounterOpts{
+			Namespace: namespace,
+			Name:      "transactions_total",
+			Help:      "Total number of database transactions",
+		},
+		[]string{"status"},
+	), ErrorCount: *promclient.NewCounterVec(
+		promclient.CounterOpts{
+			Namespace: namespace,
+			Name:      "errors_total",
+			Help:      "Total number of database errors",
+		},
+		[]string{"operation", "error_type"},
+	), LockWaitTime: *promclient.NewHistogramVec(
+		promclient.HistogramOpts{
+			Namespace: namespace,
+			Name:      "lock_wait_duration_seconds",
+			Help:      "Time spent waiting for locks",
+			Buckets:   promclient.ExponentialBuckets(0.001, 2, 15),
+		},
+		[]string{"lock_type"},
+	),
 	}
-
 	// Register metrics
 	if dm.config.Monitoring.PrometheusEnabled {
-		prometheus.MustRegister(
+		promclient.MustRegister(
 			dm.dbMetrics.QueryCount,
 			dm.dbMetrics.QueryDuration,
 			dm.dbMetrics.ConnectionCount,
@@ -370,14 +363,13 @@ func (dm *DatabaseManager) initializePostgreSQL() error {
 	writeSqlDB.SetConnMaxIdleTime(dm.config.PostgreSQL.ConnMaxIdleTime)
 
 	dm.writeDB = writeDB
-
 	// Add Prometheus plugin for monitoring
 	if dm.config.Monitoring.PrometheusEnabled {
-		if err := writeDB.Use(prometheus.New(prometheus.Config{
+		if err := writeDB.Use(gormprometheus.New(gormprometheus.Config{
 			DBName:          dm.config.PostgreSQL.Database,
 			RefreshInterval: 15,
-			MetricsCollector: []prometheus.MetricsCollector{
-				&prometheus.MySQL{
+			MetricsCollector: []gormprometheus.MetricsCollector{
+				&gormprometheus.MySQL{
 					VariableNames: []string{"Threads_running"},
 				},
 			},
@@ -529,7 +521,7 @@ func (dm *DatabaseManager) initializeConnectionTracker() error {
 
 // startHealthChecker starts the health checking goroutine
 func (dm *DatabaseManager) startHealthChecker() error {
-	dm.healthCheck = &HealthChecker{
+	dm.healthCheck = &DatabaseHealthChecker{
 		config:   dm.config,
 		logger:   dm.logger,
 		interval: dm.config.ConnectionPool.HealthCheckInterval,
@@ -636,7 +628,7 @@ func (dm *DatabaseManager) Close() error {
 }
 
 // Health checker implementation
-func (hc *HealthChecker) start(dm *DatabaseManager) {
+func (hc *DatabaseHealthChecker) start(dm *DatabaseManager) {
 	ticker := time.NewTicker(hc.interval)
 	defer ticker.Stop()
 
@@ -650,7 +642,7 @@ func (hc *HealthChecker) start(dm *DatabaseManager) {
 	}
 }
 
-func (hc *HealthChecker) checkHealth(dm *DatabaseManager) {
+func (hc *DatabaseHealthChecker) checkHealth(dm *DatabaseManager) {
 	ctx, cancel := context.WithTimeout(context.Background(), hc.timeout)
 	defer cancel()
 

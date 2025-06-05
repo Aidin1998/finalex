@@ -120,21 +120,27 @@ func (BalanceSnapshot) TableName() string {
 	return "balance_snapshots"
 }
 
-// TransactionJournal represents double-entry bookkeeping journal entries
+// TransactionJournal represents transaction journal entries for audit trail
 type TransactionJournal struct {
 	ID              uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	TransactionID   uuid.UUID       `json:"transaction_id" gorm:"type:uuid;index:idx_journal_transaction;not null"`
-	AccountID       uuid.UUID       `json:"account_id" gorm:"type:uuid;index:idx_journal_account;not null"`
-	DebitAccountID  *uuid.UUID      `json:"debit_account_id" gorm:"type:uuid;index:idx_journal_debit"`
-	CreditAccountID *uuid.UUID      `json:"credit_account_id" gorm:"type:uuid;index:idx_journal_credit"`
+	UserID          uuid.UUID       `json:"user_id" gorm:"type:uuid;index:idx_journal_user;not null"`
+	Currency        string          `json:"currency" gorm:"type:varchar(10);index:idx_journal_currency;not null"`
+	Type            string          `json:"type" gorm:"type:varchar(50);index:idx_journal_type;not null"`
 	Amount          decimal.Decimal `json:"amount" gorm:"type:decimal(36,18);not null"`
-	Currency        string          `json:"currency" gorm:"type:varchar(10);not null"`
-	EntryType       string          `json:"entry_type" gorm:"type:varchar(10);not null"` // debit, credit
+	BalanceBefore   decimal.Decimal `json:"balance_before" gorm:"type:decimal(36,18);not null"`
+	BalanceAfter    decimal.Decimal `json:"balance_after" gorm:"type:decimal(36,18);not null"`
+	AvailableBefore decimal.Decimal `json:"available_before" gorm:"type:decimal(36,18);not null"`
+	AvailableAfter  decimal.Decimal `json:"available_after" gorm:"type:decimal(36,18);not null"`
+	LockedBefore    decimal.Decimal `json:"locked_before" gorm:"type:decimal(36,18);not null"`
+	LockedAfter     decimal.Decimal `json:"locked_after" gorm:"type:decimal(36,18);not null"`
+	ReferenceID     string          `json:"reference_id" gorm:"type:varchar(100);index:idx_journal_reference"`
+	Description     string          `json:"description" gorm:"type:text"`
+	Metadata        string          `json:"metadata" gorm:"type:jsonb"`
+	Status          string          `json:"status" gorm:"type:varchar(20);default:'completed';index:idx_journal_status"`
 	CreatedAt       time.Time       `json:"created_at" gorm:"index:idx_journal_created"`
 
-	// Additional fields
-	Description string `json:"description" gorm:"type:text"`
-	Reference   string `json:"reference" gorm:"type:varchar(255)"`
+	// Additional fields for legacy compatibility
+	Reference string `json:"reference" gorm:"type:varchar(255)"`
 }
 
 // TableName returns the table name for partitioning
@@ -195,17 +201,6 @@ type OperationMetrics struct {
 	ErrorCount    int64         `json:"error_count"`
 	SuccessRate   float64       `json:"success_rate"`
 	Timestamp     time.Time     `json:"timestamp"`
-}
-
-// CacheMetrics represents Redis cache performance metrics
-type CacheMetrics struct {
-	Operation   string        `json:"operation"`
-	HitCount    int64         `json:"hit_count"`
-	MissCount   int64         `json:"miss_count"`
-	HitRate     float64       `json:"hit_rate"`
-	AvgDuration time.Duration `json:"avg_duration"`
-	ErrorCount  int64         `json:"error_count"`
-	Timestamp   time.Time     `json:"timestamp"`
 }
 
 // ConnectionPoolMetrics represents database connection pool metrics
