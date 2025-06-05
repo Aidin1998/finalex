@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
+	userauthpb "github.com/Aidin1998/pincex_unified/internal/userauth/grpc"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -12,13 +13,13 @@ import (
 
 // Server implements the gRPC UserAuthService
 type Server struct {
-	UnimplementedUserAuthServiceServer
-	userAuthService *userauth.Service
+	userauthpb.UnimplementedUserAuthServiceServer
+	userAuthService shared.UserAuthService
 	logger          *zap.Logger
 }
 
 // NewServer creates a new gRPC server for UserAuth service
-func NewServer(userAuthService *userauth.Service, logger *zap.Logger) *Server {
+func NewServer(userAuthService shared.UserAuthService, logger *zap.Logger) *Server {
 	return &Server{
 		userAuthService: userAuthService,
 		logger:          logger,
@@ -26,17 +27,17 @@ func NewServer(userAuthService *userauth.Service, logger *zap.Logger) *Server {
 }
 
 // ValidateToken validates a JWT token
-func (s *Server) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
+func (s *Server) ValidateToken(ctx context.Context, req *userauthpb.ValidateTokenRequest) (*userauthpb.ValidateTokenResponse, error) {
 	claims, err := s.userAuthService.ValidateToken(ctx, req.Token)
 	if err != nil {
 		s.logger.Warn("Token validation failed", zap.Error(err))
-		return &ValidateTokenResponse{
+		return &userauthpb.ValidateTokenResponse{
 			Valid:        false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &ValidateTokenResponse{
+	return &userauthpb.ValidateTokenResponse{
 		Valid:       true,
 		UserId:      claims.UserID.String(),
 		Email:       claims.Email,
@@ -47,17 +48,17 @@ func (s *Server) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (
 }
 
 // RefreshToken refreshes an access token
-func (s *Server) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*RefreshTokenResponse, error) {
+func (s *Server) RefreshToken(ctx context.Context, req *userauthpb.RefreshTokenRequest) (*userauthpb.RefreshTokenResponse, error) {
 	tokenPair, err := s.userAuthService.RefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		s.logger.Warn("Token refresh failed", zap.Error(err))
-		return &RefreshTokenResponse{
+		return &userauthpb.RefreshTokenResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &RefreshTokenResponse{
+	return &userauthpb.RefreshTokenResponse{
 		Success:      true,
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
@@ -66,10 +67,10 @@ func (s *Server) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*R
 }
 
 // CreateAPIKey creates a new API key
-func (s *Server) CreateAPIKey(ctx context.Context, req *CreateAPIKeyRequest) (*CreateAPIKeyResponse, error) {
+func (s *Server) CreateAPIKey(ctx context.Context, req *userauthpb.CreateAPIKeyRequest) (*userauthpb.CreateAPIKeyResponse, error) {
 	userID, err := uuid.Parse(req.UserId)
 	if err != nil {
-		return &CreateAPIKeyResponse{
+		return &userauthpb.CreateAPIKeyResponse{
 			Success:      false,
 			ErrorMessage: "invalid user ID",
 		}, nil
@@ -84,13 +85,13 @@ func (s *Server) CreateAPIKey(ctx context.Context, req *CreateAPIKeyRequest) (*C
 	apiKey, err := s.userAuthService.CreateAPIKey(ctx, userID, req.Name, req.Permissions, expiresAt)
 	if err != nil {
 		s.logger.Warn("API key creation failed", zap.Error(err))
-		return &CreateAPIKeyResponse{
+		return &userauthpb.CreateAPIKeyResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &CreateAPIKeyResponse{
+	return &userauthpb.CreateAPIKeyResponse{
 		Success: true,
 		ApiKey:  apiKey.Key,
 		KeyId:   apiKey.ID.String(),
@@ -98,17 +99,17 @@ func (s *Server) CreateAPIKey(ctx context.Context, req *CreateAPIKeyRequest) (*C
 }
 
 // ValidateAPIKey validates an API key
-func (s *Server) ValidateAPIKey(ctx context.Context, req *ValidateAPIKeyRequest) (*ValidateAPIKeyResponse, error) {
+func (s *Server) ValidateAPIKey(ctx context.Context, req *userauthpb.ValidateAPIKeyRequest) (*userauthpb.ValidateAPIKeyResponse, error) {
 	claims, err := s.userAuthService.ValidateAPIKey(ctx, req.ApiKey)
 	if err != nil {
 		s.logger.Warn("API key validation failed", zap.Error(err))
-		return &ValidateAPIKeyResponse{
+		return &userauthpb.ValidateAPIKeyResponse{
 			Valid:        false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &ValidateAPIKeyResponse{
+	return &userauthpb.ValidateAPIKeyResponse{
 		Valid:       true,
 		UserId:      claims.UserID.String(),
 		KeyId:       claims.KeyID.String(),
@@ -118,10 +119,10 @@ func (s *Server) ValidateAPIKey(ctx context.Context, req *ValidateAPIKeyRequest)
 }
 
 // GetUser retrieves user information
-func (s *Server) GetUser(ctx context.Context, req *GetUserRequest) (*GetUserResponse, error) {
+func (s *Server) GetUser(ctx context.Context, req *userauthpb.GetUserRequest) (*userauthpb.GetUserResponse, error) {
 	userID, err := uuid.Parse(req.UserId)
 	if err != nil {
-		return &GetUserResponse{
+		return &userauthpb.GetUserResponse{
 			Found:        false,
 			ErrorMessage: "invalid user ID",
 		}, nil
@@ -131,15 +132,15 @@ func (s *Server) GetUser(ctx context.Context, req *GetUserRequest) (*GetUserResp
 	user, err := s.userAuthService.IdentityService().GetUserByID(ctx, userID)
 	if err != nil {
 		s.logger.Warn("User lookup failed", zap.String("user_id", req.UserId), zap.Error(err))
-		return &GetUserResponse{
+		return &userauthpb.GetUserResponse{
 			Found:        false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &GetUserResponse{
+	return &userauthpb.GetUserResponse{
 		Found: true,
-		User: &User{
+		User: &userauthpb.User{
 			Id:            user.ID.String(),
 			Email:         user.Email,
 			Username:      user.Username,
@@ -152,10 +153,10 @@ func (s *Server) GetUser(ctx context.Context, req *GetUserRequest) (*GetUserResp
 }
 
 // GetUserPermissions retrieves user permissions
-func (s *Server) GetUserPermissions(ctx context.Context, req *GetUserPermissionsRequest) (*GetUserPermissionsResponse, error) {
+func (s *Server) GetUserPermissions(ctx context.Context, req *userauthpb.GetUserPermissionsRequest) (*userauthpb.GetUserPermissionsResponse, error) {
 	userID, err := uuid.Parse(req.UserId)
 	if err != nil {
-		return &GetUserPermissionsResponse{
+		return &userauthpb.GetUserPermissionsResponse{
 			Success:      false,
 			ErrorMessage: "invalid user ID",
 		}, nil
@@ -164,7 +165,7 @@ func (s *Server) GetUserPermissions(ctx context.Context, req *GetUserPermissions
 	permissions, err := s.userAuthService.GetUserPermissions(ctx, userID)
 	if err != nil {
 		s.logger.Warn("Failed to get user permissions", zap.String("user_id", req.UserId), zap.Error(err))
-		return &GetUserPermissionsResponse{
+		return &userauthpb.GetUserPermissionsResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
@@ -189,7 +190,7 @@ func (s *Server) GetUserPermissions(ctx context.Context, req *GetUserPermissions
 		}
 	}
 
-	return &GetUserPermissionsResponse{
+	return &userauthpb.GetUserPermissionsResponse{
 		Success:     true,
 		Permissions: permissionStrings,
 		Roles:       roles,
@@ -197,10 +198,10 @@ func (s *Server) GetUserPermissions(ctx context.Context, req *GetUserPermissions
 }
 
 // CheckUserRole checks if user has a specific role
-func (s *Server) CheckUserRole(ctx context.Context, req *CheckUserRoleRequest) (*CheckUserRoleResponse, error) {
+func (s *Server) CheckUserRole(ctx context.Context, req *userauthpb.CheckUserRoleRequest) (*userauthpb.CheckUserRoleResponse, error) {
 	userID, err := uuid.Parse(req.UserId)
 	if err != nil {
-		return &CheckUserRoleResponse{
+		return &userauthpb.CheckUserRoleResponse{
 			HasRole:      false,
 			ErrorMessage: "invalid user ID",
 		}, nil
@@ -209,7 +210,7 @@ func (s *Server) CheckUserRole(ctx context.Context, req *CheckUserRoleRequest) (
 	permissions, err := s.userAuthService.GetUserPermissions(ctx, userID)
 	if err != nil {
 		s.logger.Warn("Failed to get user permissions for role check", zap.String("user_id", req.UserId), zap.Error(err))
-		return &CheckUserRoleResponse{
+		return &userauthpb.CheckUserRoleResponse{
 			HasRole:      false,
 			ErrorMessage: err.Error(),
 		}, nil
@@ -218,29 +219,29 @@ func (s *Server) CheckUserRole(ctx context.Context, req *CheckUserRoleRequest) (
 	// Check if user has the requested role
 	for _, perm := range permissions {
 		if perm.Role == req.Role {
-			return &CheckUserRoleResponse{
+			return &userauthpb.CheckUserRoleResponse{
 				HasRole: true,
 			}, nil
 		}
 	}
 
-	return &CheckUserRoleResponse{
+	return &userauthpb.CheckUserRoleResponse{
 		HasRole: false,
 	}, nil
 }
 
 // CheckRateLimit checks rate limiting for a request
-func (s *Server) CheckRateLimit(ctx context.Context, req *CheckRateLimitRequest) (*CheckRateLimitResponse, error) {
+func (s *Server) CheckRateLimit(ctx context.Context, req *userauthpb.CheckRateLimitRequest) (*userauthpb.CheckRateLimitResponse, error) {
 	result, err := s.userAuthService.CheckRateLimit(ctx, req.UserId, req.Endpoint, req.ClientIp)
 	if err != nil {
 		s.logger.Warn("Rate limit check failed", zap.String("user_id", req.UserId), zap.Error(err))
-		return &CheckRateLimitResponse{
+		return &userauthpb.CheckRateLimitResponse{
 			Allowed:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	return &CheckRateLimitResponse{
+	return &userauthpb.CheckRateLimitResponse{
 		Allowed:   result.Allowed,
 		Remaining: int32(result.Remaining),
 		ResetTime: int32(result.ResetTime),
@@ -249,34 +250,34 @@ func (s *Server) CheckRateLimit(ctx context.Context, req *CheckRateLimitRequest)
 }
 
 // GetRateLimitStatus gets rate limit status for a user
-func (s *Server) GetRateLimitStatus(ctx context.Context, req *GetRateLimitStatusRequest) (*GetRateLimitStatusResponse, error) {
+func (s *Server) GetRateLimitStatus(ctx context.Context, req *userauthpb.GetRateLimitStatusRequest) (*userauthpb.GetRateLimitStatusResponse, error) {
 	status, err := s.userAuthService.GetUserRateLimitStatus(ctx, req.UserId)
 	if err != nil {
 		s.logger.Warn("Failed to get rate limit status", zap.String("user_id", req.UserId), zap.Error(err))
-		return &GetRateLimitStatusResponse{
+		return &userauthpb.GetRateLimitStatusResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	limits := make(map[string]*RateLimitInfo)
+	limits := make(map[string]*userauthpb.RateLimitInfo)
 	for endpoint, info := range status {
-		limits[endpoint] = &RateLimitInfo{
+		limits[endpoint] = &userauthpb.RateLimitInfo{
 			Remaining: int32(info.Remaining),
 			ResetTime: int32(info.ResetTime),
 			Tier:      info.Tier,
 		}
 	}
 
-	return &GetRateLimitStatusResponse{
+	return &userauthpb.GetRateLimitStatusResponse{
 		Success: true,
 		Limits:  limits,
 	}, nil
 }
 
 // HealthCheck performs a health check
-func (s *Server) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
-	return &HealthCheckResponse{
+func (s *Server) HealthCheck(ctx context.Context, req *userauthpb.HealthCheckRequest) (*userauthpb.HealthCheckResponse, error) {
+	return &userauthpb.HealthCheckResponse{
 		Healthy:   true,
 		Version:   "1.0.0",
 		Timestamp: timestamppb.Now(),

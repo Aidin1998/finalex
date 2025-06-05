@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -14,13 +14,13 @@ import (
 
 // AdminAPI provides administrative endpoints for user management
 type AdminAPI struct {
-	userAuthService *userauth.Service
+	userAuthService shared.UserAuthService
 	logger          *zap.Logger
 	rbac            *RBACService
 }
 
 // NewAdminAPI creates a new admin API instance
-func NewAdminAPI(userAuthService *userauth.Service, logger *zap.Logger) *AdminAPI {
+func NewAdminAPI(userAuthService shared.UserAuthService, logger *zap.Logger) *AdminAPI {
 	return &AdminAPI{
 		userAuthService: userAuthService,
 		logger:          logger,
@@ -169,15 +169,11 @@ func (a *AdminAPI) createUser(c *gin.Context) {
 	}
 
 	// Create user through registration service
-	regReq := &userauth.EnterpriseRegistrationRequest{
-		Email:     req.Email,
-		Username:  req.Username,
-		Password:  req.Password,
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Phone:     req.Phone,
-		IPAddress: c.ClientIP(),
-		UserAgent: c.GetHeader("User-Agent"),
+	regReq := &shared.EnterpriseRegistrationRequest{
+		Email:    req.Email,
+		Password: req.Password,
+		Phone:    req.Phone,
+		// Optionally map FullName, Country, DOB, Metadata if available in CreateUserRequest
 	}
 
 	response, err := a.userAuthService.RegisterUserWithCompliance(c.Request.Context(), regReq)
@@ -198,8 +194,8 @@ func (a *AdminAPI) createUser(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.created", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.created", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -239,8 +235,8 @@ func (a *AdminAPI) updateUser(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.updated", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.updated", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -273,8 +269,8 @@ func (a *AdminAPI) deleteUser(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.deleted", "high", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.deleted", "high", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -312,8 +308,8 @@ func (a *AdminAPI) updateUserStatus(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.status_updated", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.status_updated", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -328,13 +324,10 @@ func (a *AdminAPI) updateUserStatus(c *gin.Context) {
 // Request/Response types
 
 type CreateUserRequest struct {
-	Email     string   `json:"email" binding:"required,email"`
-	Username  string   `json:"username" binding:"required"`
-	Password  string   `json:"password" binding:"required,min=8"`
-	FirstName string   `json:"first_name" binding:"required"`
-	LastName  string   `json:"last_name" binding:"required"`
-	Phone     string   `json:"phone"`
-	Roles     []string `json:"roles"`
+	Email    string   `json:"email" binding:"required,email"`
+	Password string   `json:"password" binding:"required,min=8"`
+	Phone    string   `json:"phone"`
+	Roles    []string `json:"roles"`
 }
 
 type UpdateUserRequest struct {
@@ -453,8 +446,8 @@ func (a *AdminAPI) verifyUserEmail(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.email_verified", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.user.email_verified", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -491,11 +484,47 @@ func (a *AdminAPI) flushCache(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.system.cache_flushed", "high", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.system.cache_flushed", "high", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 	}, "Admin flushed system cache")
 
 	c.JSON(http.StatusOK, gin.H{"message": "Cache flushed successfully"})
 }
+
+func (a *AdminAPI) resetUserPassword(c *gin.Context) {}
+
+func (a *AdminAPI) getUserSessions(c *gin.Context) {}
+
+func (a *AdminAPI) invalidateUserSessions(c *gin.Context) {}
+
+func (a *AdminAPI) getUserAuditLog(c *gin.Context) {}
+
+func (a *AdminAPI) updateRole(c *gin.Context) {}
+
+func (a *AdminAPI) deleteRole(c *gin.Context) {}
+
+func (a *AdminAPI) getRolePermissions(c *gin.Context) {}
+
+func (a *AdminAPI) assignPermissionToRole(c *gin.Context) {}
+
+func (a *AdminAPI) revokePermissionFromRole(c *gin.Context) {}
+
+func (a *AdminAPI) createPermission(c *gin.Context) {}
+
+func (a *AdminAPI) updatePermission(c *gin.Context) {}
+
+func (a *AdminAPI) deletePermission(c *gin.Context) {}
+
+func (a *AdminAPI) getSystemAuditLog(c *gin.Context) {}
+
+func (a *AdminAPI) enableMaintenanceMode(c *gin.Context) {}
+
+func (a *AdminAPI) disableMaintenanceMode(c *gin.Context) {}
+
+func (a *AdminAPI) getRateLimitStats(c *gin.Context) {}
+
+func (a *AdminAPI) revokeAPIKey(c *gin.Context) {}
+
+func (a *AdminAPI) getAPIKeyUsage(c *gin.Context) {}

@@ -3,7 +3,7 @@ package admin
 import (
 	"context"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
+	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -11,12 +11,12 @@ import (
 
 // RBACService provides role-based access control functionality
 type RBACService struct {
-	userAuthService *userauth.Service
+	userAuthService shared.UserAuthService
 	logger          *zap.Logger
 }
 
 // NewRBACService creates a new RBAC service
-func NewRBACService(userAuthService *userauth.Service, logger *zap.Logger) *RBACService {
+func NewRBACService(userAuthService shared.UserAuthService, logger *zap.Logger) *RBACService {
 	return &RBACService{
 		userAuthService: userAuthService,
 		logger:          logger,
@@ -94,8 +94,8 @@ func (r *RBACService) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]str
 
 	roleMap := make(map[string]bool)
 	for _, perm := range permissions {
-		if perm.Role != "" {
-			roleMap[perm.Role] = true
+		if perm != "" {
+			roleMap[perm] = true
 		}
 	}
 
@@ -116,7 +116,7 @@ func (r *RBACService) GetUserPermissions(ctx context.Context, userID uuid.UUID) 
 
 	permStrings := make([]string, len(permissions))
 	for i, perm := range permissions {
-		permStrings[i] = perm.Name
+		permStrings[i] = perm
 	}
 
 	return permStrings, nil
@@ -158,8 +158,8 @@ func (a *AdminAPI) createRole(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.created", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.created", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -192,8 +192,8 @@ func (a *AdminAPI) assignRole(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.assigned", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.assigned", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -227,8 +227,8 @@ func (a *AdminAPI) revokeRole(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.revoked", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.role.revoked", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{
@@ -310,8 +310,8 @@ func (a *AdminAPI) createAPIKey(c *gin.Context) {
 
 	// Log admin action
 	adminUserID := a.getAdminUserID(c)
-	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.api_key.created", "medium", userauth.AuditContext{
-		UserID:    adminUserID,
+	a.userAuthService.AuditService().LogEvent(c.Request.Context(), "admin.api_key.created", "medium", shared.AuditContext{
+		UserID:    adminUserID.String(),
 		IPAddress: c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
 		Metadata: map[string]interface{}{

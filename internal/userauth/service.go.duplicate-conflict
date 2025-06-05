@@ -6,13 +6,13 @@ import (
 	"time"
 
 	twofa "github.com/Aidin1998/pincex_unified/internal/userauth/2FA"
-
+	"github.com/Aidin1998/pincex_unified/internal/userauth/admin"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/audit"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/cache"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/compliance"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/encryption"
-
+	grpcserver "github.com/Aidin1998/pincex_unified/internal/userauth/grpc"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/identities"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/notification"
@@ -22,17 +22,216 @@ import (
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
 	redisv8 "github.com/go-redis/redis/v8"
 )
 
 // ServiceConfig holds configuration for the UserAuth service
+type ServiceConfig struct {
+	JWTSecret              string
+	JWTExpiration          time.Duration
+	RefreshTokenSecret     string
+	RefreshTokenExpiration time.Duration
+	Issuer                 string
+	TwoFAGracePeriodDays   int
+	EmailConfig            notification.EmailConfig
+	SMSConfig              notification.SMSConfig
+	EncryptionKey          string
+
+	// Enterprise features
+	RedisClusterConfig cache.ClusterConfig
+	LocalCacheConfig   cache.LocalCacheConfig
+	PerformanceConfig  performance.OptimizationConfig
+	RateLimitConfig    RateLimitConfig
+	GRPCConfig         GRPCConfig
+	AdminConfig        AdminConfig
+}
+
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Namespace string `yaml:"namespace"`
+}
+
+// GRPCConfig holds gRPC server configuration
+type GRPCConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
+}
 
 // AdminConfig holds admin API configuration
 type AdminConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
+}
+
+// Service provides unified user authentication and identity management
+type Service struct {
+	// Core services
+	authService         auth.AuthService
+	identityService     identities.Service
+	kycService          kyc.Service
+	auditService        *audit.Service
+	notificationService *notification.Service
+	passwordService     *password.Service
+	complianceService   *compliance.ComplianceService
+	encryptionService   *encryption.PIIEncryptionService
+	twoFAService        *twofa.Service
+
+	// Enterprise features
+	clusteredCache       *cache.ClusteredCache
+	clusteredRateLimiter *ratelimit.ClusteredRateLimiter
+	performanceOptimizer *performance.PerformanceOptimizer
+	adminAPI             *admin.AdminAPI
+	rbacService          *admin.RBACService
+	grpcServer           *grpcserver.Server
+
+	// Infrastructure
+	tieredRateLimiter *auth.TieredRateLimiter
+	redisCluster      *redisv8.ClusterClient
+	logger            *zap.Logger
+	db                *gorm.DB
+
+	// Configuration
+	config ServiceConfig
+}
+
+// NewService creates a new unified user authentication service
+func NewService(logger *zap.Logger, db *gorm.DB, config ServiceConfig) (*Service, error) {
+	// Initialize Redis cluster client for enterprise features
+	var redisCluster *redisv8.ClusterClient
+	if len(config.RedisClusterConfig.Addrs) > 0 {
+		redisCluster = redisv8.NewClusterClient(&redisv8.ClusterOptions{
+			Addrs:        config.RedisClusterConfig.Addrs,
+			Password:     config.RedisClusterConfig.Password,
+			MaxRetries:   config.RedisClusterConfig.MaxRetries,
+			PoolSize:     config.RedisClusterConfig.PoolSize,
+			MinIdleConns: config.RedisClusterConfig.MinIdleConns,
+			DialTimeout:  config.RedisClusterConfig.DialTimeout,
+			ReadTimeout:  config.RedisClusterConfig.ReadTimeout,
+			WriteTimeout: config.RedisClusterConfig.WriteTimeout,
+			MaxConnAge:   config.RedisClusterConfig.MaxConnAge,
+		})
+
+		// Test connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := redisCluster.Ping(ctx).Err(); err != nil {
+			logger.Warn("Redis cluster connection failed, some features will be limited", zap.Error(err))
+		} else {
+			logger.Info("Redis cluster connected successfully")
+		}
+	}
+
+	// Initialize clustered cache
+	var clusteredCache *cache.ClusteredCache
+	if redisCluster != nil {
+		var err error
+		clusteredCache, err = cache.NewClusteredCache(
+			config.RedisClusterConfig,
+			config.LocalCacheConfig,
+			"userauth",
+			logger,
+		)
+		if err != nil {
+			logger.Warn("Failed to initialize clustered cache", zap.Error(err))
+		}
+	}
+
+	// Initialize performance optimizer
+	performanceOptimizer := performance.NewPerformanceOptimizer(&config.PerformanceConfig, logger)
+
+	// Initialize auth service
+	authSvc, err := auth.NewAuthService(
+		logger,
+		db,
+		config.JWTSecret,
+		config.JWTExpiration,
+		config.RefreshTokenSecret,
+		config.RefreshTokenExpiration,
+		config.Issuer,
+		nil, // Rate limiter will be set after creation
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create auth service: %w", err)
+	}
+
+	// Initialize other core services
+	identitySvc := identities.NewService(logger, db)
+	kycSvc := kyc.NewService(logger, db)
+	auditSvc := audit.NewService(logger, db)
+	notificationSvc := notification.NewService(logger, db, nil, config.EmailConfig, config.SMSConfig)
+	passwordSvc := password.NewService(logger, db, nil)
+	complianceSvc := compliance.NewComplianceService(db, logger, nil, nil, nil)
+	encryptionSvc := encryption.NewPIIEncryptionService(config.EncryptionKey)
+	twoFASvc := twofa.NewService(logger, db, config.Issuer)
+
+	// Create user service adapter for rate limiter
+	userService := auth.NewAuthUserService(db)
+
+	// Initialize tiered rate limiter
+	tieredRateLimiter := auth.NewTieredRateLimiter(redisCluster, logger, userService)
+
+	// Initialize clustered rate limiter
+	var clusteredRateLimiter *ratelimit.ClusteredRateLimiter
+	if config.RateLimitConfig.Enabled && redisCluster != nil {
+		clusteredRateLimiter = ratelimit.NewClusteredRateLimiter(
+			redisCluster,
+			clusteredCache,
+			logger,
+			config.RateLimitConfig.Namespace,
+		)
+	}
+
+	// Create the service instance first so we can pass it to other components
+	service := &Service{
+		authService:         authSvc,
+		identityService:     identitySvc,
+		kycService:          kycSvc,
+		auditService:        auditSvc,
+		notificationService: notificationSvc,
+		passwordService:     passwordSvc,
+		complianceService:   complianceSvc,
+		encryptionService:   encryptionSvc,
+		twoFAService:        twoFASvc,
+
+		// Enterprise features
+		clusteredCache:       clusteredCache,
+		clusteredRateLimiter: clusteredRateLimiter,
+		performanceOptimizer: performanceOptimizer,
+
+		// Infrastructure
+		tieredRateLimiter: tieredRateLimiter,
+		redisCluster:      redisCluster,
+		logger:            logger,
+		db:                db,
+		config:            config,
+	}
+
+	// Initialize RBAC service (requires the service instance)
+	rbacService := admin.NewRBACService(service, logger)
+
+	// Initialize admin API (requires the service instance)
+	var adminAPI *admin.AdminAPI
+	if config.AdminConfig.Enabled {
+		adminAPI = admin.NewAdminAPI(service, logger)
+	}
+
+	// Initialize gRPC server (requires the service instance)
+	var grpcServer *grpcserver.Server
+	if config.GRPCConfig.Enabled {
+		grpcServer = grpcserver.NewServer(service, logger)
+	}
+
+	// Update service with enterprise components
+	service.rbacService = rbacService
+	service.adminAPI = adminAPI
+	service.grpcServer = grpcServer
+
+	return service, nil
 }
 
 // Core service accessors
@@ -100,6 +299,19 @@ func (s *Service) PerformanceOptimizer() *performance.PerformanceOptimizer {
 }
 
 // AdminAPI returns the admin API
+func (s *Service) AdminAPI() *admin.AdminAPI {
+	return s.adminAPI
+}
+
+// RBACService returns the RBAC service
+func (s *Service) RBACService() *admin.RBACService {
+	return s.rbacService
+}
+
+// GRPCServer returns the gRPC server
+func (s *Service) GRPCServer() *grpcserver.Server {
+	return s.grpcServer
+}
 
 // TieredRateLimiter returns the tiered rate limiter
 func (s *Service) TieredRateLimiter() *auth.TieredRateLimiter {
@@ -126,7 +338,12 @@ func (s *Service) GetEnterpriseFeatures(ctx context.Context) map[string]interfac
 		"performance_optimizer": map[string]interface{}{
 			"enabled": s.performanceOptimizer != nil,
 		},
-
+		"admin_api": map[string]interface{}{
+			"enabled": s.adminAPI != nil,
+		},
+		"grpc_server": map[string]interface{}{
+			"enabled": s.grpcServer != nil,
+		},
 		"redis_cluster": map[string]interface{}{
 			"enabled": s.redisCluster != nil,
 		},
@@ -241,6 +458,15 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 // Authentication methods with enterprise features
+
+// MFAAuthRequest represents a multi-factor authentication request
+type MFAAuthRequest struct {
+	Email          string `json:"email" validate:"required,email"`
+	Password       string `json:"password" validate:"required"`
+	TwoFactorToken string `json:"two_factor_token,omitempty"`
+	IPAddress      string `json:"ip_address"`
+	UserAgent      string `json:"user_agent"`
+}
 
 // AuthenticateWithMFA performs multi-factor authentication with enterprise features
 func (s *Service) AuthenticateWithMFA(ctx context.Context, req *MFAAuthRequest) (*auth.TokenPair, error) {
