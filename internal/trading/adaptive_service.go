@@ -70,7 +70,7 @@ func NewAdaptiveService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeepe
 		adaptiveConfig,
 		eventJournal,
 		wsHub,
-		NewMockRiskService(), // Using mock risk service instead of aml.NewRiskService()
+		NewMockRiskService(), // Using the full mock risk service from aml_types.go
 		nil,                  // no Redis client configured yet
 	)
 

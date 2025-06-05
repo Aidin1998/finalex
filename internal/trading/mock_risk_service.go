@@ -3,16 +3,16 @@ package trading
 
 // Mock implementation of risk and compliance services
 
-// MockRiskService is a simplified risk service implementation
-type MockRiskService struct{}
+// SimpleMockRiskService is a simplified risk service implementation
+type SimpleMockRiskService struct{}
 
-// NewMockRiskService creates a new mock risk service
-func NewMockRiskService() *MockRiskService {
-	return &MockRiskService{}
+// NewSimpleMockRiskService creates a new simplified mock risk service
+func NewSimpleMockRiskService() *SimpleMockRiskService {
+	return &SimpleMockRiskService{}
 }
 
 // CheckRisk is a mock risk check implementation
-func (m *MockRiskService) CheckRisk(userID string, amount float64) (bool, error) {
+func (m *SimpleMockRiskService) CheckRisk(userID string, amount float64) (bool, error) {
 	// Always approve in mock implementation
 	return true, nil
 }
@@ -21,4 +21,4 @@ func (m *MockRiskService) CheckRisk(userID string, amount float64) (bool, error)
 // Just change:
 //   aml.NewRiskService()
 // to:
-//   NewMockRiskService()
+//   NewSimpleMockRiskService()

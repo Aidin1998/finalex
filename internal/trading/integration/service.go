@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Aidin1998/pincex_unified/internal/infrastructure"
+	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 )
 
 // IntegrationService handles integration with external systems
@@ -127,16 +128,16 @@ func (is *IntegrationService) PublishEvent(ctx context.Context, eventType string
 }
 
 // PublishTradeExecuted publishes a trade execution event
-func (is *IntegrationService) PublishTradeExecuted(ctx context.Context, trade *Trade) error {
+func (is *IntegrationService) PublishTradeExecuted(ctx context.Context, trade *model.Trade) error {
 	data := map[string]interface{}{
-		"trade_id":   trade.ID,
-		"market_id":  trade.MarketID,
-		"buyer_id":   trade.BuyerID,
-		"seller_id":  trade.SellerID,
-		"price":      trade.Price.String(),
-		"amount":     trade.Amount.String(),
-		"fee":        trade.Fee.String(),
-		"created_at": trade.CreatedAt,
+		"trade_id":        trade.ID.String(),
+		"pair":            trade.Pair,
+		"price":           trade.Price.String(),
+		"quantity":        trade.Quantity.String(),
+		"side":            trade.Side,
+		"user_id":         trade.UserID.String(),
+		"counter_user_id": trade.CounterUserID.String(),
+		"created_at":      trade.CreatedAt,
 	}
 
 	targets := []string{"risk_system", "market_data", "compliance"}
@@ -144,15 +145,15 @@ func (is *IntegrationService) PublishTradeExecuted(ctx context.Context, trade *T
 }
 
 // PublishOrderPlaced publishes an order placement event
-func (is *IntegrationService) PublishOrderPlaced(ctx context.Context, order *Order) error {
+func (is *IntegrationService) PublishOrderPlaced(ctx context.Context, order *model.Order) error {
 	data := map[string]interface{}{
-		"order_id":   order.ID,
-		"user_id":    order.UserID,
-		"market_id":  order.MarketID,
+		"order_id":   order.ID.String(),
+		"user_id":    order.UserID.String(),
+		"pair":       order.Pair,
 		"side":       order.Side,
 		"type":       order.Type,
 		"price":      order.Price.String(),
-		"amount":     order.Amount.String(),
+		"quantity":   order.Quantity.String(),
 		"status":     order.Status,
 		"created_at": order.CreatedAt,
 	}
@@ -265,9 +266,8 @@ func (is *IntegrationService) sendToWebSocket(event IntegrationEvent, integratio
 	is.logger.Debug("Sending event to WebSocket",
 		zap.String("event_id", event.ID),
 		zap.String("endpoint", integration.Endpoint))
-
 	// Use infrastructure service WebSocket capabilities
-	if err := is.infra.BroadcastMessage(context.Background(), "integration_event", event.Data); err != nil {
+	if err := is.infra.BroadcastMessage("integration_event", event.Data); err != nil {
 		return fmt.Errorf("failed to broadcast via WebSocket: %w", err)
 	}
 

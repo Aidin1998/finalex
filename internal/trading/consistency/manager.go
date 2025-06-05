@@ -158,7 +158,8 @@ func (cm *ConsistencyManager) RepairInconsistency(ctx context.Context, snapshotI
 	}
 
 	cm.logger.Info("Attempting to repair inconsistency",
-		zap.String("snapshot_id", snapshotID))
+		zap.String("snapshot_id", snapshotID),
+		zap.String("market_id", snapshot.MarketID))
 
 	// Repair logic would go here
 	// For now, just log the attempt
@@ -267,9 +268,7 @@ func (cm *ConsistencyManager) periodicCleanup() {
 	defer ticker.Stop()
 
 	for cm.running {
-		select {
-		case <-ticker.C:
-			cm.CleanupOldSnapshots(24 * time.Hour)
-		}
+		<-ticker.C
+		cm.CleanupOldSnapshots(24 * time.Hour)
 	}
 }
