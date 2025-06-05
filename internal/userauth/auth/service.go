@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/migrations"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
-	"github.com/Aidin1998/pincex_unified/pkg/validation"
+	"github.com/Aidin1998/finalex/internal/userauth/migrations"
+	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/Aidin1998/finalex/pkg/validation"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"

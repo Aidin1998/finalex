@@ -9,8 +9,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"github.com/Aidin1998/pincex_unified/internal/infrastructure"
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/infrastructure"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 )
 
 // IntegrationService handles integration with external systems

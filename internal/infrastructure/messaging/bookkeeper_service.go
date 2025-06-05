@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )

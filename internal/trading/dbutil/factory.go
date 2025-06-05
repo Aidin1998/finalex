@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/config"
+	"github.com/Aidin1998/finalex/internal/trading/config"
 )
 
 // DB and Redis singletons

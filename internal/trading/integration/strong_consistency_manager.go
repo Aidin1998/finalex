@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/accounts/transaction"
-	"github.com/Aidin1998/pincex_unified/internal/infrastructure/config"
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/internal/trading/consensus"
-	"github.com/Aidin1998/pincex_unified/internal/trading/consistency"
-	"github.com/Aidin1998/pincex_unified/internal/trading/coordination"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/accounts/transaction"
+	"github.com/Aidin1998/finalex/internal/infrastructure/config"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/consensus"
+	"github.com/Aidin1998/finalex/internal/trading/consistency"
+	"github.com/Aidin1998/finalex/internal/trading/coordination"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -33,7 +33,7 @@ type StrongConsistencyManager struct {
 
 	// Configuration and testing
 	configManager *config.StrongConsistencyConfigManager
-	// testSuite     *test.StrongConsistencyTestSuite // REMOVE or COMMENT OUT: "github.com/Aidin1998/pincex_unified/internal/test"
+	// testSuite     *test.StrongConsistencyTestSuite // REMOVE or COMMENT OUT: "github.com/Aidin1998/finalex/internal/test"
 
 	// State management
 	mu      sync.RWMutex

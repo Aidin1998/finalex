@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
-	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/finalex/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/trading/orderbook"
 )
 
 // EngineMetricsCollector collects and aggregates metrics across the engine

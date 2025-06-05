@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
-	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	model "github.com/Aidin1998/finalex/internal/trading/model"
+	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"

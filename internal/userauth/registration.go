@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	usermodels "github.com/Aidin1998/pincex_unified/internal/userauth/models"
-	globalmodels "github.com/Aidin1998/pincex_unified/pkg/models"
+	usermodels "github.com/Aidin1998/finalex/internal/userauth/models"
+	globalmodels "github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"

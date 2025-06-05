@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
-	usermodels "github.com/Aidin1998/pincex_unified/internal/userauth/models"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/userauth/auth"
+	usermodels "github.com/Aidin1998/finalex/internal/userauth/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"

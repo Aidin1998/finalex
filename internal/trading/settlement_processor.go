@@ -2,7 +2,7 @@
 package trading
 
 import (
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 )
 
 // SettlementProcessor is a simple alias to the settlement.SettlementProcessor

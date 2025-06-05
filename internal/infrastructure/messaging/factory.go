@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"go.uber.org/zap"
 )
 

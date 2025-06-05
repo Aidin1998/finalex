@@ -3,7 +3,7 @@ package auth
 import (
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 )
 
 // RateLimitConfig represents configurable rate limiting settings

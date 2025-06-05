@@ -3,7 +3,7 @@ package apiutil
 import (
 	"net/http"
 
-	"github.com/Aidin1998/pincex_unified/common/errors"
+	"github.com/Aidin1998/finalex/common/errors"
 	"github.com/gin-gonic/gin"
 )
 

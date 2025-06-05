@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/mock"

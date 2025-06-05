@@ -15,17 +15,17 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
-	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
-	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
-	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
-	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
+	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
+	auditlog "github.com/Aidin1998/finalex/internal/trading/auditlog"
+	eventjournal "github.com/Aidin1998/finalex/internal/trading/eventjournal"
+	model "github.com/Aidin1998/finalex/internal/trading/model"
+	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
 
 	// Using root persistence package instead of non-existent internal/trading/persistence
-	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
-	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
-	"github.com/Aidin1998/pincex_unified/persistence"
+	settlement "github.com/Aidin1998/finalex/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/trading/trigger"
+	"github.com/Aidin1998/finalex/persistence"
 )
 
 // =============================

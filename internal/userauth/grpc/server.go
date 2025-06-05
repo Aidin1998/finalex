@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
-	userauthpb "github.com/Aidin1998/pincex_unified/pkg/proto/userauth"
+	"github.com/Aidin1998/finalex/internal/userauth/shared"
+	"github.com/Aidin1998/finalex/pkg/models"
+	userauthpb "github.com/Aidin1998/finalex/pkg/proto/userauth"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/common/errors"
+	"github.com/Aidin1998/finalex/common/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"

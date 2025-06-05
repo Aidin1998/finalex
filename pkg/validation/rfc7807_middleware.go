@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Aidin1998/pincex_unified/common/apiutil"
-	"github.com/Aidin1998/pincex_unified/common/errors"
+	"github.com/Aidin1998/finalex/common/apiutil"
+	"github.com/Aidin1998/finalex/common/errors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

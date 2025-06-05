@@ -21,8 +21,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/handlers"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/trading/handlers"
+	"github.com/Aidin1998/finalex/pkg/models"
 )
 
 // Mock Trading Service for Handler Tests

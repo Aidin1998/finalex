@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/coordination"
+	"github.com/Aidin1998/finalex/internal/trading/coordination"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"

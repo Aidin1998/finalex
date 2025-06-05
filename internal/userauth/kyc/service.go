@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	pkgmodels "github.com/Aidin1998/pincex_unified/pkg/models"
+	pkgmodels "github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"

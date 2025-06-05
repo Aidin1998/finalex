@@ -1,7 +1,7 @@
 //go:build test
 // +build test
 
-// filepath: c:\Orbit CEX\pincex_unified\internal\trading\inmemory_repository.go
+// filepath: c:\Orbit CEX\Finalex\internal\trading\inmemory_repository.go
 package trading
 
 import (

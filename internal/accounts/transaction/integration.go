@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/fiat"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
-	"github.com/Aidin1998/pincex_unified/internal/wallet"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/fiat"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/wallet"
 	"github.com/google/uuid"
 
 	"go.uber.org/zap"

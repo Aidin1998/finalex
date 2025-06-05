@@ -1,7 +1,7 @@
 package dbutil
 
 import (
-	"github.com/Aidin1998/pincex_unified/common/errors"
+	"github.com/Aidin1998/finalex/common/errors"
 	"gorm.io/gorm"
 )
 

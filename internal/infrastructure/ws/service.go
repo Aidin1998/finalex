@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 
@@ -19,8 +20,8 @@ type Service struct {
 
 // NewService creates a new WebSocket service
 func NewService(logger *zap.Logger) *Service {
-	hubConfig := DefaultConfig()
-	hub := NewHub(logger, hubConfig)
+	// Create hub with proper parameters: shardCount=8, replaySize=1000
+	hub := NewHubWithLogger(8, 1000, logger)
 
 	return &Service{
 		hub:    hub,
@@ -32,9 +33,15 @@ func NewService(logger *zap.Logger) *Service {
 // Start starts the WebSocket service on the specified port
 func (s *Service) Start(port string) error {
 	mux := http.NewServeMux()
-
 	// Register the default WebSocket handler
-	mux.HandleFunc("/ws", s.hub.ServeWS)
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// Extract client ID from request (could be from query params, headers, etc.)
+		clientID := r.URL.Query().Get("client_id")
+		if clientID == "" {
+			clientID = "anonymous" // Default client ID
+		}
+		s.hub.ServeWS(w, r, clientID)
+	})
 
 	// Register custom handlers
 	s.mu.RLock()
@@ -69,9 +76,8 @@ func (s *Service) Stop(ctx context.Context) error {
 			return err
 		}
 	}
-
 	// Shutdown the WebSocket hub
-	if err := s.hub.Shutdown(ctx); err != nil {
+	if err := s.hub.Shutdown(); err != nil {
 		s.logger.Error("Error shutting down WebSocket hub", zap.Error(err))
 		return err
 	}
@@ -82,7 +88,23 @@ func (s *Service) Stop(ctx context.Context) error {
 
 // Broadcast broadcasts a message to all clients subscribed to a topic
 func (s *Service) Broadcast(topic string, data interface{}) {
-	s.hub.Broadcast(topic, data)
+	// Convert data to []byte
+	var bytes []byte
+	switch v := data.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		// For other types, marshal to JSON
+		var err error
+		bytes, err = json.Marshal(v)
+		if err != nil {
+			s.logger.Error("Failed to marshal data for broadcast", zap.Error(err), zap.Any("data", v))
+			return
+		}
+	}
+	s.hub.Broadcast(topic, bytes)
 }
 
 // RegisterHandler registers a custom WebSocket handler for a path
@@ -101,10 +123,17 @@ func (s *Service) RegisterHandler(path string, handler http.HandlerFunc) {
 
 // DefaultHandler returns the default WebSocket handler
 func (s *Service) DefaultHandler() http.HandlerFunc {
-	return s.hub.ServeWS
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract client ID from request (could be from query params, headers, etc.)
+		clientID := r.URL.Query().Get("client_id")
+		if clientID == "" {
+			clientID = "anonymous" // Default client ID
+		}
+		s.hub.ServeWS(w, r, clientID)
+	}
 }
 
-// SetBufferSize sets the buffer size for a topic
-func (s *Service) SetBufferSize(topic string, size int) {
-	s.hub.SetBufferSize(topic, size)
+// GetConnectionStats returns connection statistics
+func (s *Service) GetConnectionStats() map[string]interface{} {
+	return s.hub.GetConnectionStats()
 }

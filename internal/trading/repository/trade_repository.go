@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/trading/model"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"

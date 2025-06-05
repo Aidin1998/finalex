@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketdata/distribution"
+	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/distribution"
 	"github.com/gorilla/websocket"
 )
 

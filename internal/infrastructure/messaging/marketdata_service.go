@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
+	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )

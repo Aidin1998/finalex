@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/userauth/auth"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

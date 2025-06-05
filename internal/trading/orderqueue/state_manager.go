@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/finalex/internal/trading/orderbook"
 	"go.uber.org/zap"
 )
 

@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 )
 
 // TradingModelTestSuite tests trading model structures and validations

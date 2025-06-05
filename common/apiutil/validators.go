@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/Aidin1998/pincex_unified/common/errors"
+	"github.com/Aidin1998/finalex/common/errors"
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/zap"
 )

@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/models"
+	"github.com/Aidin1998/finalex/internal/userauth/models"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"

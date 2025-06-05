@@ -2,7 +2,7 @@
 package trading
 
 import (
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 )
 
 // This file contains type aliases to break circular dependencies between

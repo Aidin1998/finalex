@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/Aidin1998/pincex_unified/internal/middleware/ratelimit"
+	"github.com/Aidin1998/finalex/internal/middleware/ratelimit"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

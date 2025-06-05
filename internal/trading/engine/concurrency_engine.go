@@ -22,7 +22,7 @@ import (
 
 	"go.uber.org/zap"
 
-	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
 )
 
 // =============================

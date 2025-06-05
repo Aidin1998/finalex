@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"

@@ -3,7 +3,7 @@ syntax = "proto3";
 
 package userauth;
 
-option go_package = "github.com/Aidin1998/pincex_unified/pkg/proto/userauth";
+option go_package = "github.com/Aidin1998/finalex/pkg/proto/userauth";
 
 import "google/protobuf/timestamp.proto";
 

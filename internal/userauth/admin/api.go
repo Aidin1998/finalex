@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
+	"github.com/Aidin1998/finalex/internal/userauth/shared"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"

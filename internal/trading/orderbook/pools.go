@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 )
 
 // Pool metrics for order book structures

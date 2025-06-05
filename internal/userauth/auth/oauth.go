@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

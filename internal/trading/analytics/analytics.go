@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/repository"
+	"github.com/Aidin1998/finalex/internal/trading/repository"
 	"github.com/google/uuid"
 )
 

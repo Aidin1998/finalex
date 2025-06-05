@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/integration"
+	"github.com/Aidin1998/finalex/internal/integration"
 	"go.uber.org/zap"
 )
 

@@ -11,9 +11,9 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 )
 
 // TradingEngine defines the enforcement interface for trading engine integration

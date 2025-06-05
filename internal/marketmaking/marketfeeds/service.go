@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"

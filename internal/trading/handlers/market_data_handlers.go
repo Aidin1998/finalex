@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/common/apiutil"
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/common/apiutil"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

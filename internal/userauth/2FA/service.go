@@ -13,7 +13,7 @@ import (
 
 	"bytes"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/models"
+	"github.com/Aidin1998/finalex/internal/userauth/models"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/database"
-	aml "github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/database"
+	aml "github.com/Aidin1998/finalex/internal/risk/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/gin-gonic/gin"
 
 	"github.com/shopspring/decimal"

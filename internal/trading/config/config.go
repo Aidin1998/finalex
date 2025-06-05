@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
-	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/trading/eventjournal"
 	"github.com/shopspring/decimal"
 )
 

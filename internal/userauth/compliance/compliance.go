@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/models"
+	"github.com/Aidin1998/finalex/internal/userauth/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"

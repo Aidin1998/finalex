@@ -27,20 +27,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
-	auditlog "github.com/Aidin1998/pincex_unified/internal/trading/auditlog"
-	eventjournal "github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
-	messaging "github.com/Aidin1998/pincex_unified/internal/trading/messaging"
-	model "github.com/Aidin1998/pincex_unified/internal/trading/model"
-	orderbook "github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
-	settlement "github.com/Aidin1998/pincex_unified/internal/trading/settlement"
-	"github.com/Aidin1998/pincex_unified/internal/trading/trigger"
-	"github.com/Aidin1998/pincex_unified/persistence"
+	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
+	auditlog "github.com/Aidin1998/finalex/internal/trading/auditlog"
+	eventjournal "github.com/Aidin1998/finalex/internal/trading/eventjournal"
+	messaging "github.com/Aidin1998/finalex/internal/trading/messaging"
+	model "github.com/Aidin1998/finalex/internal/trading/model"
+	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
+	settlement "github.com/Aidin1998/finalex/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/trading/trigger"
+	"github.com/Aidin1998/finalex/persistence"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
+	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
 )
 
 // CancelRequest is re-exported from orderbook package for unified API.

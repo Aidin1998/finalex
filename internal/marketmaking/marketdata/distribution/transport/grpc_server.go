@@ -5,8 +5,8 @@ import (
 	"net"
 	"time"
 
-	pb "github.com/Aidin1998/pincex_unified/api/marketdata"
-	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketdata/distribution"
+	pb "github.com/Aidin1998/finalex/api/marketdata"
+	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/distribution"
 	"google.golang.org/grpc"
 )
 

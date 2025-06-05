@@ -1,4 +1,4 @@
-module github.com/Aidin1998/pincex_unified
+module github.com/Aidin1998/finalex
 
 go 1.23.0
 

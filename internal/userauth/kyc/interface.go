@@ -4,7 +4,7 @@ package kyc
 import (
 	"context"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth/models"
+	"github.com/Aidin1998/finalex/internal/userauth/models"
 	"github.com/google/uuid"
 )
 

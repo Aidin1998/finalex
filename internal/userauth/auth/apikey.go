@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/validation"
+	"github.com/Aidin1998/finalex/pkg/validation"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

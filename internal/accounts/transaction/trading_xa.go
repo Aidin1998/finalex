@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"

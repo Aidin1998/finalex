@@ -1,5 +1,5 @@
 // If you are using this from the 'common' module, you must add the following to common/go.mod:
-// replace github.com/Aidin1998/pincex_unified/pkg/metrics => ../../pkg/metrics
+// replace github.com/Aidin1998/finalex/pkg/metrics => ../../pkg/metrics
 //
 // Otherwise, you will get an import error for the metrics package.
 
@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/pkg/metrics"
+	"github.com/Aidin1998/finalex/pkg/metrics"
 	"github.com/gin-gonic/gin"
 )
 

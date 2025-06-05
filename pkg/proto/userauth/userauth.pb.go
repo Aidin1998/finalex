@@ -1476,7 +1476,7 @@ const file_userauth_proto_rawDesc = "" +
 	"\rCheckUserRole\x12\x1e.userauth.CheckUserRoleRequest\x1a\x1f.userauth.CheckUserRoleResponse\x12S\n" +
 	"\x0eCheckRateLimit\x12\x1f.userauth.CheckRateLimitRequest\x1a .userauth.CheckRateLimitResponse\x12_\n" +
 	"\x12GetRateLimitStatus\x12#.userauth.GetRateLimitStatusRequest\x1a$.userauth.GetRateLimitStatusResponse\x12J\n" +
-	"\vHealthCheck\x12\x1c.userauth.HealthCheckRequest\x1a\x1d.userauth.HealthCheckResponseB8Z6github.com/Aidin1998/pincex_unified/pkg/proto/userauthb\x06proto3"
+	"\vHealthCheck\x12\x1c.userauth.HealthCheckRequest\x1a\x1d.userauth.HealthCheckResponseB8Z6github.com/Aidin1998/finalex/pkg/proto/userauthb\x06proto3"
 
 var (
 	file_userauth_proto_rawDescOnce sync.Once

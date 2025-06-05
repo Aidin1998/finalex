@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
-	usermodels "github.com/Aidin1998/pincex_unified/internal/userauth/models"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/userauth"
+	usermodels "github.com/Aidin1998/finalex/internal/userauth/models"
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

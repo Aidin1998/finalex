@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	tradingconfig "github.com/Aidin1998/pincex_unified/internal/trading/config"
+	tradingconfig "github.com/Aidin1998/finalex/internal/trading/config"
 
 	"github.com/spf13/viper"
 )

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketdata/backpressure"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
+	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/backpressure"
+	"github.com/Aidin1998/finalex/internal/userauth/auth"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )

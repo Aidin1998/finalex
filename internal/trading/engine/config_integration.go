@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"
+	"github.com/Aidin1998/finalex/internal/trading/orderbook"
 )
 
 // ConfigBuilder helps build adaptive engine configurations

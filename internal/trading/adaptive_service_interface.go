@@ -4,7 +4,7 @@ package trading
 import (
 	"context"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading/engine"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 )
 
 // AdaptiveTradingService extends TradingService with adaptive engine capabilities

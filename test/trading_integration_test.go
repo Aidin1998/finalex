@@ -19,9 +19,9 @@ import (
 	"go.uber.org/zap/zaptest"
 	"gorm.io/gorm"
 
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
-	"github.com/Aidin1998/pincex_unified/pkg/models"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/pkg/models"
 )
 
 // Mock implementations for integration testing

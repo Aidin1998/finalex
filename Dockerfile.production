@@ -71,7 +71,7 @@ LABEL maintainer="Pincex Security Team <security@pincex.com>" \
       org.opencontainers.image.version="${BUILD_VERSION}" \
       org.opencontainers.image.created="${BUILD_TIME}" \
       org.opencontainers.image.revision="${BUILD_SHA}" \
-      org.opencontainers.image.source="https://github.com/pincex/pincex_unified" \
+      org.opencontainers.image.source="https://github.com/Aidin1998/finalex" \
       org.opencontainers.image.documentation="https://docs.pincex.com" \
       org.opencontainers.image.licenses="Proprietary"
 

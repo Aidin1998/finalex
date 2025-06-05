@@ -28,25 +28,25 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	_ "github.com/Aidin1998/pincex_unified/docs" // Swagger docs
+	_ "github.com/Aidin1998/finalex/docs" // Swagger docs
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/fiat"
-	"github.com/Aidin1998/pincex_unified/internal/infrastructure/config"
-	"github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
-	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketfeeds"
-	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/trading"
-	"github.com/Aidin1998/pincex_unified/internal/trading/dbutil"
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
-	"github.com/Aidin1998/pincex_unified/pkg/logger"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/fiat"
+	"github.com/Aidin1998/finalex/internal/infrastructure/config"
+	"github.com/Aidin1998/finalex/internal/infrastructure/ws"
+	"github.com/Aidin1998/finalex/internal/marketmaking/marketfeeds"
+	"github.com/Aidin1998/finalex/internal/risk/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/dbutil"
+	"github.com/Aidin1998/finalex/internal/userauth"
+	"github.com/Aidin1998/finalex/pkg/logger"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts/transaction"
-	"github.com/Aidin1998/pincex_unified/internal/infrastructure/server"
-	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
-	"github.com/Aidin1998/pincex_unified/internal/trading/settlement"
+	"github.com/Aidin1998/finalex/internal/accounts/transaction"
+	"github.com/Aidin1998/finalex/internal/infrastructure/server"
+	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 )
 
 // --- STUB KYC PROVIDER ---

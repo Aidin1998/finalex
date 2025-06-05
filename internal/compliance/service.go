@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	audit "github.com/Aidin1998/pincex_unified/internal/audit"
-	"github.com/Aidin1998/pincex_unified/internal/compliance/aml"
-	"github.com/Aidin1998/pincex_unified/internal/manipulation"
+	audit "github.com/Aidin1998/finalex/internal/audit"
+	"github.com/Aidin1998/finalex/internal/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/manipulation"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )

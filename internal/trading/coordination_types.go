@@ -2,7 +2,7 @@
 package trading
 
 import (
-	"github.com/Aidin1998/pincex_unified/internal/trading/coordination"
+	"github.com/Aidin1998/finalex/internal/trading/coordination"
 )
 
 // This file contains type aliases to break circular dependencies between

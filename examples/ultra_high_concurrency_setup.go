@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/accounts"
+	"github.com/Aidin1998/finalex/internal/accounts"
 	"github.com/go-redis/redis/v8"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
