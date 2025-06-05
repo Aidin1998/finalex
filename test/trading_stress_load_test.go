@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -599,4 +600,173 @@ func (m *MockTradingServiceStress) ListOrders(userID string, filter *models.Orde
 // TestStressLoadTestSuite runs the entire stress test suite
 func TestStressLoadTestSuite(t *testing.T) {
 	suite.Run(t, new(TradingStressLoadTestSuite))
+}
+
+// Helper methods for stress testing
+
+// submitRandomOrder submits a random order for stress testing
+func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int) {
+	suite.metrics.RecordOrderSubmission()
+
+	userIndex := (workerID + orderID) % len(suite.testUsers)
+	userID := suite.testUsers[userIndex]
+	pair := suite.testPairs[orderID%len(suite.testPairs)]
+
+	// Generate random order parameters
+	sides := []models.OrderSide{models.SideBuy, models.SideSell}
+	side := sides[orderID%2]
+
+	orderTypes := []models.OrderType{models.OrderTypeLimit, models.OrderTypeMarket}
+	orderType := orderTypes[orderID%2]
+
+	var price float64
+	var quantity float64
+
+	switch pair {
+	case "BTCUSDT":
+		price = 45000 + float64(orderID%10000)         // Price range: 45000-55000
+		quantity = 0.001 + float64(orderID%100)/100000 // Small quantities
+	case "ETHUSDT":
+		price = 2800 + float64(orderID%1000) // Price range: 2800-3800
+		quantity = 0.01 + float64(orderID%100)/10000
+	case "ETHBTC":
+		price = 0.065 + float64(orderID%100)/100000 // Price range around 0.065-0.075
+		quantity = 0.1 + float64(orderID%100)/1000
+	}
+
+	order := &models.Order{
+		ID:          uuid.New(),
+		UserID:      uuid.MustParse(userID),
+		Symbol:      pair,
+		Side:        string(side),
+		Type:        string(orderType),
+		Price:       price,
+		Quantity:    quantity,
+		Status:      models.OrderStatusNew,
+		Created:     time.Now(),
+		TimeInForce: models.TimeInForceGTC,
+	}
+
+	// Submit order
+	_, err := suite.service.PlaceOrder(suite.ctx, order)
+	if err != nil {
+		suite.metrics.RecordOrderFailed()
+	}
+}
+
+// submitMatchingOrdersForPair submits matching buy/sell orders for a specific trading pair
+func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string, numOrders int) {
+	basePrice := suite.getBasePriceForPair(pair)
+
+	for i := 0; i < numOrders; i++ {
+		// Submit buy order
+		buyUserIndex := (i * 2) % len(suite.testUsers)
+		buyOrder := &models.Order{
+			ID:          uuid.New(),
+			UserID:      uuid.MustParse(suite.testUsers[buyUserIndex]),
+			Symbol:      pair,
+			Side:        string(models.SideBuy),
+			Type:        string(models.OrderTypeLimit),
+			Price:       basePrice + float64(i%50), // Slightly increasing prices
+			Quantity:    0.001 + float64(i%100)/100000,
+			Status:      models.OrderStatusNew,
+			Created:     time.Now(),
+			TimeInForce: models.TimeInForceGTC,
+		}
+
+		// Submit sell order
+		sellUserIndex := (i*2 + 1) % len(suite.testUsers)
+		sellOrder := &models.Order{
+			ID:          uuid.New(),
+			UserID:      uuid.MustParse(suite.testUsers[sellUserIndex]),
+			Symbol:      pair,
+			Side:        string(models.SideSell),
+			Type:        string(models.OrderTypeLimit),
+			Price:       basePrice + float64(i%50), // Same price for matching
+			Quantity:    0.001 + float64(i%100)/100000,
+			Status:      models.OrderStatusNew,
+			Created:     time.Now(),
+			TimeInForce: models.TimeInForceGTC,
+		}
+
+		suite.metrics.RecordOrderSubmission()
+		suite.service.PlaceOrder(suite.ctx, buyOrder)
+
+		suite.metrics.RecordOrderSubmission()
+		suite.service.PlaceOrder(suite.ctx, sellOrder)
+	}
+}
+
+// getBasePriceForPair returns the base price for different trading pairs
+func (suite *TradingStressLoadTestSuite) getBasePriceForPair(pair string) float64 {
+	switch pair {
+	case "BTCUSDT":
+		return 50000.0
+	case "ETHUSDT":
+		return 3000.0
+	case "ETHBTC":
+		return 0.07
+	default:
+		return 1.0
+	}
+}
+
+// measureLatencyAtLoad measures latency at a specific order submission rate
+func (suite *TradingStressLoadTestSuite) measureLatencyAtLoad(orderRate int, duration time.Duration) {
+	fmt.Printf("Measuring latency at %d orders/sec for %v\n", orderRate, duration)
+
+	var latencies []time.Duration
+	var mu sync.Mutex
+
+	startTime := time.Now()
+	orderCount := 0
+
+	ticker := time.NewTicker(time.Duration(1000/orderRate) * time.Millisecond)
+	defer ticker.Stop()
+
+	for time.Since(startTime) < duration {
+		select {
+		case <-ticker.C:
+			go func(orderNum int) {
+				orderStart := time.Now()
+				suite.submitRandomOrder(0, orderNum)
+				latency := time.Since(orderStart)
+
+				mu.Lock()
+				latencies = append(latencies, latency)
+				mu.Unlock()
+			}(orderCount)
+			orderCount++
+		case <-suite.ctx.Done():
+			return
+		}
+	}
+
+	// Wait for remaining orders to complete
+	time.Sleep(time.Second)
+
+	if len(latencies) > 0 {
+		// Calculate latency statistics
+		sort.Slice(latencies, func(i, j int) bool {
+			return latencies[i] < latencies[j]
+		})
+
+		avgLatency := time.Duration(0)
+		for _, lat := range latencies {
+			avgLatency += lat
+		}
+		avgLatency /= time.Duration(len(latencies))
+
+		p50 := latencies[len(latencies)/2]
+		p95 := latencies[int(float64(len(latencies))*0.95)]
+		p99 := latencies[int(float64(len(latencies))*0.99)]
+
+		fmt.Printf("Latency at %d OPS - Avg: %v, P50: %v, P95: %v, P99: %v\n",
+			orderRate, avgLatency, p50, p95, p99)
+
+		// Verify latency requirements
+		suite.Assert().Less(avgLatency.Milliseconds(), int64(100), "Average latency should be under 100ms")
+		suite.Assert().Less(p95.Milliseconds(), int64(200), "P95 latency should be under 200ms")
+		suite.Assert().Less(p99.Milliseconds(), int64(500), "P99 latency should be under 500ms")
+	}
 }

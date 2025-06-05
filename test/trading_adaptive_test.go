@@ -40,6 +40,73 @@ type MockBookkeeperAdaptive struct {
 	updateCount  int64
 }
 
+// Required BookkeeperService interface methods
+func (m *MockBookkeeperAdaptive) Start() error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) Stop() error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) GetAccounts(ctx context.Context, userID string) ([]*models.Account, error) {
+	return nil, nil
+}
+
+func (m *MockBookkeeperAdaptive) GetAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return &models.Account{
+		UserID:    uuid.MustParse(userID),
+		Currency:  currency,
+		Balance:   10000.0,
+		Available: 10000.0,
+		Locked:    0.0,
+	}, nil
+}
+
+func (m *MockBookkeeperAdaptive) CreateAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return m.GetAccount(ctx, userID, currency)
+}
+
+func (m *MockBookkeeperAdaptive) GetAccountTransactions(ctx context.Context, userID, currency string, limit, offset int) ([]*models.Transaction, int64, error) {
+	return nil, 0, nil
+}
+
+func (m *MockBookkeeperAdaptive) CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+	return nil, nil
+}
+
+func (m *MockBookkeeperAdaptive) CompleteTransaction(ctx context.Context, transactionID string) error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) FailTransaction(ctx context.Context, transactionID string) error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) LockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return nil
+}
+
+func (m *MockBookkeeperAdaptive) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	return nil, nil
+}
+
+func (m *MockBookkeeperAdaptive) BatchUpdateBalances(ctx context.Context, userID string, currency string, updates []bookkeeper.AccountBalance) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{}, nil
+}
+
+func (m *MockBookkeeperAdaptive) BatchLockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{}, nil
+}
+
+func (m *MockBookkeeperAdaptive) BatchUnlockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{}, nil
+}
+
 func (m *MockBookkeeperAdaptive) ReserveBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) (*bookkeeper.BalanceReservation, error) {
 	atomic.AddInt64(&m.updateCount, 1)
 	reservation := &bookkeeper.BalanceReservation{

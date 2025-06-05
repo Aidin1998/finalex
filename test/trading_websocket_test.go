@@ -25,7 +25,7 @@ type TradingWebSocketTestSuite struct {
 
 // MockWebSocketHub provides comprehensive WebSocket testing capabilities
 type MockWebSocketHub struct {
-	connections     sync.Map // userID -> *MockConnection
+	connections     sync.Map // userID -> *MockWSConnection
 	subscriptions   sync.Map // topic -> []userID
 	broadcasts      sync.Map // topic -> []message
 	messageCount    int64
@@ -33,7 +33,7 @@ type MockWebSocketHub struct {
 	mu              sync.RWMutex
 }
 
-type MockConnection struct {
+type MockWSConnection struct {
 	UserID        string
 	Connected     bool
 	Messages      [][]byte
@@ -62,7 +62,7 @@ func (h *MockWebSocketHub) Broadcast(topic string, data []byte) {
 	if userIDs, ok := h.subscriptions.Load(topic); ok {
 		for _, userID := range userIDs.([]string) {
 			if conn, ok := h.connections.Load(userID); ok {
-				mockConn := conn.(*MockConnection)
+				mockConn := conn.(*MockWSConnection)
 				mockConn.mu.Lock()
 				if mockConn.Connected {
 					mockConn.Messages = append(mockConn.Messages, data)
@@ -78,7 +78,7 @@ func (h *MockWebSocketHub) BroadcastToUser(userID string, data []byte) {
 	atomic.AddInt64(&h.messageCount, 1)
 
 	if conn, ok := h.connections.Load(userID); ok {
-		mockConn := conn.(*MockConnection)
+		mockConn := conn.(*MockWSConnection)
 		mockConn.mu.Lock()
 		if mockConn.Connected {
 			mockConn.Messages = append(mockConn.Messages, data)
@@ -91,7 +91,7 @@ func (h *MockWebSocketHub) BroadcastToUser(userID string, data []byte) {
 func (h *MockWebSocketHub) Subscribe(userID, topic string) error {
 	// Ensure user connection exists
 	if _, ok := h.connections.Load(userID); !ok {
-		conn := &MockConnection{
+		conn := &MockWSConnection{
 			UserID:        userID,
 			Connected:     true,
 			Messages:      make([][]byte, 0),
@@ -104,7 +104,7 @@ func (h *MockWebSocketHub) Subscribe(userID, topic string) error {
 
 	// Add subscription
 	conn, _ := h.connections.Load(userID)
-	mockConn := conn.(*MockConnection)
+	mockConn := conn.(*MockWSConnection)
 	mockConn.mu.Lock()
 	mockConn.Subscriptions = append(mockConn.Subscriptions, topic)
 	mockConn.mu.Unlock()
@@ -142,7 +142,7 @@ func (h *MockWebSocketHub) Unsubscribe(userID, topic string) error {
 
 	// Remove from user subscriptions
 	if conn, ok := h.connections.Load(userID); ok {
-		mockConn := conn.(*MockConnection)
+		mockConn := conn.(*MockWSConnection)
 		mockConn.mu.Lock()
 		for i, sub := range mockConn.Subscriptions {
 			if sub == topic {
@@ -157,11 +157,11 @@ func (h *MockWebSocketHub) Unsubscribe(userID, topic string) error {
 }
 
 func (h *MockWebSocketHub) Connect(userID string) {
-	conn := &MockConnection{
+	conn := &MockWSConnection{
 		UserID:        userID,
 		Connected:     true,
-		Messages:      make([][]byte, 0),
-		Subscriptions: make([]string, 0),
+		Messages:      [][]byte{},
+		Subscriptions: []string{},
 		LastActivity:  time.Now(),
 	}
 	h.connections.Store(userID, conn)
@@ -169,18 +169,52 @@ func (h *MockWebSocketHub) Connect(userID string) {
 }
 
 func (h *MockWebSocketHub) Disconnect(userID string) {
-	if conn, ok := h.connections.Load(userID); ok {
-		mockConn := conn.(*MockConnection)
-		mockConn.mu.Lock()
-		mockConn.Connected = false
-		mockConn.mu.Unlock()
-		atomic.AddInt64(&h.connectionCount, -1)
+	conn := &MockWSConnection{
+		UserID:    userID,
+		Connected: false,
 	}
+	h.connections.Store(userID, conn)
+	atomic.AddInt64(&h.connectionCount, -1)
 }
 
-func (h *MockWebSocketHub) GetConnection(userID string) *MockConnection {
+func (h *MockWebSocketHub) GetSubscribers(topic string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	subs, ok := h.subscriptions.Load(topic)
+	if !ok {
+		return []string{}
+	}
+
+	subscribers := subs.([]string)
+	for i, userID := range subscribers {
+		if conn, ok := h.connections.Load(userID); ok {
+			mockConn := conn.(*MockWSConnection)
+			if !mockConn.Connected {
+				subscribers = append(subscribers[:i], subscribers[i+1:]...)
+			}
+		}
+	}
+
+	return subscribers
+}
+
+func (h *MockWebSocketHub) SendToUser(userID string, data []byte) {
+	conn, ok := h.connections.Load(userID)
+	if !ok {
+		return
+	}
+
+	mockConn := conn.(*MockWSConnection)
+	mockConn.mu.Lock()
+	defer mockConn.mu.Unlock()
+	mockConn.Messages = append(mockConn.Messages, data)
+	mockConn.LastActivity = time.Now()
+}
+
+func (h *MockWebSocketHub) GetConnection(userID string) *MockWSConnection {
 	if conn, ok := h.connections.Load(userID); ok {
-		return conn.(*MockConnection)
+		return conn.(*MockWSConnection)
 	}
 	return nil
 }

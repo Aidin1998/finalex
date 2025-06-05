@@ -111,3 +111,76 @@ func BenchmarkWebSocketBroadcast(b *testing.B) {
 		mockWSHub.Broadcast("trades.BTCUSDT", message)
 	}
 }
+
+// BenchmarkOrderTypeComparison specifically benchmarks different order types
+func BenchmarkOrderTypeComparison(b *testing.B) {
+	mockBookkeeper := &MockBookkeeperStressTest{}
+	mockWSHub := &MockWSHubStressTest{}
+
+	// Set up test users
+	testUsers := make([]string, 10)
+	for i := 0; i < len(testUsers); i++ {
+		testUsers[i] = fmt.Sprintf("user_%d", i)
+		mockBookkeeper.SetBalance(testUsers[i], "BTC", decimal.NewFromFloat(10.0))
+		mockBookkeeper.SetBalance(testUsers[i], "USDT", decimal.NewFromFloat(500000.0))
+		mockWSHub.Connect(testUsers[i])
+	}
+
+	testOrderTypes := []models.OrderType{
+		models.OrderTypeMarket,
+		models.OrderTypeLimit,
+		models.OrderTypeStop,
+		models.OrderTypeIceberg,
+	}
+
+	for _, orderType := range testOrderTypes {
+		b.Run(fmt.Sprintf("OrderType_%s", orderType), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				user := testUsers[i%len(testUsers)]
+
+				// Create order with appropriate type
+				order := &models.Order{
+					ID:       fmt.Sprintf("bench_%s_%d", orderType, i),
+					UserID:   user,
+					Symbol:   "BTCUSDT",
+					Side:     models.SideBuy,
+					Type:     orderType,
+					Quantity: decimal.NewFromFloat(0.001),
+					Status:   models.OrderStatusPending,
+					Created:  time.Now(),
+				}
+
+				// Set type-specific fields
+				if orderType != models.OrderTypeMarket {
+					order.Price = decimal.NewFromFloat(50000)
+				}
+
+				if orderType == models.OrderTypeStop || orderType == models.OrderTypeStopLimit {
+					order.StopPrice = decimal.NewFromFloat(51000)
+				}
+
+				if orderType == models.OrderTypeIceberg {
+					order.VisibleQuantity = order.Quantity.Div(decimal.NewFromInt(5))
+					order.TotalQuantity = order.Quantity
+				}
+
+				// Process order (simulate basic operations)
+				reservationID, _ := mockBookkeeper.ReserveBalance(user, "USDT", decimal.NewFromFloat(50))
+				_ = mockBookkeeper.CommitReservation(reservationID)
+
+				// Simulate processing time differences for different order types
+				switch orderType {
+				case models.OrderTypeMarket:
+					time.Sleep(time.Nanosecond * 50) // Market orders are fastest
+				case models.OrderTypeLimit:
+					time.Sleep(time.Nanosecond * 100) // Limit orders slightly slower
+				case models.OrderTypeStop, models.OrderTypeStopLimit:
+					time.Sleep(time.Nanosecond * 150) // Stop orders have more logic
+				case models.OrderTypeIceberg:
+					time.Sleep(time.Nanosecond * 200) // Iceberg orders slowest
+				}
+			}
+		})
+	}
+}

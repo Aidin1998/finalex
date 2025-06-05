@@ -88,18 +88,18 @@ type BalanceReservation struct {
 
 // TradeProcessRequest represents a request to process a trade
 type TradeProcessRequest struct {
-	TradeID       string    `json:"trade_id"`
-	BuyerID       string    `json:"buyer_id"`
-	SellerID      string    `json:"seller_id"`
-	Symbol        string    `json:"symbol"`
-	Quantity      float64   `json:"quantity"`
-	Price         float64   `json:"price"`
-	BuyOrderID    string    `json:"buy_order_id"`
-	SellOrderID   string    `json:"sell_order_id"`
-	ExecutedAt    time.Time `json:"executed_at"`
-	TakerSide     string    `json:"taker_side"` // "buy" or "sell"
-	MakerFeeRate  float64   `json:"maker_fee_rate"`
-	TakerFeeRate  float64   `json:"taker_fee_rate"`
+	TradeID      string    `json:"trade_id"`
+	BuyerID      string    `json:"buyer_id"`
+	SellerID     string    `json:"seller_id"`
+	Symbol       string    `json:"symbol"`
+	Quantity     float64   `json:"quantity"`
+	Price        float64   `json:"price"`
+	BuyOrderID   string    `json:"buy_order_id"`
+	SellOrderID  string    `json:"sell_order_id"`
+	ExecutedAt   time.Time `json:"executed_at"`
+	TakerSide    string    `json:"taker_side"` // "buy" or "sell"
+	MakerFeeRate float64   `json:"maker_fee_rate"`
+	TakerFeeRate float64   `json:"taker_fee_rate"`
 }
 
 // BookkeeperService defines bookkeeping operations and supports transaction and account lifecycle

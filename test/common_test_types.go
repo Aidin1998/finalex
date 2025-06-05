@@ -27,12 +27,12 @@ type ReservationInfo struct {
 // MockConnection simulates a WebSocket connection for testing
 type MockConnection struct {
 	ID          string
-	UserID      string        // For stress test compatibility
+	UserID      string // For stress test compatibility
 	Messages    []WSMessage
-	MessagesRaw [][]byte     // For stress test compatibility
+	MessagesRaw [][]byte // For stress test compatibility
 	LastPing    time.Time
 	IsConnected bool
-	IsActive    bool         // For stress test compatibility
+	IsActive    bool // For stress test compatibility
 	mu          sync.RWMutex
 }
 
