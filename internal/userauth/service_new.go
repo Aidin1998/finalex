@@ -8,21 +8,16 @@ import (
 	twofa "github.com/Aidin1998/pincex_unified/internal/userauth/2FA"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/audit"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/cache"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/compliance"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/encryption"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/identities"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/notification"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/password"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/performance"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/ratelimit"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-
-	redisv8 "github.com/go-redis/redis/v8"
 )
 
 // ServiceConfig holds configuration for the UserAuth service
@@ -36,26 +31,6 @@ type ServiceConfig struct {
 	EmailConfig            notification.EmailConfig
 	SMSConfig              notification.SMSConfig
 	EncryptionKey          string
-
-	// Enterprise features
-	RedisClusterConfig cache.ClusterConfig
-	LocalCacheConfig   cache.LocalCacheConfig
-	PerformanceConfig  performance.OptimizationConfig
-	RateLimitConfig    RateLimitConfig
-	GRPCConfig         GRPCConfig
-}
-
-// RateLimitConfig holds rate limiting configuration
-type RateLimitConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Namespace string `yaml:"namespace"`
-}
-
-// GRPCConfig holds gRPC server configuration
-type GRPCConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
 }
 
 // Service provides unified user authentication and identity management
@@ -70,15 +45,10 @@ type Service struct {
 	complianceService   *compliance.ComplianceService
 	encryptionService   *encryption.PIIEncryptionService
 	twoFAService        *twofa.Service
-
-	// Enterprise features
-	clusteredCache       *cache.ClusteredCache
-	clusteredRateLimiter *ratelimit.ClusteredRateLimiter
-	performanceOptimizer *performance.PerformanceOptimizer
+	registrationService *EnterpriseRegistrationService
 
 	// Infrastructure
 	tieredRateLimiter *auth.TieredRateLimiter
-	redisCluster      *redisv8.ClusterClient
 	logger            *zap.Logger
 	db                *gorm.DB
 
@@ -88,49 +58,6 @@ type Service struct {
 
 // NewService creates a new unified user authentication service
 func NewService(logger *zap.Logger, db *gorm.DB, config ServiceConfig) (*Service, error) {
-	// Initialize Redis cluster client for enterprise features
-	var redisCluster *redisv8.ClusterClient
-	if len(config.RedisClusterConfig.Addrs) > 0 {
-		redisCluster = redisv8.NewClusterClient(&redisv8.ClusterOptions{
-			Addrs:        config.RedisClusterConfig.Addrs,
-			Password:     config.RedisClusterConfig.Password,
-			MaxRetries:   config.RedisClusterConfig.MaxRetries,
-			PoolSize:     config.RedisClusterConfig.PoolSize,
-			MinIdleConns: config.RedisClusterConfig.MinIdleConns,
-			DialTimeout:  config.RedisClusterConfig.DialTimeout,
-			ReadTimeout:  config.RedisClusterConfig.ReadTimeout,
-			WriteTimeout: config.RedisClusterConfig.WriteTimeout,
-			MaxConnAge:   config.RedisClusterConfig.MaxConnAge,
-		})
-
-		// Test connection
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := redisCluster.Ping(ctx).Err(); err != nil {
-			logger.Warn("Redis cluster connection failed, some features will be limited", zap.Error(err))
-		} else {
-			logger.Info("Redis cluster connected successfully")
-		}
-	}
-
-	// Initialize clustered cache
-	var clusteredCache *cache.ClusteredCache
-	if redisCluster != nil {
-		var err error
-		clusteredCache, err = cache.NewClusteredCache(
-			config.RedisClusterConfig,
-			config.LocalCacheConfig,
-			"userauth",
-			logger,
-		)
-		if err != nil {
-			logger.Warn("Failed to initialize clustered cache", zap.Error(err))
-		}
-	}
-
-	// Initialize performance optimizer
-	performanceOptimizer := performance.NewPerformanceOptimizer(&config.PerformanceConfig, logger)
-
 	// Initialize auth service
 	authSvc, err := auth.NewAuthService(
 		logger,
@@ -150,33 +77,29 @@ func NewService(logger *zap.Logger, db *gorm.DB, config ServiceConfig) (*Service
 	identitySvc := identities.NewService(logger, db)
 	kycSvc := kyc.NewService(logger, db)
 	auditSvc := audit.NewService(logger, db)
-
-	// Initialize notification service with proper arguments
-	notificationSvc := notification.NewService(logger, db, nil, config.EmailConfig, config.SMSConfig)
-
-	// Initialize password service with proper arguments
-	passwordSvc := password.NewService(logger, db, nil)
-
+	notificationSvc := notification.NewService(logger, db, config.EmailConfig, config.SMSConfig)
+	passwordSvc := password.NewService(logger, db)
 	complianceSvc := compliance.NewComplianceService(db, logger, nil, nil, nil)
 	encryptionSvc := encryption.NewPIIEncryptionService(config.EncryptionKey)
 	twoFASvc := twofa.NewService(logger, db, config.Issuer)
 
+	// Create registration service
+	registrationSvc := NewEnterpriseRegistrationService(
+		db,
+		logger,
+		encryptionSvc,
+		complianceSvc,
+		auditSvc,
+		passwordSvc,
+		kycSvc,
+		notificationSvc,
+	)
+
 	// Create user service adapter for rate limiter
 	userService := auth.NewAuthUserService(db)
 
-	// Initialize tiered rate limiter
-	tieredRateLimiter := auth.NewTieredRateLimiter(redisCluster, logger, userService)
-
-	// Initialize clustered rate limiter
-	var clusteredRateLimiter *ratelimit.ClusteredRateLimiter
-	if config.RateLimitConfig.Enabled && redisCluster != nil {
-		clusteredRateLimiter = ratelimit.NewClusteredRateLimiter(
-			redisCluster,
-			clusteredCache,
-			logger,
-			config.RateLimitConfig.Namespace,
-		)
-	}
+	// Initialize tiered rate limiter (using mock Redis for now)
+	tieredRateLimiter := auth.NewTieredRateLimiter(nil, logger, userService)
 
 	service := &Service{
 		authService:         authSvc,
@@ -188,20 +111,12 @@ func NewService(logger *zap.Logger, db *gorm.DB, config ServiceConfig) (*Service
 		complianceService:   complianceSvc,
 		encryptionService:   encryptionSvc,
 		twoFAService:        twoFASvc,
-
-		// Enterprise features
-		clusteredCache:       clusteredCache,
-		clusteredRateLimiter: clusteredRateLimiter,
-		performanceOptimizer: performanceOptimizer,
-
-		// Infrastructure
-		tieredRateLimiter: tieredRateLimiter,
-		redisCluster:      redisCluster,
-		logger:            logger,
-		db:                db,
-		config:            config,
+		registrationService: registrationSvc,
+		tieredRateLimiter:   tieredRateLimiter,
+		logger:              logger,
+		db:                  db,
+		config:              config,
 	}
-
 	return service, nil
 }
 
@@ -225,21 +140,6 @@ func (s *Service) TieredRateLimiter() *auth.TieredRateLimiter {
 	return s.tieredRateLimiter
 }
 
-// ClusteredCache returns the clustered cache
-func (s *Service) ClusteredCache() *cache.ClusteredCache {
-	return s.clusteredCache
-}
-
-// ClusteredRateLimiter returns the clustered rate limiter
-func (s *Service) ClusteredRateLimiter() *ratelimit.ClusteredRateLimiter {
-	return s.clusteredRateLimiter
-}
-
-// PerformanceOptimizer returns the performance optimizer
-func (s *Service) PerformanceOptimizer() *performance.PerformanceOptimizer {
-	return s.performanceOptimizer
-}
-
 // CheckRateLimit performs comprehensive rate limiting check
 func (s *Service) CheckRateLimit(ctx context.Context, userID, endpoint, clientIP string) (*auth.RateLimitResult, error) {
 	if s.tieredRateLimiter == nil {
@@ -260,29 +160,14 @@ func (s *Service) GetUserRateLimitStatus(ctx context.Context, userID string) (ma
 // Start starts all sub-services
 func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("Starting unified user authentication service")
-
-	// Start performance optimizer
-	if s.performanceOptimizer != nil {
-		s.performanceOptimizer.Start()
-	}
-
+	// Add any initialization logic here
 	return nil
 }
 
 // Stop stops all sub-services
 func (s *Service) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping unified user authentication service")
-
-	// Stop performance optimizer
-	if s.performanceOptimizer != nil {
-		s.performanceOptimizer.Stop()
-	}
-
-	// Close Redis cluster connection
-	if s.redisCluster != nil {
-		s.redisCluster.Close()
-	}
-
+	// Add any cleanup logic here
 	return nil
 }
 
@@ -318,13 +203,17 @@ func (s *Service) TwoFAService() *twofa.Service {
 	return s.twoFAService
 }
 
-// MFAAuthRequest represents a multi-factor authentication request
-type MFAAuthRequest struct {
-	Email          string `json:"email" validate:"required,email"`
-	Password       string `json:"password" validate:"required"`
-	TwoFactorToken string `json:"two_factor_token,omitempty"`
-	IPAddress      string `json:"ip_address"`
-	UserAgent      string `json:"user_agent"`
+// RegistrationService returns the registration service
+func (s *Service) RegistrationService() *EnterpriseRegistrationService {
+	return s.registrationService
+}
+
+// Enterprise Business Logic Methods
+
+// RegisterUserWithCompliance performs enterprise-grade user registration with full compliance
+func (s *Service) RegisterUserWithCompliance(ctx context.Context, req *EnterpriseRegistrationRequest) (*EnterpriseRegistrationResponse, error) {
+	// Use the dedicated registration service
+	return s.registrationService.RegisterUser(ctx, req)
 }
 
 // AuthenticateWithMFA performs multi-factor authentication
@@ -379,6 +268,15 @@ func (s *Service) AuthenticateWithMFA(ctx context.Context, req *MFAAuthRequest) 
 	}, "User authentication successful")
 
 	return tokenPair, nil
+}
+
+// MFAAuthRequest represents a multi-factor authentication request
+type MFAAuthRequest struct {
+	Email          string `json:"email" validate:"required,email"`
+	Password       string `json:"password" validate:"required"`
+	TwoFactorToken string `json:"two_factor_token,omitempty"`
+	IPAddress      string `json:"ip_address"`
+	UserAgent      string `json:"user_agent"`
 }
 
 // CreateAPIKey creates a new API key for a user

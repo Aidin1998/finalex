@@ -19,16 +19,19 @@ type AuditEventType string
 const (
 	// Authentication events
 	EventLogin          AuditEventType = "login"
+	EventUserLogin      AuditEventType = "user_login"
 	EventLoginFailed    AuditEventType = "login_failed"
 	EventLogout         AuditEventType = "logout"
 	EventPasswordChange AuditEventType = "password_change"
 	EventPasswordReset  AuditEventType = "password_reset"
+	EventUserRegistered AuditEventType = "user_registered"
 
 	// 2FA events
-	Event2FAEnabled    AuditEventType = "2fa_enabled"
-	Event2FADisabled   AuditEventType = "2fa_disabled"
-	Event2FAVerified   AuditEventType = "2fa_verified"
-	Event2FABackupUsed AuditEventType = "2fa_backup_used"
+	Event2FAEnabled      AuditEventType = "2fa_enabled"
+	Event2FADisabled     AuditEventType = "2fa_disabled"
+	Event2FAVerified     AuditEventType = "2fa_verified"
+	Event2FABackupUsed   AuditEventType = "2fa_backup_used"
+	EventTwoFactorFailed AuditEventType = "two_factor_failed"
 
 	// Profile events
 	EventProfileUpdated AuditEventType = "profile_updated"
