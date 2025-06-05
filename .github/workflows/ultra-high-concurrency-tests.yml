@@ -1,0 +1,409 @@
+name: Ultra-High Concurrency Database Layer CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'internal/accounts/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'internal/accounts/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'go.mod'
+      - 'go.sum'
+  schedule:
+    # Run performance tests nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  GO_VERSION: '1.21'
+  POSTGRES_VERSION: '15'
+  REDIS_VERSION: '7'
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "The following files are not properly formatted:"
+            gofmt -s -l .
+            exit 1
+          fi
+
+      - name: Check mod tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet; then
+            echo "go.mod or go.sum is not tidy"
+            git diff
+            exit 1
+          fi
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: |
+          cd test
+          go test -v -tags=unit -race -timeout=5m -coverprofile=coverage.out ./...
+
+      - name: Generate coverage report
+        run: |
+          cd test
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./test/coverage.out
+          flags: unit
+          name: unit-tests
+
+      - name: Check coverage threshold
+        run: |
+          cd test
+          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${coverage}%"
+          if (( $(echo "$coverage < 85.0" | bc -l) )); then
+            echo "Coverage ${coverage}% is below threshold 85%"
+            exit 1
+          fi
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: accounts_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Wait for services
+        run: |
+          # Wait for PostgreSQL
+          until pg_isready -h localhost -p 5432 -U test_user; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          
+          # Wait for Redis
+          until redis-cli -h localhost -p 6379 ping; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+
+      - name: Setup database
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U test_user -d accounts_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          psql -h localhost -U test_user -d accounts_test -c "CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";"
+
+      - name: Run integration tests
+        env:
+          POSTGRES_TEST_URL: "postgres://test_user:test_password@localhost:5432/accounts_test"
+          REDIS_TEST_URL: "redis://localhost:6379/15"
+          TEST_ENVIRONMENT: "ci"
+        run: |
+          cd test
+          go test -v -tags=integration -race -timeout=10m ./...
+
+  benchmark-tests:
+    name: Benchmark Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[benchmark]')
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: accounts_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Setup database
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -U test_user -d accounts_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          psql -h localhost -U test_user -d accounts_test -c "CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";"
+
+      - name: Run benchmark tests
+        env:
+          POSTGRES_TEST_URL: "postgres://test_user:test_password@localhost:5432/accounts_test"
+          REDIS_TEST_URL: "redis://localhost:6379/15"
+          TEST_ENVIRONMENT: "ci"
+        run: |
+          cd test
+          go test -v -tags=benchmark -timeout=30m -benchmem -run=XXX -bench=. ./... | tee benchmark_results.txt
+
+      - name: Analyze benchmark results
+        run: |
+          cd test
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat benchmark_results.txt | grep "Benchmark" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate performance requirements
+        run: |
+          cd test
+          # Check if balance query benchmark meets 50k RPS requirement
+          balance_query_rps=$(cat benchmark_results.txt | grep "BenchmarkBalanceQuery" | awk '{print $3}' | head -1)
+          if [ ! -z "$balance_query_rps" ] && [ "$balance_query_rps" -lt 50000 ]; then
+            echo "Balance query performance below threshold: $balance_query_rps RPS (required: 50k+)"
+            exit 1
+          fi
+          
+          # Check if balance update benchmark meets 25k RPS requirement
+          balance_update_rps=$(cat benchmark_results.txt | grep "BenchmarkBalanceUpdate" | awk '{print $3}' | head -1)
+          if [ ! -z "$balance_update_rps" ] && [ "$balance_update_rps" -lt 25000 ]; then
+            echo "Balance update performance below threshold: $balance_update_rps RPS (required: 25k+)"
+            exit 1
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: test/benchmark_results.txt
+          retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run Gosec Security Scanner
+        uses: securecodewarrior/github-action-gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec.sarif ./...'
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: gosec.sarif
+
+  dependency-check:
+    name: Dependency Vulnerability Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  build-and-test:
+    name: Build and Integration
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build application
+        run: |
+          go build -v ./cmd/...
+
+      - name: Test build with race detector
+        run: |
+          go build -race -v ./cmd/...
+
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: accounts-test:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  migration-test:
+    name: Database Migration Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: accounts_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install migrate tool
+        run: |
+          curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz
+          sudo mv migrate /usr/local/bin/
+
+      - name: Test migrations
+        env:
+          PGPASSWORD: test_password
+        run: |
+          # Test migration up
+          migrate -path migrations/postgres -database "postgres://test_user:test_password@localhost:5432/accounts_test?sslmode=disable" up
+          
+          # Verify tables exist
+          psql -h localhost -U test_user -d accounts_test -c "\dt"
+          
+          # Test migration down
+          migrate -path migrations/postgres -database "postgres://test_user:test_password@localhost:5432/accounts_test?sslmode=disable" down -all
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests, security-scan, dependency-check, build-and-test]
+    if: always()
+    steps:
+      - name: Notify on failure
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "Tests failed. Check the workflow for details."
+          # Add notification logic here (Slack, email, etc.)
+
+      - name: Notify on success
+        if: needs.lint.result == 'success' && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success'
+        run: |
+          echo "All tests passed successfully!"
+          # Add notification logic here (Slack, email, etc.)

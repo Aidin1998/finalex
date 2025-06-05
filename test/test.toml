@@ -1,0 +1,138 @@
+# Ultra-High Concurrency Database Layer Test Configuration
+# Configuration file for managing test execution parameters and environment settings
+
+[test.unit]
+# Unit test configuration
+timeout = "5m"
+parallel = true
+max_procs = 0  # Use all available CPUs
+race_detection = true
+coverage = true
+coverage_threshold = 85.0
+
+[test.integration]
+# Integration test configuration
+timeout = "10m"
+parallel = false  # Integration tests may conflict
+max_procs = 4
+race_detection = true
+cleanup_timeout = "2m"
+
+# Database configuration for integration tests
+[test.integration.database]
+host = "localhost"
+port = 5432
+database = "accounts_test"
+username = "test_user"
+password = "test_password"
+max_connections = 100
+min_connections = 10
+max_idle_time = "30m"
+max_lifetime = "1h"
+
+# Redis configuration for integration tests
+[test.integration.redis]
+addr = "localhost:6379"
+password = ""
+db = 15  # Use separate DB for tests
+pool_size = 50
+min_idle_conns = 10
+dial_timeout = "5s"
+read_timeout = "3s"
+write_timeout = "3s"
+
+[test.benchmark]
+# Benchmark test configuration
+timeout = "30m"
+duration = "60s"
+warmup_duration = "10s"
+cooldown_duration = "5s"
+cpu_profile = true
+memory_profile = true
+block_profile = true
+trace = true
+
+# Load testing parameters
+[test.benchmark.load]
+concurrent_users = 1000
+requests_per_second = 100000
+test_duration = "2m"
+ramp_up_duration = "30s"
+think_time = "1ms"
+
+# Performance thresholds
+[test.benchmark.thresholds]
+# Maximum acceptable response times (in milliseconds)
+balance_query_p95 = 5.0
+balance_update_p95 = 10.0
+reservation_create_p95 = 15.0
+transaction_process_p95 = 20.0
+
+# Minimum acceptable throughput (requests per second)
+min_read_throughput = 50000
+min_write_throughput = 25000
+min_mixed_throughput = 35000
+
+# Maximum acceptable error rates (percentage)
+max_error_rate = 0.1
+max_timeout_rate = 0.05
+max_lock_contention_rate = 5.0
+
+[test.environment]
+# Environment setup and teardown
+setup_timeout = "5m"
+teardown_timeout = "3m"
+cleanup_on_failure = true
+preserve_data_on_failure = false
+
+# Resource limits
+[test.environment.limits]
+max_memory_mb = 8192
+max_cpu_cores = 8
+max_open_files = 10000
+max_network_connections = 5000
+
+[test.reporting]
+# Test reporting configuration
+output_format = "json"
+detailed_timing = true
+memory_usage = true
+goroutine_leak_detection = true
+resource_usage_tracking = true
+
+# Test result storage
+[test.reporting.storage]
+results_directory = "./test-results"
+keep_results_days = 30
+compress_old_results = true
+
+[test.ci]
+# Continuous Integration specific settings
+fail_fast = true
+retry_flaky_tests = 3
+max_retry_delay = "30s"
+generate_junit_xml = true
+upload_coverage = true
+notify_on_failure = true
+
+# Test selection for CI
+[test.ci.selection]
+run_unit_tests = true
+run_integration_tests = true
+run_benchmark_tests = false  # Skip benchmarks in CI by default
+run_stress_tests = false
+
+[test.docker]
+# Docker configuration for containerized testing
+use_docker = false
+postgres_image = "postgres:15-alpine"
+redis_image = "redis:7-alpine"
+network_name = "accounts_test_network"
+cleanup_containers = true
+
+[test.mock]
+# Mock configuration for testing
+use_real_dependencies = false  # Use mocks by default in unit tests
+mock_external_services = true
+mock_network_delays = false
+mock_failure_scenarios = true
