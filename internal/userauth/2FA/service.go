@@ -50,7 +50,7 @@ func NewService(logger *zap.Logger, db *gorm.DB, issuer string) *Service {
 func (s *Service) EnableTOTP(ctx context.Context, userID uuid.UUID, userEmail string) (*models.TwoFactorAuth, []byte, error) {
 	// Check if user already has TOTP enabled
 	var existing models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND method = ? AND is_active = ?", userID, TwoFactorTypeTOTP, true).First(&existing).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, true).First(&existing).Error
 	if err == nil {
 		return nil, nil, fmt.Errorf("TOTP already enabled for user")
 	}
@@ -95,10 +95,9 @@ func (s *Service) EnableTOTP(ctx context.Context, userID uuid.UUID, userEmail st
 	twoFA := &models.TwoFactorAuth{
 		ID:          uuid.New(),
 		UserID:      userID,
-		Method:      string(TwoFactorTypeTOTP),
-		Secret:      key.Secret(),
+		TOTPSecret:  key.Secret(),
 		BackupCodes: strings.Join(hashedBackupCodes, ","),
-		IsActive:    false, // Will be activated after verification
+		IsEnabled:   false, // Will be activated after verification
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -111,21 +110,19 @@ func (s *Service) EnableTOTP(ctx context.Context, userID uuid.UUID, userEmail st
 	s.logger.Info("TOTP setup initiated", zap.String("user_id", userID.String()))
 
 	// Return the plain backup codes to show to user (only time they'll see them)
-	twoFA.BackupCodesPlain = backupCodes
-
 	return twoFA, buf.Bytes(), nil
 }
 
 // VerifyTOTPSetup verifies the TOTP setup with a code from the user
 func (s *Service) VerifyTOTPSetup(ctx context.Context, userID uuid.UUID, code string) error {
 	var twoFA models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND method = ? AND is_active = ?", userID, TwoFactorTypeTOTP, false).First(&twoFA).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, false).First(&twoFA).Error
 	if err != nil {
 		return fmt.Errorf("TOTP setup not found or already activated")
 	}
 
 	// Verify the code
-	valid := totp.Validate(code, twoFA.Secret)
+	valid := totp.Validate(code, twoFA.TOTPSecret)
 	if !valid {
 		s.logger.Warn("Invalid TOTP code during setup", zap.String("user_id", userID.String()))
 		return fmt.Errorf("invalid TOTP code")
@@ -133,7 +130,7 @@ func (s *Service) VerifyTOTPSetup(ctx context.Context, userID uuid.UUID, code st
 
 	// Activate 2FA
 	if err := s.db.WithContext(ctx).Model(&twoFA).Updates(map[string]interface{}{
-		"is_active":  true,
+		"is_enabled": true,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
 		s.logger.Error("Failed to activate 2FA", zap.Error(err))
@@ -147,7 +144,7 @@ func (s *Service) VerifyTOTPSetup(ctx context.Context, userID uuid.UUID, code st
 // VerifyTOTP verifies a TOTP code for authentication
 func (s *Service) VerifyTOTP(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	var twoFA models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND method = ? AND is_active = ?", userID, TwoFactorTypeTOTP, true).First(&twoFA).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, true).First(&twoFA).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return false, fmt.Errorf("2FA not enabled for user")
@@ -161,7 +158,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID uuid.UUID, code string)
 	}
 
 	// Verify TOTP code
-	valid := totp.Validate(code, twoFA.Secret)
+	valid := totp.Validate(code, twoFA.TOTPSecret)
 	if valid {
 		s.logger.Info("TOTP verification successful", zap.String("user_id", userID.String()))
 	} else {
@@ -216,7 +213,7 @@ func (s *Service) verifyBackupCode(ctx context.Context, twoFA *models.TwoFactorA
 // GenerateNewBackupCodes generates new backup codes for a user
 func (s *Service) GenerateNewBackupCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	var twoFA models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND method = ? AND is_active = ?", userID, TwoFactorTypeTOTP, true).First(&twoFA).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, true).First(&twoFA).Error
 	if err != nil {
 		return nil, fmt.Errorf("2FA not enabled for user")
 	}
@@ -250,9 +247,9 @@ func (s *Service) GenerateNewBackupCodes(ctx context.Context, userID uuid.UUID) 
 // DisableTwoFA disables 2FA for a user
 func (s *Service) DisableTwoFA(ctx context.Context, userID uuid.UUID) error {
 	result := s.db.WithContext(ctx).Model(&models.TwoFactorAuth{}).
-		Where("user_id = ? AND is_active = ?", userID, true).
+		Where("user_id = ? AND is_enabled = ?", userID, true).
 		Updates(map[string]interface{}{
-			"is_active":  false,
+			"is_enabled": false,
 			"updated_at": time.Now(),
 		})
 
@@ -273,7 +270,7 @@ func (s *Service) DisableTwoFA(ctx context.Context, userID uuid.UUID) error {
 func (s *Service) IsTwoFactorEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
 	var count int64
 	err := s.db.WithContext(ctx).Model(&models.TwoFactorAuth{}).
-		Where("user_id = ? AND is_active = ?", userID, true).
+		Where("user_id = ? AND is_enabled = ?", userID, true).
 		Count(&count).Error
 
 	if err != nil {
@@ -286,14 +283,14 @@ func (s *Service) IsTwoFactorEnabled(ctx context.Context, userID uuid.UUID) (boo
 // GetTwoFactorMethods returns all active 2FA methods for a user
 func (s *Service) GetTwoFactorMethods(ctx context.Context, userID uuid.UUID) ([]models.TwoFactorAuth, error) {
 	var methods []models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND is_active = ?", userID, true).Find(&methods).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, true).Find(&methods).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get 2FA methods: %w", err)
 	}
 
 	// Don't return secrets in the response
 	for i := range methods {
-		methods[i].Secret = ""
+		methods[i].TOTPSecret = ""
 		methods[i].BackupCodes = ""
 	}
 
@@ -352,7 +349,7 @@ func (s *Service) generateBackupCodes() ([]string, error) {
 // GetBackupCodeCount returns the number of remaining backup codes for a user
 func (s *Service) GetBackupCodeCount(ctx context.Context, userID uuid.UUID) (int, error) {
 	var twoFA models.TwoFactorAuth
-	err := s.db.WithContext(ctx).Where("user_id = ? AND method = ? AND is_active = ?", userID, TwoFactorTypeTOTP, true).First(&twoFA).Error
+	err := s.db.WithContext(ctx).Where("user_id = ? AND is_enabled = ?", userID, true).First(&twoFA).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return 0, nil
@@ -367,3 +364,5 @@ func (s *Service) GetBackupCodeCount(ctx context.Context, userID uuid.UUID) (int
 	codes := strings.Split(twoFA.BackupCodes, ",")
 	return len(codes), nil
 }
+
+// LEGACY/DEPRECATED: This file is not needed for the enterprise model and can be safely deleted.

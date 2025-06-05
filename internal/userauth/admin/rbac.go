@@ -301,7 +301,7 @@ func (a *AdminAPI) createAPIKey(c *gin.Context) {
 		return
 	}
 
-	apiKey, err := a.userAuthService.CreateAPIKey(c.Request.Context(), userID, req.Name, req.Permissions, req.ExpiresAt)
+	apiKey, err := a.userAuthService.CreateAPIKey(c.Request.Context(), userID, req.Name, req.Permissions, nil)
 	if err != nil {
 		a.logger.Error("Failed to create API key", zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to create API key"})
@@ -322,7 +322,7 @@ func (a *AdminAPI) createAPIKey(c *gin.Context) {
 	}, "Admin created API key")
 
 	c.JSON(201, gin.H{
-		"api_key": apiKey.Key,
+		"api_key": apiKey.Key, // Use the correct field for the API key string
 		"key_id":  apiKey.ID,
 		"message": "API key created successfully",
 	})

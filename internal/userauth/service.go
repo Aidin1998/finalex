@@ -15,10 +15,7 @@ import (
 
 	"github.com/Aidin1998/pincex_unified/internal/userauth/identities"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/kyc"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/notification"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/password"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/performance"
-	"github.com/Aidin1998/pincex_unified/internal/userauth/ratelimit"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -26,13 +23,21 @@ import (
 	redisv8 "github.com/go-redis/redis/v8"
 )
 
-// ServiceConfig holds configuration for the UserAuth service
-
-// AdminConfig holds admin API configuration
-type AdminConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
+// Service implements the full UserAuthService interface and all enterprise features.
+type Service struct {
+	config            *ServiceConfig
+	logger            *zap.Logger
+	authService       auth.AuthService
+	identityService   identities.Service
+	kycService        kyc.Service
+	auditService      *audit.Service
+	passwordService   *password.Service
+	complianceService *compliance.ComplianceService
+	encryptionService *encryption.PIIEncryptionService
+	twoFAService      *twofa.Service
+	clusteredCache    *cache.ClusteredCache
+	tieredRateLimiter *auth.TieredRateLimiter
+	redisCluster      *redisv8.ClusterClient
 }
 
 // Core service accessors
@@ -55,11 +60,6 @@ func (s *Service) KYCService() kyc.Service {
 // AuditService returns the audit service
 func (s *Service) AuditService() *audit.Service {
 	return s.auditService
-}
-
-// NotificationService returns the notification service
-func (s *Service) NotificationService() *notification.Service {
-	return s.notificationService
 }
 
 // PasswordService returns the password service
@@ -89,16 +89,6 @@ func (s *Service) ClusteredCache() *cache.ClusteredCache {
 	return s.clusteredCache
 }
 
-// ClusteredRateLimiter returns the clustered rate limiter
-func (s *Service) ClusteredRateLimiter() *ratelimit.ClusteredRateLimiter {
-	return s.clusteredRateLimiter
-}
-
-// PerformanceOptimizer returns the performance optimizer
-func (s *Service) PerformanceOptimizer() *performance.PerformanceOptimizer {
-	return s.performanceOptimizer
-}
-
 // AdminAPI returns the admin API
 
 // TieredRateLimiter returns the tiered rate limiter
@@ -120,13 +110,6 @@ func (s *Service) GetEnterpriseFeatures(ctx context.Context) map[string]interfac
 			"enabled": s.clusteredCache != nil,
 			"stats":   nil,
 		},
-		"clustered_rate_limiter": map[string]interface{}{
-			"enabled": s.clusteredRateLimiter != nil,
-		},
-		"performance_optimizer": map[string]interface{}{
-			"enabled": s.performanceOptimizer != nil,
-		},
-
 		"redis_cluster": map[string]interface{}{
 			"enabled": s.redisCluster != nil,
 		},
@@ -168,24 +151,6 @@ func (s *Service) GetClusterStatus(ctx context.Context) (map[string]interface{},
 	}, nil
 }
 
-// GetPerformanceMetrics returns current performance metrics
-func (s *Service) GetPerformanceMetrics(ctx context.Context) map[string]interface{} {
-	metrics := map[string]interface{}{
-		"performance_optimizer_enabled": s.performanceOptimizer != nil,
-	}
-
-	if s.performanceOptimizer != nil {
-		// Add performance metrics from optimizer
-		metrics["optimization_stats"] = map[string]interface{}{
-			"circuit_breaker_stats": "available", // Placeholder for actual stats
-			"connection_pool_stats": "available",
-			"batch_processor_stats": "available",
-		}
-	}
-
-	return metrics
-}
-
 // Rate limiting methods
 
 // CheckRateLimit performs comprehensive rate limiting check
@@ -212,7 +177,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("Starting unified user authentication service with enterprise features")
 
 	// Initialize performance optimizations if available
-	if s.performanceOptimizer != nil {
+	if s.tieredRateLimiter != nil {
 		s.logger.Info("Performance optimizer initialized")
 	}
 
@@ -225,7 +190,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping unified user authentication service")
 
 	// Cleanup performance optimizer if available
-	if s.performanceOptimizer != nil {
+	if s.tieredRateLimiter != nil {
 		s.logger.Info("Performance optimizer stopped")
 	}
 

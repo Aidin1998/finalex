@@ -1,4 +1,4 @@
-package shared
+package userauth
 
 // EnterpriseRegistrationRequest is a shared type for registration requests
 // TODO: Fill in the actual fields as needed by admin/api.go and userauth

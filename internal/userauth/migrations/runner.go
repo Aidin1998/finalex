@@ -37,10 +37,10 @@ type MigrationRunner struct {
 // NewMigrationRunner creates a new migration runner
 func NewMigrationRunner(db *gorm.DB, logger *zap.Logger) *MigrationRunner {
 	return &MigrationRunner{
-		db:     db,
-		logger: logger,
+		db:         db,
+		logger:     logger,
 		migrations: []Migration{
-			&Migration001AddHashMetadata{},
+			// Removed: &Migration001AddHashMetadata{},
 		},
 	}
 }

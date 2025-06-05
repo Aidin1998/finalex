@@ -445,3 +445,5 @@ func (s *Service) AssignRole(ctx context.Context, userID uuid.UUID, role string)
 func (s *Service) RevokeRole(ctx context.Context, userID uuid.UUID, role string) error {
 	return s.authService.RevokeRole(ctx, userID, role)
 }
+
+// NOTE: This file is deprecated and not needed for the enterprise model. It is safe to delete.

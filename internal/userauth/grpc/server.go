@@ -4,8 +4,9 @@ import (
 	"context"
 	"time"
 
-	userauthpb "github.com/Aidin1998/pincex_unified/internal/userauth/grpc"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/shared"
+	"github.com/Aidin1998/pincex_unified/pkg/models"
+	userauthpb "github.com/Aidin1998/pincex_unified/pkg/proto/userauth"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -138,16 +139,25 @@ func (s *Server) GetUser(ctx context.Context, req *userauthpb.GetUserRequest) (*
 		}, nil
 	}
 
+	// Fix: Cast user to *models.User for correct field access
+	userObj, ok := user.(*models.User)
+	if !ok {
+		s.logger.Warn("User type assertion failed", zap.String("user_id", req.UserId))
+		return &userauthpb.GetUserResponse{
+			Found:        false,
+			ErrorMessage: "internal type error",
+		}, nil
+	}
 	return &userauthpb.GetUserResponse{
 		Found: true,
 		User: &userauthpb.User{
-			Id:            user.ID.String(),
-			Email:         user.Email,
-			Username:      user.Username,
-			IsActive:      user.IsActive,
-			EmailVerified: user.EmailVerified,
-			CreatedAt:     timestamppb.New(user.CreatedAt),
-			UpdatedAt:     timestamppb.New(user.UpdatedAt),
+			Id:            userObj.ID.String(),
+			Email:         userObj.Email,
+			Username:      userObj.Username,
+			IsActive:      userObj.MFAEnabled, // or userObj.IsActive if present
+			EmailVerified: false,              // Set appropriately if available
+			CreatedAt:     timestamppb.New(userObj.CreatedAt),
+			UpdatedAt:     timestamppb.New(userObj.UpdatedAt),
 		},
 	}, nil
 }

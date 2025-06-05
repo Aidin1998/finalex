@@ -171,16 +171,14 @@ func (ers *EnterpriseRegistrationService) RegisterUser(ctx context.Context, req 
 	}
 
 	// 8. Initialize 2FA (with 7-day grace period)
-	twoFA, err := ers.initialize2FA(ctx, tx, user.ID)
-	if err != nil {
+	if _, err := ers.initialize2FA(ctx, tx, user.ID); err != nil {
 		tx.Rollback()
 		ers.auditService.LogRegistrationFailure(auditCtx, "2fa_initialization", err.Error())
 		return nil, fmt.Errorf("2FA initialization failed: %w", err)
 	}
 
 	// 9. Create Device Fingerprint Record
-	deviceFP, err := ers.createDeviceFingerprint(ctx, tx, user.ID, req)
-	if err != nil {
+	if _, err := ers.createDeviceFingerprint(ctx, tx, user.ID, req); err != nil {
 		tx.Rollback()
 		ers.auditService.LogRegistrationFailure(auditCtx, "device_fingerprint", err.Error())
 		return nil, fmt.Errorf("device fingerprint creation failed: %w", err)

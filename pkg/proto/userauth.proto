@@ -1,0 +1,170 @@
+// moved from internal/userauth/grpc/userauth.proto
+syntax = "proto3";
+
+package userauth;
+
+option go_package = "github.com/Aidin1998/pincex_unified/pkg/proto/userauth";
+
+import "google/protobuf/timestamp.proto";
+
+// UserAuth service for internal service communication
+service UserAuthService {
+  // Authentication methods
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc CreateAPIKey(CreateAPIKeyRequest) returns (CreateAPIKeyResponse);
+  rpc ValidateAPIKey(ValidateAPIKeyRequest) returns (ValidateAPIKeyResponse);
+  
+  // User management
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc GetUserPermissions(GetUserPermissionsRequest) returns (GetUserPermissionsResponse);
+  rpc CheckUserRole(CheckUserRoleRequest) returns (CheckUserRoleResponse);
+  
+  // Rate limiting
+  rpc CheckRateLimit(CheckRateLimitRequest) returns (CheckRateLimitResponse);
+  rpc GetRateLimitStatus(GetRateLimitStatusRequest) returns (GetRateLimitStatusResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Token validation
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string email = 3;
+  repeated string roles = 4;
+  repeated string permissions = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  string error_message = 7;
+}
+
+// Token refresh
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string error_message = 5;
+}
+
+// API Key creation
+message CreateAPIKeyRequest {
+  string user_id = 1;
+  string name = 2;
+  repeated string permissions = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message CreateAPIKeyResponse {
+  bool success = 1;
+  string api_key = 2;
+  string key_id = 3;
+  string error_message = 4;
+}
+
+// API Key validation
+message ValidateAPIKeyRequest {
+  string api_key = 1;
+}
+
+message ValidateAPIKeyResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string key_id = 3;
+  repeated string permissions = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  string error_message = 6;
+}
+
+// User lookup
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  bool found = 1;
+  User user = 2;
+  string error_message = 3;
+}
+
+message User {
+  string id = 1;
+  string email = 2;
+  string username = 3;
+  bool is_active = 4;
+  bool email_verified = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// User permissions
+message GetUserPermissionsRequest {
+  string user_id = 1;
+}
+
+message GetUserPermissionsResponse {
+  bool success = 1;
+  repeated string permissions = 2;
+  repeated string roles = 3;
+  string error_message = 4;
+}
+
+// Role checking
+message CheckUserRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
+message CheckUserRoleResponse {
+  bool has_role = 1;
+  string error_message = 2;
+}
+
+// Rate limiting
+message CheckRateLimitRequest {
+  string user_id = 1;
+  string endpoint = 2;
+  string client_ip = 3;
+}
+
+message CheckRateLimitResponse {
+  bool allowed = 1;
+  int32 remaining = 2;
+  int32 reset_time = 3;
+  string tier = 4;
+  string error_message = 5;
+}
+
+message GetRateLimitStatusRequest {
+  string user_id = 1;
+}
+
+message GetRateLimitStatusResponse {
+  bool success = 1;
+  map<string, RateLimitInfo> limits = 2;
+  string error_message = 3;
+}
+
+message RateLimitInfo {
+  int32 remaining = 1;
+  int32 reset_time = 2;
+  string tier = 3;
+}
+
+// Health check
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
