@@ -26,9 +26,9 @@ import (
 
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"github.com/tidwall/btree"
 	"go.uber.org/zap"
 )
 
@@ -118,7 +118,9 @@ func (ob *OrderBook) GetSnapshotLowLatency(depth int) ([][]string, [][]string) {
 	}
 	bids := make([][]string, 0, depth)
 	asks := make([][]string, 0, depth)
-	ob.bids.Reverse(func(price string, level *PriceLevel) bool {
+	// Bids: descending order (highest price first)
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.Orders() {
 			bids = append(bids, []string{order.Price.String(), order.Quantity.Sub(order.FilledQuantity).String()})
@@ -130,7 +132,9 @@ func (ob *OrderBook) GetSnapshotLowLatency(depth int) ([][]string, [][]string) {
 		level.mu.RUnlock()
 		return len(bids) < depth
 	})
-	ob.asks.Scan(func(price string, level *PriceLevel) bool {
+	// Asks: ascending order (lowest price first)
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.Orders() {
 			asks = append(asks, []string{order.Price.String(), order.Quantity.Sub(order.FilledQuantity).String()})
@@ -159,25 +163,22 @@ func (ob *OrderBook) GetSnapshot(depth int) ([][]string, [][]string) {
 	bids := make([][]string, 0, depth)
 	asks := make([][]string, 0, depth)
 	// Bids: descending order (highest price first)
-	ob.bids.Reverse(func(price string, level *PriceLevel) bool {
-		// Acquire read lock with contention tracking for this price level
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.Orders() {
-			// Only include unfilled quantity in the snapshot
 			bids = append(bids, []string{order.Price.String(), order.Quantity.Sub(order.FilledQuantity).String()})
 			if len(bids) >= depth {
-				// Release lock and stop iteration if depth reached
 				level.mu.RUnlock()
 				return false
 			}
 		}
-		// Release lock after reading all orders at this price level
 		level.mu.RUnlock()
-		// Continue if we haven't reached the required depth
 		return len(bids) < depth
 	})
 	// Asks: ascending order (lowest price first)
-	ob.asks.Scan(func(price string, level *PriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.Orders() {
 			asks = append(asks, []string{order.Price.String(), order.Quantity.Sub(order.FilledQuantity).String()})
@@ -368,11 +369,38 @@ type topLevel struct {
 	Volume string
 }
 
+// --- BTree wrapper for string keys ---
+type stringPriceLevelItem struct {
+	key   string
+	value *PriceLevel
+}
+
+func (i stringPriceLevelItem) Less(than btree.Item) bool {
+	return i.key < than.(stringPriceLevelItem).key
+}
+
+// Helper functions for BTree operations
+func getPriceLevel(tree *btree.BTree, key string) (*PriceLevel, bool) {
+	item := tree.Get(stringPriceLevelItem{key: key})
+	if item == nil {
+		return nil, false
+	}
+	return item.(stringPriceLevelItem).value, true
+}
+
+func setPriceLevel(tree *btree.BTree, key string, value *PriceLevel) {
+	tree.ReplaceOrInsert(stringPriceLevelItem{key: key, value: value})
+}
+
+func deletePriceLevel(tree *btree.BTree, key string) {
+	tree.Delete(stringPriceLevelItem{key: key})
+}
+
 // --- Refactored OrderBook with heap and linked list ---
 type OrderBook struct {
 	Pair       string
-	bids       *btree.Map[string, *PriceLevel]
-	asks       *btree.Map[string, *PriceLevel]
+	bids       *btree.BTree
+	asks       *btree.BTree
 	bidHeap    *PriceHeap
 	askHeap    *PriceHeap
 	ordersByID map[uuid.UUID]*model.Order
@@ -551,13 +579,15 @@ func (ob *OrderBook) GetSystemConfig(key string) interface{} {
 // Returns a map of price level labels to contention counts. Used for performance monitoring and debugging.
 func (ob *OrderBook) CollectAndResetLockContention() map[string]int64 {
 	metrics := make(map[string]int64)
-	ob.bids.Scan(func(price string, level *PriceLevel) bool {
-		metrics["bid:"+price] = level.lockContention
+	ob.bids.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
+		metrics["bid:"+item.(stringPriceLevelItem).key] = level.lockContention
 		level.lockContention = 0
 		return true
 	})
-	ob.asks.Scan(func(price string, level *PriceLevel) bool {
-		metrics["ask:"+price] = level.lockContention
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
+		metrics["ask:"+item.(stringPriceLevelItem).key] = level.lockContention
 		level.lockContention = 0
 		return true
 	})
@@ -674,7 +704,7 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 	bm.Mu.Unlock()
 
 	side := order.Side
-	var book, oppBook *btree.Map[string, *PriceLevel]
+	var book, oppBook *btree.BTree
 	var bookMu, oppBookMu *sync.RWMutex
 	var isBuy bool
 	if side == model.OrderSideBuy {
@@ -699,14 +729,15 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 	var restingOrders []*model.Order
 	// Match against opposite book
 	oppBookMu.RLock()
-	oppBook.Scan(func(price string, level *PriceLevel) bool {
+	oppBook.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.Lock()
 		orders := level.Orders()
 		for _, maker := range orders {
 			if maker == nil || maker.FilledQuantity.GreaterThanOrEqual(maker.Quantity) {
 				continue
 			}
-			priceDec, err := decimal.NewFromString(price)
+			priceDec, err := decimal.NewFromString(item.(stringPriceLevelItem).key)
 			if err != nil {
 				level.mu.Unlock()
 				return false
@@ -814,17 +845,19 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 			}
 		}
 		if level.Len() == 0 {
-			toRemove = append(toRemove, price)
+			toRemove = append(toRemove, item.(stringPriceLevelItem).key)
 		}
 		level.mu.Unlock()
 		return qtyLeft.GreaterThan(decimal.Zero)
 	})
-	oppBookMu.RUnlock() // Remove empty price levels from opposite book
+	oppBookMu.RUnlock()
+	// Remove empty price levels from opposite book
 	if len(toRemove) > 0 {
 		oppBookMu.Lock()
 		for _, price := range toRemove {
-			if level, exists := oppBook.Get(price); exists {
-				oppBook.Delete(price)
+			level, exists := getPriceLevel(oppBook, price)
+			if exists {
+				deletePriceLevel(oppBook, price)
 				PutPriceLevelToPool(level)
 			}
 		}
@@ -834,14 +867,15 @@ func (ob *OrderBook) AddOrder(order *model.Order) (*AddOrderResult, error) {
 	if qtyLeft.GreaterThan(decimal.Zero) && order.TimeInForce != model.TimeInForceIOC && order.TimeInForce != model.TimeInForceFOK {
 		priceStr := order.Price.String()
 		var level *PriceLevel
+		var ok bool
 		bookMu.RLock()
-		level, ok := book.Get(priceStr)
+		level, ok = getPriceLevel(book, priceStr)
 		bookMu.RUnlock()
 		if !ok {
 			level = GetPriceLevelFromPool()
 			level.Price = priceStr
 			bookMu.Lock()
-			book.Set(priceStr, level)
+			setPriceLevel(book, priceStr, level)
 			bookMu.Unlock()
 		}
 		level.AddOrder(order)
@@ -898,7 +932,7 @@ func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 	if !ok {
 		return fmt.Errorf("order not found: %v", orderID)
 	}
-	var book *btree.Map[string, *PriceLevel]
+	var book *btree.BTree
 	var bookMu *sync.RWMutex
 	if order.Side == model.OrderSideBuy {
 		book = ob.bids
@@ -909,14 +943,14 @@ func (ob *OrderBook) CancelOrder(orderID uuid.UUID) error {
 	}
 	priceStr := order.Price.String()
 	bookMu.RLock()
-	level, ok := book.Get(priceStr)
+	level, ok := getPriceLevel(book, priceStr)
 	bookMu.RUnlock()
 	if ok {
 		level.mu.Lock()
 		level.RemoveOrder(orderID)
 		if level.Len() == 0 {
 			bookMu.Lock()
-			book.Delete(priceStr)
+			deletePriceLevel(book, priceStr)
 			bookMu.Unlock()
 			PutPriceLevelToPool(level)
 		}
@@ -982,8 +1016,8 @@ func (ob *OrderBook) RestoreFromSnapshot(bids, asks [][]string) error {
 	defer ob.asksMu.Unlock()
 	defer ob.ordersMu.Unlock()
 	// Clear current state
-	ob.bids = btree.NewMap[string, *PriceLevel](32)
-	ob.asks = btree.NewMap[string, *PriceLevel](32)
+	ob.bids = btree.New(32)
+	ob.asks = btree.New(32)
 	ob.ordersByID = make(map[uuid.UUID]*model.Order)
 	// Helper to parse and add orders
 	parseAndAdd := func(side string, levels [][]string) error {
@@ -1064,7 +1098,7 @@ func (ob *OrderBook) CanFullyFill(order *model.Order) bool {
 	if qtyLeft.LessThanOrEqual(decimal.Zero) {
 		return true
 	}
-	var book *btree.Map[string, *PriceLevel]
+	var book *btree.BTree
 	var bookMu *sync.RWMutex
 	var isBuy bool
 	if order.Side == model.OrderSideBuy {
@@ -1078,10 +1112,8 @@ func (ob *OrderBook) CanFullyFill(order *model.Order) bool {
 	}
 	filled := decimal.Zero
 	bookMu.RLock()
-	book.Scan(func(price string, level *PriceLevel) bool {
-		level.mu.RLock()
-		defer level.mu.RUnlock()
-		priceDec, err := decimal.NewFromString(price)
+	book.Ascend(func(item btree.Item) bool {
+		priceDec, err := decimal.NewFromString(item.(stringPriceLevelItem).key)
 		if err != nil {
 			return false
 		}
@@ -1090,7 +1122,7 @@ func (ob *OrderBook) CanFullyFill(order *model.Order) bool {
 				return false
 			}
 		}
-		orders := level.Orders()
+		orders := item.(stringPriceLevelItem).value.Orders()
 		for _, maker := range orders {
 			if maker == nil || maker.FilledQuantity.GreaterThanOrEqual(maker.Quantity) {
 				continue
@@ -1155,11 +1187,13 @@ func (ob *OrderBook) GetAdaptiveSnapshot(depth int) ([][]string, [][]string) {
 // getRecentContention returns the sum of lockContention for all price levels
 func (ob *OrderBook) getRecentContention() int64 {
 	total := int64(0)
-	ob.bids.Scan(func(_ string, level *PriceLevel) bool {
+	ob.bids.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		total += level.lockContention
 		return true
 	})
-	ob.asks.Scan(func(_ string, level *PriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		total += level.lockContention
 		return true
 	})
@@ -1213,27 +1247,29 @@ func (ob *OrderBook) UpdateTopLevelsCache(depth int) {
 	bids := snapshotSlicePool.Get().([]topLevel)[:0]
 	asks := snapshotSlicePool.Get().([]topLevel)[:0]
 	// Bids: descending
-	ob.bids.Reverse(func(price string, level *PriceLevel) bool {
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		qty := decimal.Zero
 		for _, order := range level.Orders() {
 			qty = qty.Add(order.Quantity.Sub(order.FilledQuantity))
 		}
 		if qty.GreaterThan(decimal.Zero) {
-			bids = append(bids, topLevel{Price: price, Volume: qty.String()})
+			bids = append(bids, topLevel{Price: item.(stringPriceLevelItem).key, Volume: qty.String()})
 		}
 		level.mu.RUnlock()
 		return len(bids) < depth
 	})
 	// Asks: ascending
-	ob.asks.Scan(func(price string, level *PriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringPriceLevelItem).value
 		level.mu.RLock()
 		qty := decimal.Zero
 		for _, order := range level.Orders() {
 			qty = qty.Add(order.Quantity.Sub(order.FilledQuantity))
 		}
 		if qty.GreaterThan(decimal.Zero) {
-			asks = append(asks, topLevel{Price: price, Volume: qty.String()})
+			asks = append(asks, topLevel{Price: item.(stringPriceLevelItem).key, Volume: qty.String()})
 		}
 		level.mu.RUnlock()
 		return len(asks) < depth
@@ -1279,8 +1315,8 @@ const defaultTopLevelsDepth = 20
 func NewOrderBook(pair string) *OrderBook {
 	ob := &OrderBook{
 		Pair:          pair,
-		bids:          btree.NewMap[string, *PriceLevel](32),
-		asks:          btree.NewMap[string, *PriceLevel](32),
+		bids:          btree.New(32),
+		asks:          btree.New(32),
 		bidHeap:       &PriceHeap{isBid: true},
 		askHeap:       &PriceHeap{isBid: false},
 		ordersByID:    make(map[uuid.UUID]*model.Order),
@@ -1331,21 +1367,21 @@ func (ob *OrderBook) cleanupOrders() {
 		var exists bool
 		if side == model.OrderSideBuy {
 			ob.bidsMu.Lock()
-			level, exists = ob.bids.Get(priceStr)
+			level, exists = getPriceLevel(ob.bids, priceStr)
 			if exists {
 				level.RemoveOrder(order.ID)
 				if level.Len() == 0 {
-					ob.bids.Delete(priceStr)
+					deletePriceLevel(ob.bids, priceStr)
 				}
 			}
 			ob.bidsMu.Unlock()
 		} else {
 			ob.asksMu.Lock()
-			level, exists = ob.asks.Get(priceStr)
+			level, exists = getPriceLevel(ob.asks, priceStr)
 			if exists {
 				level.RemoveOrder(order.ID)
 				if level.Len() == 0 {
-					ob.asks.Delete(priceStr)
+					deletePriceLevel(ob.asks, priceStr)
 				}
 			}
 			ob.asksMu.Unlock()

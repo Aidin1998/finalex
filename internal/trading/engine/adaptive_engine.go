@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/pincex_unified/internal/compliance"
 	"github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
-	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading/eventjournal"
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
 	"github.com/Aidin1998/pincex_unified/internal/trading/orderbook"

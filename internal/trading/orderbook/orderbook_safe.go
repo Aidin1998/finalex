@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/Aidin1998/pincex_unified/internal/trading/model"
+	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"github.com/tidwall/btree"
 )
 
 // Lock ordering hierarchy (always acquire in this order to prevent deadlocks):
@@ -30,8 +30,8 @@ import (
 // DeadlockSafeOrderBook is a reimplementation of OrderBook with deadlock prevention
 type DeadlockSafeOrderBook struct {
 	Pair       string
-	bids       *btree.Map[string, *SafePriceLevel]
-	asks       *btree.Map[string, *SafePriceLevel]
+	bids       *btree.BTree
+	asks       *btree.BTree
 	ordersByID sync.Map // Use concurrent map for ordersByID to reduce lock contention
 
 	// Lock ordering: Always acquire asksMu before bidsMu to prevent deadlocks
@@ -117,8 +117,8 @@ type SafeAddOrderResult struct {
 func NewDeadlockSafeOrderBook(pair string) *DeadlockSafeOrderBook {
 	ob := &DeadlockSafeOrderBook{
 		Pair:           pair,
-		bids:           btree.NewMap[string, *SafePriceLevel](64),
-		asks:           btree.NewMap[string, *SafePriceLevel](64),
+		bids:           btree.New(64),
+		asks:           btree.New(64),
 		cacheThreshold: 100, // Update cache every 100 operations
 		adminState: &SafeMarketAdminState{
 			userLimits: make(map[uuid.UUID]decimal.Decimal),
@@ -136,6 +136,16 @@ func NewDeadlockSafeOrderBook(pair string) *DeadlockSafeOrderBook {
 	})
 
 	return ob
+}
+
+// --- BTree wrapper for string keys ---
+type stringSafePriceLevelItem struct {
+	key   string
+	value *SafePriceLevel
+}
+
+func (i stringSafePriceLevelItem) Less(than btree.Item) bool {
+	return i.key < than.(stringSafePriceLevelItem).key
 }
 
 // IsCircuitBreakerActive checks circuit breaker status atomically
@@ -240,7 +250,7 @@ func (ob *DeadlockSafeOrderBook) AddOrder(order *model.Order) (*SafeAddOrderResu
 	atomic.StoreInt64(&ob.lastUpdate, time.Now().UnixNano())
 
 	// Determine book sides and lock ordering
-	var bookMap, oppBookMap *btree.Map[string, *SafePriceLevel]
+	var bookMap, oppBookMap *btree.BTree
 	var bookMu, oppBookMu *sync.RWMutex
 	var isBuy bool
 
@@ -298,7 +308,7 @@ func (ob *DeadlockSafeOrderBook) AddOrder(order *model.Order) (*SafeAddOrderResu
 // findMatches finds potential matches without holding locks for extended periods
 func (ob *DeadlockSafeOrderBook) findMatches(
 	order *model.Order,
-	oppBookMap *btree.Map[string, *SafePriceLevel],
+	oppBookMap *btree.BTree,
 	oppBookMu *sync.RWMutex,
 	isBuy bool,
 	qtyLeft decimal.Decimal,
@@ -309,8 +319,8 @@ func (ob *DeadlockSafeOrderBook) findMatches(
 	oppBookMu.RLock()
 	// Create a snapshot of price levels to check
 	var priceLevels []string
-	oppBookMap.Scan(func(price string, level *SafePriceLevel) bool {
-		priceLevels = append(priceLevels, price)
+	oppBookMap.Ascend(func(item btree.Item) bool {
+		priceLevels = append(priceLevels, item.(stringSafePriceLevelItem).key)
 		return true
 	})
 	oppBookMu.RUnlock()
@@ -334,10 +344,14 @@ func (ob *DeadlockSafeOrderBook) findMatches(
 
 		// Get the price level with minimal lock time
 		oppBookMu.RLock()
-		level, ok := oppBookMap.Get(priceStr)
+		item := oppBookMap.Get(stringSafePriceLevelItem{key: priceStr})
+		var level *SafePriceLevel
+		if item != nil {
+			level = item.(stringSafePriceLevelItem).value
+		}
 		oppBookMu.RUnlock()
 
-		if !ok {
+		if level == nil {
 			continue
 		}
 
@@ -434,7 +448,8 @@ func (ob *DeadlockSafeOrderBook) cleanupEmptyLevels(priceStrings []string) {
 	for _, priceStr := range priceStrings {
 		// Determine if this price exists in bids or asks
 		ob.bidsMu.RLock()
-		_, inBids := ob.bids.Get(priceStr)
+		item := ob.bids.Get(stringSafePriceLevelItem{key: priceStr})
+		inBids := item != nil
 		ob.bidsMu.RUnlock()
 
 		if inBids {
@@ -457,7 +472,7 @@ func (ob *DeadlockSafeOrderBook) cleanupEmptyLevels(priceStrings []string) {
 
 // cleanupPriceLevels removes empty price levels from a specific book
 func (ob *DeadlockSafeOrderBook) cleanupPriceLevels(
-	bookMap *btree.Map[string, *SafePriceLevel],
+	bookMap *btree.BTree,
 	bookMu *sync.RWMutex,
 	priceStrings []string,
 ) {
@@ -466,10 +481,14 @@ func (ob *DeadlockSafeOrderBook) cleanupPriceLevels(
 	// First, check which levels are actually empty
 	for _, priceStr := range priceStrings {
 		bookMu.RLock()
-		level, ok := bookMap.Get(priceStr)
+		item := bookMap.Get(stringSafePriceLevelItem{key: priceStr})
+		var level *SafePriceLevel
+		if item != nil {
+			level = item.(stringSafePriceLevelItem).value
+		}
 		bookMu.RUnlock()
 
-		if !ok {
+		if level == nil {
 			continue
 		}
 
@@ -492,8 +511,10 @@ func (ob *DeadlockSafeOrderBook) cleanupPriceLevels(
 	if len(levelsToRemove) > 0 {
 		bookMu.Lock()
 		for _, priceStr := range levelsToRemove {
-			if level, exists := bookMap.Get(priceStr); exists {
-				bookMap.Delete(priceStr)
+			item := bookMap.Get(stringSafePriceLevelItem{key: priceStr})
+			if item != nil {
+				level := item.(stringSafePriceLevelItem).value
+				bookMap.Delete(stringSafePriceLevelItem{key: priceStr})
 				PutSafePriceLevelToPool(level)
 			}
 		}
@@ -504,7 +525,7 @@ func (ob *DeadlockSafeOrderBook) cleanupPriceLevels(
 // placeRestingOrder places the remaining quantity on the appropriate book
 func (ob *DeadlockSafeOrderBook) placeRestingOrder(
 	order *model.Order,
-	bookMap *btree.Map[string, *SafePriceLevel],
+	bookMap *btree.BTree,
 	bookMu *sync.RWMutex,
 	qtyLeft decimal.Decimal,
 ) error {
@@ -512,10 +533,14 @@ func (ob *DeadlockSafeOrderBook) placeRestingOrder(
 
 	// Try to get existing level
 	bookMu.RLock()
-	level, exists := bookMap.Get(priceStr)
+	item := bookMap.Get(stringSafePriceLevelItem{key: priceStr})
+	var level *SafePriceLevel
+	if item != nil {
+		level = item.(stringSafePriceLevelItem).value
+	}
 	bookMu.RUnlock()
 
-	if !exists {
+	if level == nil {
 		// Create new level
 		level = &SafePriceLevel{
 			Price:   priceStr,
@@ -524,7 +549,7 @@ func (ob *DeadlockSafeOrderBook) placeRestingOrder(
 		}
 
 		bookMu.Lock()
-		bookMap.Set(priceStr, level)
+		bookMap.ReplaceOrInsert(stringSafePriceLevelItem{key: priceStr, value: level})
 		bookMu.Unlock()
 	}
 
@@ -574,14 +599,15 @@ func (ob *DeadlockSafeOrderBook) generateSnapshot(depth int) ([][]string, [][]st
 
 	// Generate bids snapshot
 	ob.bidsMu.RLock()
-	ob.bids.Reverse(func(price string, level *SafePriceLevel) bool {
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		totalQty := decimal.Zero
 		for _, order := range level.orders {
 			totalQty = totalQty.Add(order.Quantity.Sub(order.FilledQuantity))
 		}
 		if totalQty.GreaterThan(decimal.Zero) {
-			bids = append(bids, []string{price, totalQty.String()})
+			bids = append(bids, []string{item.(stringSafePriceLevelItem).key, totalQty.String()})
 		}
 		level.mu.RUnlock()
 		level.updateLastAccess()
@@ -591,14 +617,15 @@ func (ob *DeadlockSafeOrderBook) generateSnapshot(depth int) ([][]string, [][]st
 
 	// Generate asks snapshot
 	ob.asksMu.RLock()
-	ob.asks.Scan(func(price string, level *SafePriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		totalQty := decimal.Zero
 		for _, order := range level.orders {
 			totalQty = totalQty.Add(order.Quantity.Sub(order.FilledQuantity))
 		}
 		if totalQty.GreaterThan(decimal.Zero) {
-			asks = append(asks, []string{price, totalQty.String()})
+			asks = append(asks, []string{item.(stringSafePriceLevelItem).key, totalQty.String()})
 		}
 		level.mu.RUnlock()
 		level.updateLastAccess()
@@ -652,7 +679,7 @@ func (ob *DeadlockSafeOrderBook) CancelOrder(orderID uuid.UUID) error {
 	priceStr := order.Price.String()
 
 	// Determine which book and lock to use
-	var bookMap *btree.Map[string, *SafePriceLevel]
+	var bookMap *btree.BTree
 	var bookMu *sync.RWMutex
 
 	if order.Side == model.OrderSideBuy {
@@ -665,10 +692,14 @@ func (ob *DeadlockSafeOrderBook) CancelOrder(orderID uuid.UUID) error {
 
 	// Find and remove from price level
 	bookMu.RLock()
-	level, exists := bookMap.Get(priceStr)
+	item := bookMap.Get(stringSafePriceLevelItem{key: priceStr})
+	var level *SafePriceLevel
+	if item != nil {
+		level = item.(stringSafePriceLevelItem).value
+	}
 	bookMu.RUnlock()
 
-	if !exists {
+	if level == nil {
 		// Order not in book, just remove from map
 		ob.ordersByID.Delete(orderID)
 		return nil
@@ -697,7 +728,7 @@ func (ob *DeadlockSafeOrderBook) CancelOrder(orderID uuid.UUID) error {
 		stillEmpty := level.isEmpty()
 		level.mu.RUnlock()
 		if stillEmpty {
-			bookMap.Delete(priceStr)
+			bookMap.Delete(stringSafePriceLevelItem{key: priceStr})
 			PutSafePriceLevelToPool(level)
 		}
 		bookMu.Unlock()
@@ -741,7 +772,8 @@ func (ob *DeadlockSafeOrderBook) OrdersCount() int {
 	count := 0
 
 	// Count bid orders
-	ob.bids.Scan(func(price string, level *SafePriceLevel) bool {
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		count += len(level.orders)
 		level.mu.RUnlock()
@@ -749,7 +781,8 @@ func (ob *DeadlockSafeOrderBook) OrdersCount() int {
 	})
 
 	// Count ask orders
-	ob.asks.Scan(func(price string, level *SafePriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		count += len(level.orders)
 		level.mu.RUnlock()
@@ -769,7 +802,8 @@ func (ob *DeadlockSafeOrderBook) GetOrderIDs() []uuid.UUID {
 	var orderIDs []uuid.UUID
 
 	// Collect bid order IDs
-	ob.bids.Scan(func(price string, level *SafePriceLevel) bool {
+	ob.bids.Descend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.orders {
 			orderIDs = append(orderIDs, order.ID)
@@ -779,7 +813,8 @@ func (ob *DeadlockSafeOrderBook) GetOrderIDs() []uuid.UUID {
 	})
 
 	// Collect ask order IDs
-	ob.asks.Scan(func(price string, level *SafePriceLevel) bool {
+	ob.asks.Ascend(func(item btree.Item) bool {
+		level := item.(stringSafePriceLevelItem).value
 		level.mu.RLock()
 		for _, order := range level.orders {
 			orderIDs = append(orderIDs, order.ID)
@@ -812,8 +847,8 @@ func (ob *DeadlockSafeOrderBook) CanFullyFill(order *model.Order) bool {
 
 	if order.Side == "buy" {
 		// Check available ask liquidity at or below order price
-		ob.asks.Scan(func(price string, level *SafePriceLevel) bool {
-			levelPrice, err := decimal.NewFromString(price)
+		ob.asks.Ascend(func(item btree.Item) bool {
+			levelPrice, err := decimal.NewFromString(item.(stringSafePriceLevelItem).key)
 			if err != nil {
 				return true // Skip invalid prices
 			}
@@ -822,6 +857,7 @@ func (ob *DeadlockSafeOrderBook) CanFullyFill(order *model.Order) bool {
 				return false // Stop scanning, prices too high
 			}
 
+			level := item.(stringSafePriceLevelItem).value
 			level.mu.RLock()
 			for _, askOrder := range level.orders {
 				availableQty := askOrder.Quantity.Sub(askOrder.FilledQuantity)
@@ -833,8 +869,8 @@ func (ob *DeadlockSafeOrderBook) CanFullyFill(order *model.Order) bool {
 		})
 	} else {
 		// Check available bid liquidity at or above order price
-		ob.bids.Scan(func(price string, level *SafePriceLevel) bool {
-			levelPrice, err := decimal.NewFromString(price)
+		ob.bids.Descend(func(item btree.Item) bool {
+			levelPrice, err := decimal.NewFromString(item.(stringSafePriceLevelItem).key)
 			if err != nil {
 				return true // Skip invalid prices
 			}
@@ -843,6 +879,7 @@ func (ob *DeadlockSafeOrderBook) CanFullyFill(order *model.Order) bool {
 				return false // Stop scanning, prices too low
 			}
 
+			level := item.(stringSafePriceLevelItem).value
 			level.mu.RLock()
 			for _, bidOrder := range level.orders {
 				availableQty := bidOrder.Quantity.Sub(bidOrder.FilledQuantity)

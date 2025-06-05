@@ -9,26 +9,22 @@ import (
 
 	//	"github.com/Aidin1998/pincex_unified/common/apiutil"
 	"github.com/Aidin1998/pincex_unified/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/pincex_unified/internal/audit"
-	"github.com/Aidin1998/pincex_unified/internal/fiat"
 	ws "github.com/Aidin1998/pincex_unified/internal/infrastructure/ws"
 	metricsapi "github.com/Aidin1998/pincex_unified/internal/marketmaking/analytics/metrics"
 	"github.com/Aidin1998/pincex_unified/internal/marketmaking/marketfeeds"
-	"github.com/Aidin1998/pincex_unified/internal/risk/compliance/aml"
 	"github.com/Aidin1998/pincex_unified/internal/trading"
+	"github.com/Aidin1998/pincex_unified/internal/trading/handlers"
+	"github.com/Aidin1998/pincex_unified/internal/trading/lifecycle"
+	"github.com/Aidin1998/pincex_unified/internal/trading/middleware"
 	"github.com/Aidin1998/pincex_unified/internal/userauth"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/Aidin1998/pincex_unified/pkg/validation"
-	"github.com/gin-contrib/cors"
-	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // --- Enhanced error response helpers ---
@@ -45,13 +41,16 @@ type Server struct {
 	logger         *zap.Logger
 	userAuthSvc    *userauth.Service
 	bookkeeperSvc  bookkeeper.BookkeeperService
-	fiatSvc        fiat.FiatService
 	marketfeedsSvc marketfeeds.MarketFeedService
 	tradingSvc     trading.TradingService
 	wsHub          *ws.Hub
-	riskSvc        aml.RiskService
-	auditSvc       *audit.AuditService
-	auditHandlers  *audit.Handlers
+	db             *gorm.DB
+
+	// New components
+	tradingHandler    *handlers.TradingHandler
+	marketDataHandler *handlers.MarketDataHandler
+	rateLimiter       *middleware.RateLimiter
+	lifecycleManager  *lifecycle.OrderLifecycleManager
 }
 
 // NewServer creates a new HTTP server
@@ -59,25 +58,37 @@ func NewServer(
 	logger *zap.Logger,
 	userAuthSvc *userauth.Service,
 	bookkeeperSvc bookkeeper.BookkeeperService,
-	fiatSvc fiat.FiatService,
 	marketfeedsSvc marketfeeds.MarketFeedService,
 	tradingSvc trading.TradingService,
 	wsHub *ws.Hub,
-	riskSvc aml.RiskService,
-	auditSvc *audit.AuditService,
-	auditHandlers *audit.Handlers,
+	db *gorm.DB,
 ) *Server {
+	// Initialize event bus for lifecycle manager
+	eventBus := lifecycle.NewSimpleEventBus(logger)
+
+	// Initialize order lifecycle manager
+	lifecycleManager := lifecycle.NewOrderLifecycleManager(db, logger, eventBus)
+
+	// Initialize rate limiter with default config
+	rateLimiterConfig := middleware.DefaultRateLimitConfig()
+	rateLimiter := middleware.NewRateLimiter(rateLimiterConfig, logger)
+
+	// Initialize trading handlers
+	tradingHandler := handlers.NewTradingHandler(tradingSvc, logger)
+	marketDataHandler := handlers.NewMarketDataHandler(tradingSvc, logger)
+
 	return &Server{
-		logger:         logger,
-		userAuthSvc:    userAuthSvc,
-		bookkeeperSvc:  bookkeeperSvc,
-		fiatSvc:        fiatSvc,
-		marketfeedsSvc: marketfeedsSvc,
-		tradingSvc:     tradingSvc,
-		wsHub:          wsHub,
-		riskSvc:        riskSvc,
-		auditSvc:       auditSvc,
-		auditHandlers:  auditHandlers,
+		logger:            logger,
+		userAuthSvc:       userAuthSvc,
+		bookkeeperSvc:     bookkeeperSvc,
+		marketfeedsSvc:    marketfeedsSvc,
+		tradingSvc:        tradingSvc,
+		wsHub:             wsHub,
+		db:                db,
+		tradingHandler:    tradingHandler,
+		marketDataHandler: marketDataHandler,
+		rateLimiter:       rateLimiter,
+		lifecycleManager:  lifecycleManager,
 	}
 }
 
@@ -86,11 +97,9 @@ func (s *Server) Router() *gin.Engine {
 	// Create router
 	router := gin.New()
 
-	// Add middleware
-	router.Use(ginzap.Ginzap(s.logger, "2006-01-02T15:04:05Z07:00", true))
-	router.Use(ginzap.RecoveryWithZap(s.logger, true))
-	router.Use(otelgin.Middleware("pincex"))
-	router.Use(cors.Default())
+	// Add basic middleware
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery())
 
 	// Add RFC 7807 compliant error handling middleware
 	// router.Use(apiutil.RFC7807ErrorMiddleware())
@@ -122,24 +131,15 @@ func (s *Server) Router() *gin.Engine {
 		router.Use(auth.AuditMiddleware(s.logger))
 	}
 
-	// Add enterprise audit middleware for administrative actions
-	if s.auditSvc != nil {
-		router.Use(audit.AuditMiddleware(s.auditSvc, s.logger))
-	}
-
 	// Keep existing basic validation middleware for legacy compatibility
 	router.Use(validation.ValidationMiddleware(s.logger))
 	router.Use(validation.RequestValidationMiddleware())
 
-	// Add tiered rate limiting middleware
-	router.Use(s.userAuthSvc.RateLimitMiddleware())
+	// Add our trading rate limiting middleware
+	router.Use(s.rateLimiter.RequestRateLimitMiddleware())
 
 	// Add health check
 	router.GET("/health", s.handleHealth)
-
-	// Add Swagger documentation routes
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Add WebSocket route for market data
 	router.GET("/ws/marketdata", s.handleWebSocketMarketData)
@@ -270,11 +270,6 @@ func (s *Server) Router() *gin.Engine {
 					rateLimit.DELETE("/users/:userID/:rateType", s.handleResetUserRateLimit)
 					rateLimit.DELETE("/ips/:ip/:endpoint", s.handleResetIPRateLimit)
 					rateLimit.POST("/cleanup", s.handleCleanupRateLimitData)
-				}
-
-				// Audit logging management endpoints
-				if s.auditHandlers != nil {
-					s.auditHandlers.RegisterRoutes(admin)
 				}
 			}
 		}
