@@ -13,10 +13,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
+	"gorm.io/gorm"
 )
 
 // TradingPerformanceTestSuite provides high-performance testing for trading operations
@@ -39,46 +46,97 @@ type MockBookkeeperPerformance struct {
 	mu           sync.RWMutex
 }
 
-// ReservationInfo is defined in common_test_types.go
-
-func (m *MockBookkeeperPerformance) GetBalance(userID, asset string) (decimal.Decimal, error) {
-	atomic.AddInt64(&m.totalOps, 1)
-
-	userBalances, exists := m.balances.Load(userID)
-	if !exists {
-		return decimal.NewFromInt(1000000), nil // Default high balance for performance testing
-	}
-
-	balanceMap := userBalances.(map[string]decimal.Decimal)
-	if balance, exists := balanceMap[asset]; exists {
-		return balance, nil
-	}
-
-	return decimal.NewFromInt(1000000), nil // Default high balance
-}
-
-func (m *MockBookkeeperPerformance) ReserveBalance(userID, asset string, amount decimal.Decimal) (string, error) {
-	atomic.AddInt64(&m.totalOps, 1)
-
-	reservationID := fmt.Sprintf("res_%d_%s", time.Now().UnixNano(), userID)
-	m.reservations.Store(reservationID, ReservationInfo{
-		UserID: userID,
-		Asset:  asset,
-		Amount: amount,
-	})
-
-	return reservationID, nil
-}
-
-func (m *MockBookkeeperPerformance) ReleaseReservation(reservationID string) error {
-	atomic.AddInt64(&m.totalOps, 1)
-	m.reservations.Delete(reservationID)
+// Implement bookkeeper.BookkeeperService interface
+func (m *MockBookkeeperPerformance) Start() error {
 	return nil
 }
 
-func (m *MockBookkeeperPerformance) TransferReservedBalance(reservationID, toUserID string) error {
+func (m *MockBookkeeperPerformance) Stop() error {
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) GetAccounts(ctx context.Context, userID string) ([]*models.Account, error) {
+	return []*models.Account{}, nil
+}
+
+func (m *MockBookkeeperPerformance) GetAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return &models.Account{}, nil
+}
+
+func (m *MockBookkeeperPerformance) CreateAccount(ctx context.Context, userID, currency string) (*models.Account, error) {
+	return &models.Account{}, nil
+}
+
+func (m *MockBookkeeperPerformance) GetAccountTransactions(ctx context.Context, userID, currency string, limit, offset int) ([]*models.Transaction, int64, error) {
+	return []*models.Transaction{}, 0, nil
+}
+
+func (m *MockBookkeeperPerformance) CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+	return &models.Transaction{}, nil
+}
+
+func (m *MockBookkeeperPerformance) CompleteTransaction(ctx context.Context, transactionID string) error {
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) FailTransaction(ctx context.Context, transactionID string) error {
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) LockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error) {
+	result := make(map[string]map[string]*models.Account)
+	for _, userID := range userIDs {
+		result[userID] = make(map[string]*models.Account)
+		for _, currency := range currencies {
+			result[userID][currency] = &models.Account{
+				UserID:   userID,
+				Currency: currency,
+				Balance:  1000000.0, // High balance for performance testing
+			}
+		}
+	}
+	return result, nil
+}
+
+func (m *MockBookkeeperPerformance) BatchLockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{Success: true}, nil
+}
+
+func (m *MockBookkeeperPerformance) BatchUnlockFunds(ctx context.Context, operations []bookkeeper.FundsOperation) (*bookkeeper.BatchOperationResult, error) {
+	return &bookkeeper.BatchOperationResult{Success: true}, nil
+}
+
+func (m *MockBookkeeperPerformance) ReserveBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error {
 	atomic.AddInt64(&m.totalOps, 1)
-	m.reservations.Delete(reservationID)
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) ReleaseBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error {
+	atomic.AddInt64(&m.totalOps, 1)
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) GetBalance(ctx context.Context, userID uuid.UUID, asset string) (decimal.Decimal, error) {
+	atomic.AddInt64(&m.totalOps, 1)
+	return decimal.NewFromInt(1000000), nil // Default high balance for performance testing
+}
+
+func (m *MockBookkeeperPerformance) TransferBalance(ctx context.Context, fromUserID, toUserID uuid.UUID, asset string, amount decimal.Decimal) error {
+	atomic.AddInt64(&m.totalOps, 1)
+	return nil
+}
+
+func (m *MockBookkeeperPerformance) GetAllBalances(ctx context.Context, userID uuid.UUID) (map[string]decimal.Decimal, error) {
+	return make(map[string]decimal.Decimal), nil
+}
 	return nil
 }
 
@@ -92,17 +150,31 @@ type MockWSHubPerformance struct {
 	subscribers  sync.Map // topic -> count
 }
 
-func (m *MockWSHubPerformance) PublishToUser(userID string, data interface{}) {
+// Implement ws.Hub interface
+func (m *MockWSHubPerformance) Start() error {
+	return nil
+}
+
+func (m *MockWSHubPerformance) Stop() error {
+	return nil
+}
+
+func (m *MockWSHubPerformance) Broadcast(topic string, data []byte) {
 	atomic.AddInt64(&m.messagesSent, 1)
 }
 
-func (m *MockWSHubPerformance) PublishToTopic(topic string, data interface{}) {
+func (m *MockWSHubPerformance) BroadcastToUser(userID string, data []byte) {
 	atomic.AddInt64(&m.messagesSent, 1)
 }
 
-func (m *MockWSHubPerformance) SubscribeToTopic(userID, topic string) {
+func (m *MockWSHubPerformance) Subscribe(userID, topic string) error {
 	count, _ := m.subscribers.LoadOrStore(topic, int64(0))
 	atomic.AddInt64(count.(*int64), 1)
+	return nil
+}
+
+func (m *MockWSHubPerformance) Unsubscribe(userID, topic string) error {
+	return nil
 }
 
 func (m *MockWSHubPerformance) GetMessagesSent() int64 {
@@ -117,20 +189,22 @@ func (suite *TradingPerformanceTestSuite) SetupSuite() {
 	// Initialize high-performance mocks
 	suite.mockBookkeeper = &MockBookkeeperPerformance{}
 	suite.mockWSHub = &MockWSHubPerformance{}
+	// Create logger and database for testing
+	logger := zaptest.NewLogger(suite.T())
+	db := createInMemoryDB(suite.T()) // Returns nil for mock-based testing
+	
+	// Create settlement engine (can be nil for performance testing)
+	settlementEngine := (*settlement.SettlementEngine)(nil)
 
-	// Create trading service with performance configuration
-	suite.service = trading.NewService(
-		suite.mockBookkeeper,
-		suite.mockWSHub,
-		trading.WithHighPerformanceMode(true),
-		trading.WithMaxConcurrentOrders(100000),
-		trading.WithOrderBookDepth(10000),
-	)
+	// Create trading service with correct signature
+	var err error
+	suite.service, err = trading.NewService(logger, db, suite.mockBookkeeper, suite.mockWSHub, settlementEngine)
+	suite.Require().NoError(err, "Failed to create trading service")
 
 	// Setup test data
 	suite.setupTestData()
 
-	err := suite.service.Start(suite.ctx)
+	err = suite.service.Start()
 	suite.Require().NoError(err, "Failed to start trading service")
 
 	log.Printf("Performance test setup complete - GOMAXPROCS: %d", runtime.GOMAXPROCS(0))
@@ -161,15 +235,15 @@ func (suite *TradingPerformanceTestSuite) setupTestData() {
 
 func (suite *TradingPerformanceTestSuite) generateRandomOrder(userID string) *models.PlaceOrderRequest {
 	pair := suite.testPairs[rand.Intn(len(suite.testPairs))]
-	side := []models.OrderSide{models.Buy, models.Sell}[rand.Intn(2)]
-	orderType := []models.OrderType{models.Market, models.Limit}[rand.Intn(2)]
+	side := []string{"BUY", "SELL"}[rand.Intn(2)]
+	orderType := []string{"MARKET", "LIMIT"}[rand.Intn(2)]
 
 	price := decimal.NewFromFloat(50000 + rand.Float64()*10000)  // Random price between 50k-60k
 	quantity := decimal.NewFromFloat(0.001 + rand.Float64()*0.1) // Random quantity
 
 	return &models.PlaceOrderRequest{
 		UserID:   userID,
-		Pair:     pair,
+		Symbol:   pair,
 		Side:     side,
 		Type:     orderType,
 		Price:    price,
@@ -556,8 +630,14 @@ func (suite *TradingPerformanceTestSuite) BenchmarkOrderBookRetrieval() {
 			suite.service.GetOrderBook(suite.ctx, pair, 100)
 		}
 	})
-
 	log.Printf("BenchmarkOrderBookRetrieval completed")
+}
+
+// Helper function to create test database for performance tests
+func createInMemoryDB(t testing.TB) *gorm.DB {
+	// For performance testing without a real DB, we just return nil
+	// This bypasses the DB requirement and allows tests to run with mock data
+	return nil
 }
 
 func TestTradingPerformanceTestSuite(t *testing.T) {

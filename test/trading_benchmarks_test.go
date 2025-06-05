@@ -231,6 +231,7 @@ func performBenchmarkMatching(bookkeeper *MockBookkeeperStressTest, wsHub *MockW
 		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
+	_ = buyOrder // Remove unused variable error
 	// Simulate sell order processing
 	sellOrder := &models.Order{
 		ID:        uuid.New(),
@@ -243,6 +244,7 @@ func performBenchmarkMatching(bookkeeper *MockBookkeeperStressTest, wsHub *MockW
 		Status:    "NEW",
 		CreatedAt: time.Now(),
 	}
+	_ = sellOrder // Remove unused variable error
 
 	// Simulate matching process
 	_, _ = bookkeeper.GetBalance(buyUser.String(), "USDT")

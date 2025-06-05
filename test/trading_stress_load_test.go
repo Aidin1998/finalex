@@ -5,19 +5,19 @@ package test
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
 )
 
 // TradingStressLoadTestSuite provides comprehensive stress and load testing for trading operations
@@ -139,7 +139,8 @@ func (suite *TradingStressLoadTestSuite) SetupSuite() {
 	// Create test users
 	suite.testUsers = make([]string, 1000) // Large user base for stress testing
 	for i := 0; i < len(suite.testUsers); i++ {
-		suite.testUsers[i] = fmt.Sprintf("stress_user_%d", i)
+		userID := uuid.New()
+		suite.testUsers[i] = userID.String()
 
 		// Set up initial balances for stress testing
 		suite.mockBookkeeper.SetBalance(suite.testUsers[i], "BTC", decimal.NewFromFloat(10.0))
@@ -153,11 +154,17 @@ func (suite *TradingStressLoadTestSuite) SetupSuite() {
 	// Test trading pairs
 	suite.testPairs = []string{"BTCUSDT", "ETHUSDT", "ETHBTC"}
 
-	// Create trading service with mock adapters
-	tradingService := &MockTradingServiceStress{
-		bookkeeper: suite.mockBookkeeper,
-		wsHub:      suite.mockWSHub,
-		metrics:    suite.metrics,
+	// Initialize logger and database
+	logger, _ := zap.NewDevelopment()
+	db := createInMemoryDB()
+
+	// Create settlement engine
+	settlementEngine := (*settlement.SettlementEngine)(nil)
+
+	// Create trading service with real implementation
+	tradingService, err := trading.NewService(logger, db, suite.mockBookkeeper, suite.mockWSHub, settlementEngine)
+	if err != nil {
+		suite.Fail("Failed to create trading service: %v", err)
 	}
 	suite.service = tradingService
 }
@@ -355,124 +362,6 @@ func (suite *TradingStressLoadTestSuite) TestMarketDataBroadcastPerformance() {
 	})
 }
 
-// MockTradingServiceStress provides a mock trading service for stress testing
-type MockTradingServiceStress struct {
-	bookkeeper *MockBookkeeperStressTest
-	wsHub      *MockWSHubStressTest
-	metrics    *StressTestMetrics
-	mu         sync.RWMutex
-}
-
-func (m *MockTradingServiceStress) Start() error {
-	return nil
-}
-
-func (m *MockTradingServiceStress) Stop() error {
-	return nil
-}
-
-func (m *MockTradingServiceStress) PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error) {
-	// Simulate order processing latency
-	start := time.Now()
-
-	// Validate order
-	if order.Quantity.LessThanOrEqual(decimal.Zero) {
-		m.metrics.RecordOrderFailed()
-		return nil, fmt.Errorf("invalid quantity")
-	}
-
-	// Check balance simulation
-	if order.Side == models.SideBuy {
-		requiredBalance := order.Price.Mul(order.Quantity)
-		balance, err := m.bookkeeper.GetBalance(order.UserID, "USDT")
-		if err != nil || balance.LessThan(requiredBalance) {
-			m.metrics.RecordOrderFailed()
-			return nil, fmt.Errorf("insufficient balance")
-		}
-	}
-
-	// Simulate processing delay
-	processingDelay := time.Duration(rand.Intn(10)) * time.Microsecond
-	time.Sleep(processingDelay)
-
-	// Set order status
-	order.Status = models.OrderStatusNew
-	order.Created = time.Now()
-
-	// Record metrics
-	latency := time.Since(start)
-	m.metrics.RecordOrderProcessed(latency)
-
-	// Simulate order matching probability
-	if rand.Float32() > 0.6 {
-		m.metrics.RecordOrderMatched()
-
-		// Simulate trade execution
-		if rand.Float32() > 0.5 {
-			m.metrics.RecordTradeExecuted()
-
-			// Broadcast trade update
-			tradeMsg := fmt.Sprintf(`{"type":"trade","symbol":"%s","price":"%s","quantity":"%s","time":%d}`,
-				order.Symbol, order.Price.String(), order.Quantity.String(), time.Now().UnixNano())
-			m.wsHub.Broadcast(fmt.Sprintf("trades.%s", order.Symbol), []byte(tradeMsg))
-		}
-	}
-
-	return order, nil
-}
-
-func (m *MockTradingServiceStress) CancelOrder(ctx context.Context, orderID string) error {
-	// Simulate cancellation processing
-	time.Sleep(time.Microsecond * 50)
-	return nil
-}
-
-func (m *MockTradingServiceStress) GetOrder(orderID string) (*models.Order, error) {
-	return nil, fmt.Errorf("order not found")
-}
-
-func (m *MockTradingServiceStress) GetOrders(userID, symbol, status string, limit, offset string) ([]*models.Order, int64, error) {
-	return []*models.Order{}, 0, nil
-}
-
-func (m *MockTradingServiceStress) GetOrderBook(symbol string, depth int) (*models.OrderBookSnapshot, error) {
-	return &models.OrderBookSnapshot{
-		Symbol:    symbol,
-		Timestamp: time.Now(),
-		Bids:      []models.OrderBookEntry{},
-		Asks:      []models.OrderBookEntry{},
-	}, nil
-}
-
-func (m *MockTradingServiceStress) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
-	return []byte{}, nil
-}
-
-func (m *MockTradingServiceStress) GetTradingPairs() ([]*models.TradingPair, error) {
-	return []*models.TradingPair{}, nil
-}
-
-func (m *MockTradingServiceStress) GetTradingPair(symbol string) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not found")
-}
-
-func (m *MockTradingServiceStress) CreateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockTradingServiceStress) UpdateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *MockTradingServiceStress) ListOrders(userID string, filter *models.OrderFilter) ([]*models.Order, error) {
-	return []*models.Order{}, nil
-}
-
-// TestStressLoadTestSuite runs the entire stress test suite
-func TestStressLoadTestSuite(t *testing.T) {
-	suite.Run(t, new(TradingStressLoadTestSuite))
-}
-
 // Helper methods for stress testing
 
 // submitRandomOrder submits a random order for stress testing
@@ -482,12 +371,11 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 	userIndex := (workerID + orderID) % len(suite.testUsers)
 	userID := suite.testUsers[userIndex]
 	pair := suite.testPairs[orderID%len(suite.testPairs)]
-
 	// Generate random order parameters
-	sides := []models.OrderSide{models.SideBuy, models.SideSell}
+	sides := []string{"BUY", "SELL"}
 	side := sides[orderID%2]
 
-	orderTypes := []models.OrderType{models.OrderTypeLimit, models.OrderTypeMarket}
+	orderTypes := []string{"LIMIT", "MARKET"}
 	orderType := orderTypes[orderID%2]
 
 	var price float64
@@ -496,9 +384,8 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 	switch pair {
 	case "BTCUSDT":
 		price = 45000 + float64(orderID%10000)         // Price range: 45000-55000
-		quantity = 0.001 + float64(orderID%100)/100000 // Small quantities
-	case "ETHUSDT":
-		price = 2800 + float64(orderID%1000) // Price range: 2800-3800
+		quantity = 0.001 + float64(orderID%100)/100000 // Small quantities	case "ETHUSDT":
+		price = 2800 + float64(orderID%1000)           // Price range: 2800-3800
 		quantity = 0.01 + float64(orderID%100)/10000
 	case "ETHBTC":
 		price = 0.065 + float64(orderID%100)/100000 // Price range around 0.065-0.075
@@ -509,13 +396,13 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
 		Symbol:      pair,
-		Side:        string(side),
-		Type:        string(orderType),
+		Side:        side,
+		Type:        orderType,
 		Price:       price,
 		Quantity:    quantity,
-		Status:      models.OrderStatusNew,
+		Status:      "NEW",
 		Created:     time.Now(),
-		TimeInForce: models.TimeInForceGTC,
+		TimeInForce: "GTC",
 	}
 
 	// Submit order
@@ -529,20 +416,19 @@ func (suite *TradingStressLoadTestSuite) submitRandomOrder(workerID, orderID int
 func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string, numOrders int) {
 	basePrice := suite.getBasePriceForPair(pair)
 
-	for i := 0; i < numOrders; i++ {
-		// Submit buy order
+	for i := 0; i < numOrders; i++ { // Submit buy order
 		buyUserIndex := (i * 2) % len(suite.testUsers)
 		buyOrder := &models.Order{
 			ID:          uuid.New(),
 			UserID:      uuid.MustParse(suite.testUsers[buyUserIndex]),
 			Symbol:      pair,
-			Side:        string(models.SideBuy),
-			Type:        string(models.OrderTypeLimit),
+			Side:        "BUY",
+			Type:        "LIMIT",
 			Price:       basePrice + float64(i%50), // Slightly increasing prices
 			Quantity:    0.001 + float64(i%100)/100000,
-			Status:      models.OrderStatusNew,
+			Status:      "NEW",
 			Created:     time.Now(),
-			TimeInForce: models.TimeInForceGTC,
+			TimeInForce: "GTC",
 		}
 
 		// Submit sell order
@@ -551,13 +437,13 @@ func (suite *TradingStressLoadTestSuite) submitMatchingOrdersForPair(pair string
 			ID:          uuid.New(),
 			UserID:      uuid.MustParse(suite.testUsers[sellUserIndex]),
 			Symbol:      pair,
-			Side:        string(models.SideSell),
-			Type:        string(models.OrderTypeLimit),
+			Side:        "SELL",
+			Type:        "LIMIT",
 			Price:       basePrice + float64(i%50), // Same price for matching
 			Quantity:    0.001 + float64(i%100)/100000,
-			Status:      models.OrderStatusNew,
+			Status:      "NEW",
 			Created:     time.Now(),
-			TimeInForce: models.TimeInForceGTC,
+			TimeInForce: "GTC",
 		}
 
 		suite.metrics.RecordOrderSubmission()

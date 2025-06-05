@@ -4,10 +4,12 @@
 package test
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -16,8 +18,10 @@ import (
 
 // WSMessage represents a WebSocket message for testing
 type WSMessage struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Type   string      `json:"type"`
+	Data   interface{} `json:"data"`
+	Topic  string
+	UserID string
 }
 
 // ReservationInfo holds information about balance reservations for testing
@@ -98,6 +102,101 @@ type MockBookkeeperStressTest struct {
 	mu           sync.RWMutex
 }
 
+// Start implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) Start() error {
+	return nil
+}
+
+// Stop implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) Stop() error {
+	return nil
+}
+
+// GetAccounts implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) GetAccounts(ctx context.Context, userIDs []uuid.UUID) ([]*models.Account, error) {
+	accounts := make([]*models.Account, 0, len(userIDs))
+	for _, userID := range userIDs {
+		account := &models.Account{
+			ID:     userID,
+			UserID: userID,
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+// BatchGetAccounts implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) BatchGetAccounts(ctx context.Context, userIDs []uuid.UUID) ([]*models.Account, error) {
+	return m.GetAccounts(ctx, userIDs)
+}
+
+// GetAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) GetAccount(ctx context.Context, userID uuid.UUID) (*models.Account, error) {
+	return &models.Account{
+		ID:     userID,
+		UserID: userID,
+	}, nil
+}
+
+// CreateAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) CreateAccount(ctx context.Context, account *models.Account) (*models.Account, error) {
+	return account, nil
+}
+
+// UpdateAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) UpdateAccount(ctx context.Context, account *models.Account) (*models.Account, error) {
+	return account, nil
+}
+
+// DeleteAccount implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
+	return nil
+}
+
+// GetAccountBalance implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) GetAccountBalance(ctx context.Context, userID uuid.UUID, asset string) (decimal.Decimal, error) {
+	return m.GetBalance(userID.String(), asset)
+}
+
+// GetAccountBalances implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) GetAccountBalances(ctx context.Context, userID uuid.UUID) (map[string]decimal.Decimal, error) {
+	userBalances, exists := m.balances.Load(userID.String())
+	if !exists {
+		return make(map[string]decimal.Decimal), nil
+	}
+	return userBalances.(map[string]decimal.Decimal), nil
+}
+
+// SetAccountBalance implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) SetAccountBalance(ctx context.Context, userID uuid.UUID, asset string, balance decimal.Decimal) error {
+	m.SetBalance(userID.String(), asset, balance)
+	return nil
+}
+
+// Transfer implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) Transfer(ctx context.Context, fromUserID, toUserID uuid.UUID, asset string, amount decimal.Decimal) error {
+	return nil
+}
+
+// Reserve implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) Reserve(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) (string, error) {
+	return m.ReserveBalance(userID.String(), asset, amount)
+}
+
+// CommitReservation implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) CommitReservation(ctx context.Context, reservationID string) error {
+	atomic.AddInt64(&m.totalOps, 1)
+	m.reservations.Delete(reservationID)
+	return nil
+}
+
+// ReleaseReservation implements bookkeeper.BookkeeperService
+func (m *MockBookkeeperStressTest) ReleaseReservation(ctx context.Context, reservationID string) error {
+	atomic.AddInt64(&m.totalOps, 1)
+	m.reservations.Delete(reservationID)
+	return nil
+}
+
 func (m *MockBookkeeperStressTest) GetBalance(userID, asset string) (decimal.Decimal, error) {
 	atomic.AddInt64(&m.totalOps, 1)
 	userBalances, exists := m.balances.Load(userID)
@@ -125,22 +224,9 @@ func (m *MockBookkeeperStressTest) ReserveBalance(userID, asset string, amount d
 	reservation := ReservationInfo{
 		UserID: userID,
 		Asset:  asset,
-		Amount: amount,
-	}
+		Amount: amount}
 	m.reservations.Store(reservationID, reservation)
 	return reservationID, nil
-}
-
-func (m *MockBookkeeperStressTest) CommitReservation(reservationID string) error {
-	atomic.AddInt64(&m.totalOps, 1)
-	m.reservations.Delete(reservationID)
-	return nil
-}
-
-func (m *MockBookkeeperStressTest) ReleaseReservation(reservationID string) error {
-	atomic.AddInt64(&m.totalOps, 1)
-	m.reservations.Delete(reservationID)
-	return nil
 }
 
 type MockWSHubStressTest struct {
@@ -148,6 +234,26 @@ type MockWSHubStressTest struct {
 	broadcasts  sync.Map // topic -> [][]byte
 	totalOps    int64
 	mu          sync.RWMutex
+}
+
+// Start implements ws.Hub
+func (m *MockWSHubStressTest) Start() error {
+	return nil
+}
+
+// Stop implements ws.Hub
+func (m *MockWSHubStressTest) Stop() error {
+	return nil
+}
+
+// Subscribe implements ws.Hub
+func (m *MockWSHubStressTest) Subscribe(userID string, topic string) error {
+	return nil
+}
+
+// Unsubscribe implements ws.Hub
+func (m *MockWSHubStressTest) Unsubscribe(userID string, topic string) error {
+	return nil
 }
 
 func (m *MockWSHubStressTest) Connect(userID string) {

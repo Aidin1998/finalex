@@ -27,13 +27,13 @@ type TradingCoordinationTestSuite struct {
 
 func (suite *TradingCoordinationTestSuite) SetupTest() {
 	suite.logger = zaptest.NewLogger(suite.T())
-	suite.service = coordination.NewCoordinationService(suite.logger)
+	service, err := coordination.NewCoordinationService(suite.logger, nil)
+	suite.Require().NoError(err)
+	suite.service = service
 }
 
 func (suite *TradingCoordinationTestSuite) TearDownTest() {
 	if suite.service != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
 		suite.service.Stop()
 	}
 }

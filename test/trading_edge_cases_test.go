@@ -13,19 +13,26 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // TradingEdgeCaseTestSuite provides comprehensive edge case testing for trading operations
 type TradingEdgeCaseTestSuite struct {
 	suite.Suite
-	service        trading.Service
-	mockBookkeeper *MockBookkeeperEdgeCase
-	mockWSHub      *MockWSHubEdgeCase
-	ctx            context.Context
-	cancel         context.CancelFunc
+	logger           *zap.Logger
+	db               *gorm.DB
+	service          trading.Service
+	mockBookkeeper   *MockBookkeeperEdgeCase
+	mockWSHub        *MockWSHubEdgeCase
+	settlementEngine *settlement.SettlementEngine
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 // MockBookkeeperEdgeCase provides edge case testing mock for bookkeeper service
@@ -162,6 +169,15 @@ func (m *MockBookkeeperEdgeCase) GetOperationCount() int64 {
 	return atomic.LoadInt64(&m.operationCounter)
 }
 
+// Add stubs to satisfy bookkeeper.BookkeeperService interface
+func (m *MockBookkeeperEdgeCase) BatchGetAccounts(userIDs []string) (map[string]interface{}, error) {
+	panic("not implemented: BatchGetAccounts (mock)")
+}
+
+func (m *MockBookkeeperEdgeCase) SomeOtherRequiredMethod() error {
+	panic("not implemented: SomeOtherRequiredMethod (mock)")
+}
+
 // MockWSHubEdgeCase provides edge case testing mock for WebSocket hub
 type MockWSHubEdgeCase struct {
 	messageQueue    []WSMessage
@@ -189,10 +205,8 @@ func (m *MockWSHubEdgeCase) PublishToUser(userID string, data interface{}) {
 	}
 
 	m.messageQueue = append(m.messageQueue, WSMessage{
-		Target:    userID,
-		Data:      data,
-		Timestamp: time.Now(),
-		Failed:    failed,
+		Type: "user",
+		Data: data,
 	})
 }
 
@@ -206,10 +220,8 @@ func (m *MockWSHubEdgeCase) PublishToTopic(topic string, data interface{}) {
 	}
 
 	m.messageQueue = append(m.messageQueue, WSMessage{
-		Topic:     topic,
-		Data:      data,
-		Timestamp: time.Now(),
-		Failed:    failed,
+		Type: "topic",
+		Data: data,
 	})
 }
 
@@ -244,17 +256,21 @@ func (m *MockWSHubEdgeCase) GetMessageQueue() []WSMessage {
 func (suite *TradingEdgeCaseTestSuite) SetupSuite() {
 	log.Println("Setting up trading edge case test suite...")
 
+	suite.logger = zap.NewNop()
+	suite.db = nil // No DB yet, bypass with nil
+	suite.settlementEngine = settlement.NewSettlementEngine()
+
 	suite.ctx, suite.cancel = context.WithTimeout(context.Background(), 10*time.Minute)
 
 	suite.mockBookkeeper = NewMockBookkeeperEdgeCase()
 	suite.mockWSHub = NewMockWSHubEdgeCase()
 
-	suite.service = trading.NewService(
+	suite.service, _ = trading.NewService(
+		suite.logger,
+		suite.db, // pass nil for db
 		suite.mockBookkeeper,
 		suite.mockWSHub,
-		trading.WithRetryPolicy(3, time.Second),
-		trading.WithCircuitBreaker(true),
-		trading.WithGracefulDegradation(true),
+		suite.settlementEngine,
 	)
 
 	err := suite.service.Start(suite.ctx)
@@ -274,18 +290,21 @@ func (suite *TradingEdgeCaseTestSuite) TearDownSuite() {
 func (suite *TradingEdgeCaseTestSuite) TestNetworkFailureRecovery() {
 	log.Println("Testing network failure recovery...")
 
-	userID := "network_test_user"
+	userID := uuid.New()
 
 	// Simulate network failures
 	suite.mockBookkeeper.SimulateNetworkFailures(5)
 
-	order := &models.PlaceOrderRequest{
-		UserID:   userID,
-		Pair:     "BTC/USDT",
-		Side:     models.Buy,
-		Type:     models.Limit,
-		Price:    decimal.NewFromInt(50000),
-		Quantity: decimal.NewFromFloat(0.1),
+	order := &models.Order{
+		UserID:    userID,
+		Symbol:    "BTC/USDT",
+		Side:      "buy",
+		Type:      "limit",
+		Price:     50000,
+		Quantity:  0.1,
+		Status:    "new",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	// First few attempts should fail due to network issues
@@ -307,18 +326,21 @@ func (suite *TradingEdgeCaseTestSuite) TestNetworkFailureRecovery() {
 func (suite *TradingEdgeCaseTestSuite) TestDatabaseErrorHandling() {
 	log.Println("Testing database error handling...")
 
-	userID := "db_test_user"
+	userID := uuid.New()
 
 	// Simulate database errors
 	suite.mockBookkeeper.SimulateDatabaseErrors(3)
 
-	order := &models.PlaceOrderRequest{
-		UserID:   userID,
-		Pair:     "ETH/USDT",
-		Side:     models.Sell,
-		Type:     models.Limit,
-		Price:    decimal.NewFromInt(3000),
-		Quantity: decimal.NewFromFloat(1.0),
+	order := &models.Order{
+		UserID:    userID,
+		Symbol:    "ETH/USDT",
+		Side:      "sell",
+		Type:      "limit",
+		Price:     3000,
+		Quantity:  1.0,
+		Status:    "new",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	// Should handle database errors gracefully
@@ -328,15 +350,8 @@ func (suite *TradingEdgeCaseTestSuite) TestDatabaseErrorHandling() {
 		if lastErr == nil {
 			break
 		}
-		time.Sleep(100 * time.Millisecond) // Brief delay between retries
 	}
-
-	// Eventually should succeed or handle gracefully
-	if lastErr != nil {
-		suite.Assert().Contains(lastErr.Error(), "database", "Should indicate database issue")
-	}
-
-	log.Println("Database error handling test completed")
+	suite.Assert().NoError(lastErr, "Should eventually succeed after db errors")
 }
 
 // TestTimeoutHandling tests handling of operation timeouts
@@ -348,12 +363,15 @@ func (suite *TradingEdgeCaseTestSuite) TestTimeoutHandling() {
 	// Simulate timeouts
 	suite.mockBookkeeper.SimulateTimeouts(2)
 
-	order := &models.PlaceOrderRequest{
-		UserID:   userID,
-		Pair:     "BTC/USDT",
-		Side:     models.Buy,
-		Type:     models.Market,
-		Quantity: decimal.NewFromFloat(0.05),
+	order := &models.Order{
+		UserID:    userID,
+		Symbol:    "BTC/USDT",
+		Side:      "buy",
+		Type:      "market",
+		Quantity:  0.05,
+		Status:    "new",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	start := time.Now()
@@ -377,13 +395,16 @@ func (suite *TradingEdgeCaseTestSuite) TestCircuitBreakerBehavior() {
 	// Open circuit breaker
 	suite.mockBookkeeper.SetCircuitBreakerOpen(true)
 
-	order := &models.PlaceOrderRequest{
-		UserID:   userID,
-		Pair:     "BTC/USDT",
-		Side:     models.Buy,
-		Type:     models.Limit,
-		Price:    decimal.NewFromInt(50000),
-		Quantity: decimal.NewFromFloat(0.1),
+	order := &models.Order{
+		UserID:    userID,
+		Symbol:    "BTC/USDT",
+		Side:      "buy",
+		Type:      "limit",
+		Price:     50000,
+		Quantity:  0.1,
+		Status:    "new",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	// Should fail immediately with circuit breaker open
@@ -424,16 +445,19 @@ func (suite *TradingEdgeCaseTestSuite) TestConcurrentFailureRecovery() {
 		go func(workerID int) {
 			defer wg.Done()
 
-			userID := fmt.Sprintf("concurrent_user_%d", workerID)
+			userID := uuid.New()
 
 			for j := 0; j < operationsPerWorker; j++ {
-				order := &models.PlaceOrderRequest{
-					UserID:   userID,
-					Pair:     "BTC/USDT",
-					Side:     []models.OrderSide{models.Buy, models.Sell}[j%2],
-					Type:     models.Limit,
-					Price:    decimal.NewFromInt(50000 + int64(j*100)),
-					Quantity: decimal.NewFromFloat(0.01 + float64(j)*0.01),
+				order := &models.Order{
+					UserID:    userID,
+					Symbol:    "BTC/USDT",
+					Side:      []string{"buy", "sell"}[j%2],
+					Type:      "limit",
+					Price:     50000 + float64(j*100),
+					Quantity:  0.01 + float64(j)*0.01,
+					Status:    "new",
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
 				}
 
 				_, err := suite.service.PlaceOrder(suite.ctx, order)
@@ -481,13 +505,16 @@ func (suite *TradingEdgeCaseTestSuite) TestRaceConditionHandling() {
 		go func(routineID int) {
 			defer wg.Done()
 
-			order := &models.PlaceOrderRequest{
-				UserID:   userID,
-				Pair:     "BTC/USDT",
-				Side:     models.Buy,
-				Type:     models.Limit,
-				Price:    decimal.NewFromInt(50000 + int64(routineID)),
-				Quantity: decimal.NewFromFloat(0.01),
+			order := &models.Order{
+				UserID:    userID,
+				Symbol:    "BTC/USDT",
+				Side:      "buy",
+				Type:      "limit",
+				Price:     50000 + int64(routineID),
+				Quantity:  0.01,
+				Status:    "new",
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
 			}
 
 			placedOrder, err := suite.service.PlaceOrder(suite.ctx, order)
@@ -526,13 +553,16 @@ func (suite *TradingEdgeCaseTestSuite) TestWebSocketFailureRecovery() {
 	suite.mockWSHub.SimulateConnectionLoss()
 	suite.mockWSHub.SimulatePublishFailures(5)
 
-	order := &models.PlaceOrderRequest{
-		UserID:   userID,
-		Pair:     "BTC/USDT",
-		Side:     models.Buy,
-		Type:     models.Limit,
-		Price:    decimal.NewFromInt(50000),
-		Quantity: decimal.NewFromFloat(0.1),
+	order := &models.Order{
+		UserID:    userID,
+		Symbol:    "BTC/USDT",
+		Side:      "buy",
+		Type:      "limit",
+		Price:     50000,
+		Quantity:  0.1,
+		Status:    "new",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	// Place order during WebSocket issues
@@ -572,13 +602,16 @@ func (suite *TradingEdgeCaseTestSuite) TestMemoryLeakPrevention() {
 	initialOps := suite.mockBookkeeper.GetOperationCount()
 
 	for i := 0; i < iterations; i++ {
-		order := &models.PlaceOrderRequest{
-			UserID:   userID,
-			Pair:     "BTC/USDT",
-			Side:     []models.OrderSide{models.Buy, models.Sell}[i%2],
-			Type:     models.Limit,
-			Price:    decimal.NewFromInt(50000 + int64(i)),
-			Quantity: decimal.NewFromFloat(0.01),
+		order := &models.Order{
+			UserID:    userID,
+			Symbol:    "BTC/USDT",
+			Side:      []models.OrderSide{models.Buy, models.Sell}[i%2],
+			Type:      "limit",
+			Price:     50000 + int64(i),
+			Quantity:  0.01,
+			Status:    "new",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
 
 		placedOrder, err := suite.service.PlaceOrder(suite.ctx, order)
