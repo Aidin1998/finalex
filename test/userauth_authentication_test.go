@@ -44,7 +44,6 @@ func (m *mockAuthService) AuthenticateUser(ctx context.Context, email, password 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, nil, errors.New("invalid credentials")
 	}
-
 	// Generate token pair
 	accessToken := "access_token_" + user.ID.String()
 	refreshToken := "refresh_token_" + user.ID.String()
@@ -52,7 +51,8 @@ func (m *mockAuthService) AuthenticateUser(ctx context.Context, email, password 
 	tokenPair := &auth.TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(1 * time.Hour),
+		TokenType:    "Bearer",
 	}
 
 	m.tokenPairs[refreshToken] = tokenPair
@@ -64,7 +64,7 @@ func (m *mockAuthService) ValidateToken(ctx context.Context, tokenString string)
 	for _, user := range m.users {
 		if "access_token_"+user.ID.String() == tokenString {
 			return &auth.TokenClaims{
-				UserID: user.ID.String(),
+				UserID: user.ID, // Use UUID directly, not string conversion
 				Email:  user.Email,
 				Role:   user.Role,
 				// Add other necessary fields
@@ -79,12 +79,12 @@ func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string)
 	if !exists {
 		return nil, errors.New("invalid refresh token")
 	}
-
 	// Create a new token pair
 	newTokenPair := &auth.TokenPair{
 		AccessToken:  "new_" + tokenPair.AccessToken,
 		RefreshToken: "new_" + tokenPair.RefreshToken,
-		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(1 * time.Hour),
+		TokenType:    "Bearer",
 	}
 
 	// Store the new refresh token
@@ -104,8 +104,8 @@ func (m *mockAuthService) CreateSession(ctx context.Context, userID uuid.UUID, d
 		DeviceFingerprint: deviceFingerprint,
 		CreatedAt:         time.Now(),
 		ExpiresAt:         time.Now().Add(24 * time.Hour),
-		LastActivity:      time.Now(),
-		Active:            true,
+		LastActivityAt:    time.Now(),
+		IsActive:          true,
 	}
 
 	m.sessions[sessionID] = session
@@ -305,7 +305,6 @@ func TestSessionManagement(t *testing.T) {
 	// Get a user ID to work with
 	user := mockAuth.users["user@example.com"]
 	assert.NotNil(t, user)
-
 	// Create a session
 	deviceFingerprint := "testdevice123"
 	session, err := mockAuth.CreateSession(context.Background(), user.ID, deviceFingerprint)
@@ -313,7 +312,7 @@ func TestSessionManagement(t *testing.T) {
 	assert.NotNil(t, session)
 	assert.Equal(t, user.ID, session.UserID)
 	assert.Equal(t, deviceFingerprint, session.DeviceFingerprint)
-	assert.True(t, session.Active)
+	assert.True(t, session.IsActive)
 	assert.False(t, session.ExpiresAt.Before(time.Now()), "Session should not expire in the past")
 
 	// Validate the session
@@ -342,7 +341,8 @@ func TestSessionManagement(t *testing.T) {
 type TokenPair struct {
 	AccessToken  string
 	RefreshToken string
-	ExpiresIn    int64
+	ExpiresAt    time.Time
+	TokenType    string
 }
 
 type TokenClaims struct {

@@ -6,7 +6,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
 	"github.com/google/uuid"
 )
 
@@ -35,15 +34,15 @@ type UserAuditLog struct {
 type RegistrationError string
 
 const (
-	InvalidEmailError       RegistrationError = "invalid_email"
-	InvalidPasswordError    RegistrationError = "invalid_password"
-	MissingRequiredField    RegistrationError = "missing_required_field"
-	UsernameExists          RegistrationError = "username_exists"
-	EmailExists             RegistrationError = "email_exists"
-	InvalidCountryCode      RegistrationError = "invalid_country_code"
-	BlockedCountry          RegistrationError = "blocked_country"
-	ComplianceCheckFailed   RegistrationError = "compliance_check_failed"
-	InternalError           RegistrationError = "internal_error"
+	InvalidEmailError     RegistrationError = "invalid_email"
+	InvalidPasswordError  RegistrationError = "invalid_password"
+	MissingRequiredField  RegistrationError = "missing_required_field"
+	UsernameExists        RegistrationError = "username_exists"
+	EmailExists           RegistrationError = "email_exists"
+	InvalidCountryCode    RegistrationError = "invalid_country_code"
+	BlockedCountry        RegistrationError = "blocked_country"
+	ComplianceCheckFailed RegistrationError = "compliance_check_failed"
+	InternalError         RegistrationError = "internal_error"
 )
 
 // Define ComplianceResult type
@@ -128,7 +127,8 @@ type KYCIntegrationService interface {
 	InitializeKYCProcess(ctx context.Context, userID uuid.UUID, level string) error
 }
 
-type NotificationService interface {	SendWelcomeEmail(ctx context.Context, email, firstName string) error
+type NotificationService interface {
+	SendWelcomeEmail(ctx context.Context, email, firstName string) error
 	SendEmailVerification(ctx context.Context, userID uuid.UUID, email string) error
 	SendSMSVerification(ctx context.Context, userID uuid.UUID, phoneNumber string) error
 }

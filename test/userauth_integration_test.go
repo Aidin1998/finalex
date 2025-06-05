@@ -72,13 +72,19 @@ func (s *IntegratedAuthService) AuthenticateUser(ctx context.Context, email, pas
 	return tokenPair, &user, nil
 }
 
-func (s *IntegratedAuthService) ValidateToken(ctx context.Context, tokenString string) (*auth.TokenClaims, error) {
-	// In real implementation, this would validate JWT tokens
+func (s *IntegratedAuthService) ValidateToken(ctx context.Context, tokenString string) (*auth.TokenClaims, error) { // In real implementation, this would validate JWT tokens
 	// For testing, we'll just parse out the user ID from our test tokens
 
 	// In a real scenario, you'd validate the JWT signature, check expiry, etc.
+	// Parse the token as UUID for proper type matching
+	userID, err := uuid.Parse(tokenString)
+	if err != nil {
+		// Fallback to a default UUID for testing
+		userID = uuid.New()
+	}
+
 	return &auth.TokenClaims{
-		UserID: tokenString, // Our mock just returns the token as the user ID
+		UserID: userID, // Use proper UUID type
 		Email:  "testuser@example.com",
 		Role:   "user",
 	}, nil

@@ -26,10 +26,10 @@ type mockRegistrationService struct {
 	notificationService   *mockNotificationService
 }
 
-func (m *mockRegistrationService) RegisterUser(ctx context.Context, req *EnterpriseRegistrationRequest) (*EnterpriseRegistrationResponse, error) {
+func (m *mockRegistrationService) RegisterUser(ctx context.Context, req *userauth.EnterpriseRegistrationRequest) (*userauth.EnterpriseRegistrationResponse, error) {
 	// Mock implementation of user registration
 	userID := uuid.New()
-	response := &EnterpriseRegistrationResponse{
+	response := &userauth.EnterpriseRegistrationResponse{
 		UserID:                    userID,
 		Email:                     req.Email,
 		Username:                  req.Username,
@@ -56,8 +56,8 @@ func (m *mockRegistrationService) RegisterUser(ctx context.Context, req *Enterpr
 		Tier:         "basic",
 		MFAEnabled:   false,
 		// We removed EmailVerified and PhoneVerified as they don't exist in the User struct
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	if err := m.db.Create(user).Error; err != nil {
@@ -67,7 +67,7 @@ func (m *mockRegistrationService) RegisterUser(ctx context.Context, req *Enterpr
 	return response, nil
 }
 
-func (m *mockRegistrationService) ValidateRegistrationInput(ctx context.Context, req *EnterpriseRegistrationRequest) ([]RegistrationError, error) {
+func (m *mockRegistrationService) ValidateRegistrationInput(ctx context.Context, req *userauth.EnterpriseRegistrationRequest) ([]RegistrationError, error) {
 	// Mock validation logic
 	var errors []RegistrationError
 	if req.Email == "" {
@@ -79,7 +79,7 @@ func (m *mockRegistrationService) ValidateRegistrationInput(ctx context.Context,
 	if req.Username == "" {
 		errors = append(errors, MissingRequiredField)
 	}
-	
+
 	// Mock check for existing user
 	var existingUser models.User
 	if m.db.Where("email = ?", req.Email).First(&existingUser).Error == nil {
@@ -88,7 +88,7 @@ func (m *mockRegistrationService) ValidateRegistrationInput(ctx context.Context,
 	if m.db.Where("username = ?", req.Username).First(&existingUser).Error == nil {
 		errors = append(errors, UsernameExists)
 	}
-	
+
 	return errors, nil
 }
 
@@ -107,7 +107,7 @@ func (m *mockEncryptionService) Decrypt(encrypted string) (string, error) { retu
 
 type mockComplianceService struct{}
 
-func (m *mockComplianceService) PerformRegistrationChecks(ctx context.Context, req *EnterpriseRegistrationRequest) (*ComplianceResult, error) {
+func (m *mockComplianceService) PerformRegistrationChecks(ctx context.Context, req *userauth.EnterpriseRegistrationRequest) (*ComplianceResult, error) {
 	return &ComplianceResult{
 		Blocked:          false,
 		KYCRequired:      false,
@@ -152,7 +152,7 @@ func (m *mockNotificationService) SendSMSVerification(ctx context.Context, userI
 	return nil
 }
 
-func setupTestRegistrationService(t *testing.T) interface{} {
+func setupTestRegistrationService(t *testing.T) *mockRegistrationService {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
@@ -160,23 +160,21 @@ func setupTestRegistrationService(t *testing.T) interface{} {
 	db.AutoMigrate(&usermodels.UserProfile{}, &usermodels.TwoFactorAuth{}, &usermodels.DeviceFingerprint{}, &usermodels.PasswordPolicy{})
 	// Also migrate globalmodels.User for registration
 	db.AutoMigrate(&models.User{})
-	// Using interface{} as we don't have the exact type in our test env
 	return &mockRegistrationService{
-		db,
-		nil,
-		&mockEncryptionService{},
-		&mockComplianceService{},
-		&mockAuditService{},
-		&mockPasswordPolicyEngine{},
-		&mockKYCIntegrationService{},
-		&mockNotificationService{},
+		db:                    db,
+		encryptionService:     &mockEncryptionService{},
+		complianceService:     &mockComplianceService{},
+		auditService:          &mockAuditService{},
+		passwordPolicyEngine:  &mockPasswordPolicyEngine{},
+		kycIntegrationService: &mockKYCIntegrationService{},
+		notificationService:   &mockNotificationService{},
 	}
 }
 
 func TestRegisterUser_Success(t *testing.T) {
-	svc := setupTestRegistrationService(t).(*mockRegistrationService)
+	svc := setupTestRegistrationService(t)
 	dob := time.Now().AddDate(-20, 0, 0)
-	req := &EnterpriseRegistrationRequest{
+	req := &userauth.EnterpriseRegistrationRequest{
 		Email:                 "testuser@example.com",
 		Username:              "testuser",
 		Password:              "SuperSecure!123",

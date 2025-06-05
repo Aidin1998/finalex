@@ -7,13 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
 	"github.com/Aidin1998/pincex_unified/internal/userauth/auth"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"go.uber.org/zap"
 )
 
 // Mock implementation of dependencies for Service tests
@@ -113,33 +111,21 @@ func (m *mockTieredRateLimiter) GetUserRateLimitStatus(ctx context.Context, user
 
 // TestService tests the Service struct functionality
 func TestService(t *testing.T) {
-	// Create a logger
-	logger, _ := zap.NewDevelopment()
-
 	// Create mock dependencies
-	mockAuth := new(mockAuthServiceImpl)
 	mockCache := new(mockClusteredCache)
 	mockRateLimiter := new(mockTieredRateLimiter)
 
 	// Setup return values for mocks
 	cacheStats := map[string]interface{}{
 		"hits":   1000,
-		"misses": 50,
-	}
+		"misses": 50}
 	mockCache.On("GetStats").Return(cacheStats)
-
 	rateLimitResult := &auth.RateLimitResult{
-		Allowed:         true,
-		RemainingTokens: 99,
-		ResetTime:       3600,
+		Allowed:   true,
+		UserLimit: &models.RateLimitInfo{Limit: 100, Used: 1, Remaining: 99, ResetAt: time.Now().Add(time.Hour), Window: time.Hour},
+		IPLimit:   &models.RateLimitInfo{Limit: 100, Used: 1, Remaining: 99, ResetAt: time.Now().Add(time.Hour), Window: time.Hour}, LimitType: "user",
 	}
 	mockRateLimiter.On("CheckRateLimit", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(rateLimitResult, nil)
-
-	// Create the service under test
-	service := &userauth.Service{
-		// We can't directly set the fields since they're private to package userauth,
-		// so we'll use methods to access them in tests
-	}
 
 	// Test GetEnterpriseFeatures
 	t.Run("GetEnterpriseFeatures", func(t *testing.T) {
@@ -178,13 +164,17 @@ func TestServiceWithMetrics(t *testing.T) {
 
 	// Create a test context
 	ctx := context.Background()
-
 	// Test rate limiting performance
 	t.Run("RateLimitingPerformance", func(t *testing.T) {
 		// Create mock rate limiter with timing metrics
 		mockRateLimiter := new(mockTieredRateLimiter)
 		mockRateLimiter.On("CheckRateLimit", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
-			&auth.RateLimitResult{Allowed: true, RemainingTokens: 99}, nil,
+			&auth.RateLimitResult{
+				Allowed:   true,
+				UserLimit: &models.RateLimitInfo{Limit: 100, Used: 1, Remaining: 99, ResetAt: time.Now().Add(time.Hour), Window: time.Hour},
+				IPLimit:   &models.RateLimitInfo{Limit: 100, Used: 1, Remaining: 99, ResetAt: time.Now().Add(time.Hour), Window: time.Hour},
+				LimitType: "user",
+			}, nil,
 		)
 
 		// Test rate limiting throughput

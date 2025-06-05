@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Aidin1998/pincex_unified/internal/userauth"
 	usermodels "github.com/Aidin1998/pincex_unified/internal/userauth/models"
 	"github.com/Aidin1998/pincex_unified/pkg/models"
 	"github.com/google/uuid"
@@ -163,10 +162,10 @@ func TestBackupCodes(t *testing.T) {
 	// Store backup codes (we would hash these in a real implementation)
 	for _, code := range codes {
 		backupCode := usermodels.TwoFactorAuth{
-			ID:         uuid.New(),
-			UserID:     userID,
-			TOTPSecret: code, // In real implementation, this would be hashed
-			BackupCodes: "", // Empty since we're storing each code separately
+			ID:          uuid.New(),
+			UserID:      userID,
+			TOTPSecret:  code, // In real implementation, this would be hashed
+			BackupCodes: "",   // Empty since we're storing each code separately
 			IsEnabled:   false,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
