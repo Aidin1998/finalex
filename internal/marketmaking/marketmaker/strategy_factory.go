@@ -26,8 +26,9 @@ type StrategyMetadata struct {
 	Version     string                `json:"version"`
 }
 
-// ParameterDefinition defines a strategy parameter
-type ParameterDefinition struct {
+// FactoryParameterDefinition defines a strategy parameter
+// Renamed to avoid conflict with admin_tools.go
+type FactoryParameterDefinition struct {
 	Name        string      `json:"name"`
 	Type        string      `json:"type"`
 	Default     interface{} `json:"default"`

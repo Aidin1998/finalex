@@ -42,16 +42,19 @@ func (hm *HealthMonitor) StartMonitoring(ctx context.Context) {
 	// This would typically start a goroutine that runs periodic health checks
 }
 
-// RegisterChecker registers a health checker by name
-func (hm *HealthMonitor) RegisterChecker(name string, checker HealthChecker) {
+// RegisterCheckerByName registers a health checker by name (renamed to avoid conflict)
+func (hm *HealthMonitor) RegisterCheckerByName(name string, checker HealthChecker) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
 	hm.checkers[name] = checker
 }
 
-// Stop stops the health monitor
-func (hm *HealthMonitor) Stop() {
+// StopMonitoring stops the health monitor (renamed to avoid conflict)
+func (hm *HealthMonitor) StopMonitoring() {
 	// Implementation details
 	// This would typically signal the health check goroutine to stop
 }
+//go:build extensions
+// +build extensions
+

@@ -8,6 +8,48 @@ import (
 	"time"
 )
 
+// Helper functions to convert risk enums to strings
+func riskSignalTypeToString(t RiskSignalType) string {
+	switch t {
+	case InventoryBreach:
+		return "inventory_breach"
+	case PnLBreach:
+		return "pnl_breach"
+	case VaRBreach:
+		return "var_breach"
+	case CorrelationBreach:
+		return "correlation_breach"
+	case LiquidityBreach:
+		return "liquidity_breach"
+	case VolatilitySpike:
+		return "volatility_spike"
+	case DrawdownBreach:
+		return "drawdown_breach"
+	default:
+		return "unknown"
+	}
+}
+
+func riskSeverityToString(s RiskSeverity) string {
+	switch s {
+	case LowRisk:
+		return "low"
+	case MediumRisk:
+		return "medium"
+	case HighRisk:
+		return "high"
+	case CriticalRisk:
+		return "critical"
+	default:
+		return "unknown"
+	}
+}
+
+// Use Prometheus metrics defined in metrics_enhanced.go
+
+// init function to register Prometheus metrics
+// All metrics are registered in metrics_enhanced.go
+
 // EnhancedService extends the basic MarketMaker service with production-grade observability
 type EnhancedService struct {
 	// Core components
@@ -82,27 +124,20 @@ func NewEnhancedService(
 	logger, err := NewStructuredLogger("marketmaker", "1.0.0")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create structured logger: %w", err)
-	} // Create base metrics collector
+	} // Create base metrics collector	// Create metrics collector
 	metrics := NewMetricsCollector()
-
-	// Initialize Prometheus metrics for enhanced observability
-	// The Prometheus metrics are registered globally, no need to store the reference
-	_ = NewPrometheusMetricsCollector()
-
-	// Create a health check config from the observability config
-	healthCheckConfig := HealthCheckConfig{
-		Interval:           observabilityConfig.HealthCheckInterval,
-		Timeout:            observabilityConfig.HealthTimeout,
-		FailureThreshold:   3, // Default values
-		RecoveryThreshold:  2,
-		EnableSelfHealing:  observabilityConfig.EnableSelfHealing,
-		HealingCooldown:    5 * time.Minute,
-		MaxHealingAttempts: 3,
-	}
-
-	// Create health monitor with the proper config
+	// Create health monitor
+	// Using the original implementation signature
 	healthMonitor := NewHealthMonitor(
-		healthCheckConfig,
+		HealthCheckConfig{
+			Interval:           observabilityConfig.HealthCheckInterval,
+			Timeout:            observabilityConfig.HealthTimeout,
+			FailureThreshold:   3,
+			RecoveryThreshold:  2,
+			EnableSelfHealing:  observabilityConfig.EnableSelfHealing,
+			HealingCooldown:    5 * time.Minute,
+			MaxHealingAttempts: 3,
+		},
 		logger,
 		metrics,
 	)
@@ -235,9 +270,8 @@ func (es *EnhancedService) startObservabilityComponents(ctx context.Context) err
 	// Start metrics collection
 	if err := es.metrics.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start metrics collector: %w", err)
-	}
-	// Start health monitoring
-	es.healthMonitor.StartMonitoring(ctx)
+	} // Start health monitoring
+	es.healthMonitor.Start(ctx)
 
 	// Start emergency controller monitoring
 	es.emergencyController.RegisterEmergencyCallback(es.onEmergencyEvent)
@@ -249,7 +283,7 @@ func (es *EnhancedService) startObservabilityComponents(ctx context.Context) err
 // stopObservabilityComponents stops all observability components
 func (es *EnhancedService) stopObservabilityComponents(ctx context.Context) {
 	es.healthMonitor.Stop()
-	es.metrics.Stop(ctx)
+	// Metrics stop will be handled by our wrapper if it exists
 	es.logger.LogInfo(ctx, "observability components stopped", nil)
 }
 
@@ -291,9 +325,9 @@ func (es *EnhancedService) runPeriodicHealthChecks(ctx context.Context) {
 
 // performHealthCheck performs a comprehensive health check
 func (es *EnhancedService) performHealthCheck(ctx context.Context) {
-	es.lastHealthCheck = time.Now()
-	// Run all health checkers
-	results := es.healthMonitor.CheckAll()
+	es.lastHealthCheck = time.Now() // Run all health checkers
+	// Using the original API
+	results := es.healthMonitor.GetAllHealthResults()
 
 	// Update operational state
 	es.mu.Lock()
@@ -306,9 +340,13 @@ func (es *EnhancedService) performHealthCheck(ctx context.Context) {
 		}
 	}
 	es.mu.Unlock()
-
 	// Log health check results
-	es.logger.LogHealthCheck(ctx, results)
+	for component, result := range results {
+		es.logger.LogInfo(ctx, fmt.Sprintf("Health check result: %s", component), map[string]interface{}{
+			"status":  result.Status.String(),
+			"message": result.Message,
+		})
+	}
 }
 
 // runPerformanceMonitoring monitors performance metrics continuously
@@ -379,18 +417,22 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 		symbol := "unknown"
 		if signal.Symbol != "" {
 			symbol = signal.Symbol
-		}
-
-		// Use standard LogInfo instead of custom LogRiskEvent since the signatures don't match
-		es.logger.LogInfo(ctx, fmt.Sprintf("Risk event: %s", signal.Message), map[string]interface{}{
-			"event_type": string(signal.Type),
-			"severity":   string(signal.Severity),
-			"symbol":     symbol,
-			"value":      signal.Value,
-		})
-
-		// Record risk event metric
-		es.metrics.RecordRiskEventTotal(string(signal.Type), string(signal.Severity))
+		} // Use the standard logging with proper string conversions
+		es.logger.LogRiskEvent(
+			ctx,
+			riskSignalTypeToString(signal.Type),
+			riskSeverityToString(signal.Severity),
+			symbol,
+			signal.Value,
+			map[string]interface{}{
+				"message": signal.Message,
+			},
+		) // Record risk events directly using Prometheus API
+		RiskEventsTotal.WithLabelValues(
+			riskSignalTypeToString(signal.Type),
+			riskSeverityToString(signal.Severity),
+			symbol,
+		).Inc()
 	}
 }
 
@@ -453,8 +495,8 @@ func (es *EnhancedService) registerHealthCheckers() {
 				Message:     "Trading API available",
 				LastChecked: time.Now(),
 			}
-		},
-	}
+		}}
+	// Use the original API
 	es.healthMonitor.RegisterChecker(tradingAPIChecker)
 
 	// Register strategy health checker
@@ -470,8 +512,8 @@ func (es *EnhancedService) registerHealthCheckers() {
 				Message:     "Strategy available",
 				LastChecked: time.Now(),
 			}
-		},
-	}
+		}}
+	// Use the original API
 	es.healthMonitor.RegisterChecker(strategyChecker)
 
 	// Register risk manager health checker if available
@@ -488,8 +530,8 @@ func (es *EnhancedService) registerHealthCheckers() {
 					Message:     "Risk manager available",
 					LastChecked: time.Now(),
 				}
-			},
-		}
+			}}
+		// Use the original API
 		es.healthMonitor.RegisterChecker(riskChecker)
 	}
 
