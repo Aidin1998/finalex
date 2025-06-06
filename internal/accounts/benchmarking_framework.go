@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -338,7 +339,7 @@ func (bf *BenchmarkingFramework) runReadBenchmark(execution *BenchmarkExecution)
 
 				// Measure operation
 				start := time.Now()
-				_, err := bf.dataManager.GetAccount(execution.Ctx, userID)
+				_, err := bf.dataManager.GetAccount(execution.Ctx, userID, "USD")
 				duration := time.Since(start)
 
 				// Record measurement
@@ -370,7 +371,7 @@ func (bf *BenchmarkingFramework) runWriteBenchmark(execution *BenchmarkExecution
 
 				// Measure operation
 				start := time.Now()
-				err := bf.dataManager.CreateAccount(execution.Ctx, account)
+				err := bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
 				duration := time.Since(start)
 
 				// Record measurement
@@ -408,12 +409,12 @@ func (bf *BenchmarkingFramework) runMixedBenchmark(execution *BenchmarkExecution
 					// Read operation
 					operation = "read"
 					userID := userIDs[rand.Intn(len(userIDs))]
-					_, err = bf.dataManager.GetAccount(execution.Ctx, userID)
+					_, err = bf.dataManager.GetAccount(execution.Ctx, userID, "USD")
 				} else {
 					// Write operation
 					operation = "write"
 					account := bf.generateTestAccount()
-					err = bf.dataManager.CreateAccount(execution.Ctx, account)
+					err = bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
 				}
 
 				duration := time.Since(start)
@@ -441,7 +442,7 @@ func (bf *BenchmarkingFramework) runCacheHitBenchmark(execution *BenchmarkExecut
 
 	// Warm up cache
 	for _, userID := range userIDs {
-		bf.dataManager.GetAccount(execution.Ctx, userID)
+		bf.dataManager.GetAccount(execution.Ctx, userID, "USD")
 	}
 
 	return bf.runWorkload(execution, func(workerID int) error {
@@ -454,7 +455,7 @@ func (bf *BenchmarkingFramework) runCacheHitBenchmark(execution *BenchmarkExecut
 				userID := userIDs[rand.Intn(len(userIDs))]
 
 				start := time.Now()
-				_, err := bf.dataManager.GetAccount(execution.Ctx, userID)
+				_, err := bf.dataManager.GetAccount(execution.Ctx, userID, "USD")
 				duration := time.Since(start)
 
 				bf.recordMeasurement(execution, "cache_hit", start, duration, err == nil, err)
@@ -484,7 +485,7 @@ func (bf *BenchmarkingFramework) runCacheMissBenchmark(execution *BenchmarkExecu
 				userID := uuid.New()
 
 				start := time.Now()
-				_, err := bf.dataManager.GetAccount(execution.Ctx, userID)
+				_, err := bf.dataManager.GetAccount(execution.Ctx, userID, "USD")
 				duration := time.Since(start)
 
 				bf.recordMeasurement(execution, "cache_miss", start, duration, err == nil, err)
@@ -516,14 +517,14 @@ func (bf *BenchmarkingFramework) runShardingBenchmark(execution *BenchmarkExecut
 				start := time.Now()
 
 				// Test shard resolution
-				shard := bf.shardManager.GetShard(account.UserID.String())
-				if shard == nil {
+				partition := bf.shardManager.GetAccountPartition(account.UserID)
+				if partition == nil {
 					atomic.AddInt64(&execution.ErrorCount, 1)
 					continue
 				}
 
 				// Test operation
-				err := bf.dataManager.CreateAccount(execution.Ctx, account)
+				err := bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
 				duration := time.Since(start)
 
 				bf.recordMeasurement(execution, "sharding", start, duration, err == nil, err)
@@ -775,7 +776,7 @@ func (bf *BenchmarkingFramework) warmupCache(ctx context.Context, config *Benchm
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			_, err := bf.dataManager.GetAccount(ctx, userID)
+			_, err := bf.dataManager.GetAccount(ctx, userID, "USD")
 			if err != nil {
 				bf.logger.Debug("Cache warmup error", zap.Error(err))
 			}
@@ -791,7 +792,7 @@ func (bf *BenchmarkingFramework) cleanup(ctx context.Context, config *BenchmarkC
 
 	// Clear cache if needed
 	if bf.hotCache != nil {
-		bf.hotCache.Clear()
+		bf.hotCache.Clear(context.Background())
 	}
 
 	// Run garbage collection
@@ -810,13 +811,13 @@ func (bf *BenchmarkingFramework) generateTestUserIDs(count int) []uuid.UUID {
 // generateTestAccount generates a test account
 func (bf *BenchmarkingFramework) generateTestAccount() *Account {
 	return &Account{
-		UserID:    uuid.New(),
-		Type:      "spot",
-		Status:    "active",
-		Balance:   1000.0,
-		Currency:  "USD",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		UserID:      uuid.New(),
+		AccountType: "spot",
+		Status:      "active",
+		Balance:     decimal.NewFromFloat(1000.0),
+		Currency:    "USD",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 }
 

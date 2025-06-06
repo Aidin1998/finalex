@@ -159,8 +159,8 @@ func main() {
 		zapLogger.Fatal("Failed to create bookkeeper service", zap.Error(err))
 	}
 
-	// Update transaction suite with bookkeeper service
-	transactionSuite.BookkeeperXA = transaction.NewBookkeeperXAResource(bookkeeperSvc, db, zapLogger)
+	bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(bookkeeperSvc, nil)
+	transactionSuite.BookkeeperXA = transaction.NewBookkeeperXAResource(bookkeeperXAService, zapLogger)
 
 	// Create userauth service (includes auth, identities, and KYC)
 	userauthSvc, err := userauth.NewService(zapLogger, db, simpleRedis)

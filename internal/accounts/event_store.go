@@ -350,9 +350,9 @@ func (es *EventStore) CreateSnapshot(ctx context.Context, aggregateID string, ag
 		Data:          serializedData,
 		CreatedAt:     time.Now(),
 	}
-
 	// TODO: Implement database save
-	// This would save to the event_snapshots table
+	_ = snapshot // suppress unused variable warning
+
 	es.logger.Info("Snapshot created",
 		zap.String("aggregate_id", aggregateID),
 		zap.String("aggregate_type", aggregateType),
@@ -514,68 +514,303 @@ func (es *EventStore) checkAndCreateSnapshot(ctx context.Context, event Event) {
 	}
 }
 
-// Helper function to create domain events
+// Saga pattern interfaces and implementations for complex transaction workflows
 
-// NewBalanceUpdatedEvent creates a new balance updated event
-func NewBalanceUpdatedEvent(userID uuid.UUID, currency string, balanceDelta, lockedDelta decimal.Decimal, txType, referenceID, traceID string) *BalanceUpdatedEvent {
-	return &BalanceUpdatedEvent{
-		BaseEvent: BaseEvent{
-			ID:          uuid.New(),
-			Type:        "balance_updated",
-			AggregateID: fmt.Sprintf("account:%s:%s", userID.String(), currency),
-			Version:     1, // This should be incremented based on aggregate version
-			Timestamp:   time.Now(),
-			Metadata:    make(map[string]interface{}),
-		},
-		UserID:       userID,
-		Currency:     currency,
-		BalanceDelta: balanceDelta,
-		LockedDelta:  lockedDelta,
-		Type:         txType,
-		ReferenceID:  referenceID,
-		TraceID:      traceID,
-		Timestamp:    time.Now(),
+// Saga represents a long-running transaction with compensation logic
+type Saga interface {
+	GetID() uuid.UUID
+	HandleEvent(event Event) error
+	GetState() SagaState
+	GetCompensations() []CompensationStep
+}
+
+// SagaState represents the current state of a saga
+type SagaState string
+
+const (
+	SagaStateInitialized SagaState = "initialized"
+	SagaStateInProgress  SagaState = "in_progress"
+	SagaStateCompleted   SagaState = "completed"
+	SagaStateFailed      SagaState = "failed"
+	SagaStateCompensated SagaState = "compensated"
+)
+
+// SagaStep represents a step in a saga transaction
+type SagaStep interface {
+	Execute() error
+	GetCompensation() CompensationStep
+}
+
+// CompensationStep represents a compensation action for a failed saga
+type CompensationStep interface {
+	Execute() error
+}
+
+// SagaManager orchestrates multi-step transactions using saga pattern
+type SagaManager struct {
+	sagas      sync.Map // sagaID -> Saga
+	eventStore *EventStore
+	logger     *zap.Logger
+	metrics    *SagaMetrics
+}
+
+// SagaMetrics tracks saga performance and outcomes
+type SagaMetrics struct {
+	SagasStarted     prometheus.Counter
+	SagasCompleted   prometheus.Counter
+	SagasFailed      prometheus.Counter
+	SagasCompensated prometheus.Counter
+	SagaDuration     prometheus.Histogram
+}
+
+// TransferSaga implements account-to-account transfer using saga pattern
+type TransferSaga struct {
+	BaseEvent
+	sagaID        uuid.UUID
+	fromUserID    uuid.UUID
+	toUserID      uuid.UUID
+	amount        decimal.Decimal
+	currency      string
+	state         SagaState
+	compensations []CompensationStep
+	steps         []SagaStep
+	currentStep   int
+	logger        *zap.Logger
+	createdAt     time.Time
+}
+
+// Saga-related events
+type SagaStartedEvent struct {
+	BaseEvent
+	SagaID     uuid.UUID              `json:"saga_id"`
+	SagaType   string                 `json:"saga_type"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
+type SagaCompletedEvent struct {
+	BaseEvent
+	SagaID uuid.UUID   `json:"saga_id"`
+	Result interface{} `json:"result"`
+}
+
+type SagaFailedEvent struct {
+	BaseEvent
+	SagaID uuid.UUID `json:"saga_id"`
+	Error  string    `json:"error"`
+}
+
+type SagaCompensatedEvent struct {
+	BaseEvent
+	SagaID uuid.UUID `json:"saga_id"`
+}
+
+// Transaction-specific events
+type TransferInitiatedEvent struct {
+	BaseEvent
+	TransferID uuid.UUID       `json:"transfer_id"`
+	FromUserID uuid.UUID       `json:"from_user_id"`
+	ToUserID   uuid.UUID       `json:"to_user_id"`
+	Amount     decimal.Decimal `json:"amount"`
+	Currency   string          `json:"currency"`
+}
+
+type FundsReservedEvent struct {
+	BaseEvent
+	ReservationID uuid.UUID       `json:"reservation_id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Amount        decimal.Decimal `json:"amount"`
+	Currency      string          `json:"currency"`
+}
+
+type FundsReleasedEvent struct {
+	BaseEvent
+	ReservationID uuid.UUID       `json:"reservation_id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Amount        decimal.Decimal `json:"amount"`
+	Currency      string          `json:"currency"`
+}
+
+// NewSagaManager creates a new saga manager
+func NewSagaManager(eventStore *EventStore, logger *zap.Logger) *SagaManager {
+	metrics := &SagaMetrics{
+		SagasStarted: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "saga_transactions_started_total",
+			Help: "Total number of saga transactions started",
+		}),
+		SagasCompleted: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "saga_transactions_completed_total",
+			Help: "Total number of saga transactions completed",
+		}),
+		SagasFailed: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "saga_transactions_failed_total",
+			Help: "Total number of saga transactions failed",
+		}),
+		SagasCompensated: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "saga_transactions_compensated_total",
+			Help: "Total number of saga transactions compensated",
+		}),
+		SagaDuration: promauto.NewHistogram(prometheus.HistogramOpts{
+			Name:    "saga_transaction_duration_seconds",
+			Help:    "Duration of saga transactions in seconds",
+			Buckets: prometheus.DefBuckets,
+		}),
+	}
+
+	return &SagaManager{
+		eventStore: eventStore,
+		logger:     logger,
+		metrics:    metrics,
 	}
 }
 
-// NewReservationCreatedEvent creates a new reservation created event
-func NewReservationCreatedEvent(reservationID, userID uuid.UUID, currency string, amount decimal.Decimal, resType, referenceID, traceID string) *ReservationCreatedEvent {
-	return &ReservationCreatedEvent{
+// StartSaga initiates a new saga transaction
+func (sm *SagaManager) StartSaga(ctx context.Context, saga Saga) error {
+	sm.metrics.SagasStarted.Inc()
+	sm.sagas.Store(saga.GetID(), saga)
+
+	// Create saga started event
+	event := &SagaStartedEvent{
 		BaseEvent: BaseEvent{
 			ID:          uuid.New(),
-			Type:        "reservation_created",
-			AggregateID: fmt.Sprintf("reservation:%s", reservationID.String()),
+			Type:        "saga_started",
+			AggregateID: saga.GetID().String(),
 			Version:     1,
 			Timestamp:   time.Now(),
-			Metadata:    make(map[string]interface{}),
+			Metadata:    map[string]interface{}{"saga_id": saga.GetID()},
 		},
-		ReservationID: reservationID,
-		UserID:        userID,
-		Currency:      currency,
-		Amount:        amount,
-		Type:          resType,
-		ReferenceID:   referenceID,
-		TraceID:       traceID,
-		Timestamp:     time.Now(),
+		SagaID:   saga.GetID(),
+		SagaType: fmt.Sprintf("%T", saga),
+	}
+
+	return sm.eventStore.PublishEvent(ctx, event)
+}
+
+// HandleEvent processes events for saga orchestration
+func (sm *SagaManager) HandleEvent(ctx context.Context, event Event) {
+	// Check if event has saga ID in metadata
+	if sagaIDStr, ok := event.GetMetadata()["saga_id"]; ok {
+		if sagaID, err := uuid.Parse(fmt.Sprintf("%v", sagaIDStr)); err == nil {
+			if saga, ok := sm.sagas.Load(sagaID); ok {
+				if err := saga.(Saga).HandleEvent(event); err != nil {
+					sm.logger.Error("Saga event handling failed",
+						zap.String("saga_id", sagaID.String()),
+						zap.Error(err))
+					sm.handleSagaFailure(ctx, saga.(Saga), err)
+					return
+				}
+
+				// Check saga state and handle completion/failure
+				state := saga.(Saga).GetState()
+				switch state {
+				case SagaStateCompleted:
+					sm.handleSagaCompletion(ctx, saga.(Saga))
+				case SagaStateFailed:
+					sm.handleSagaFailure(ctx, saga.(Saga), fmt.Errorf("saga failed"))
+				}
+			}
+		}
 	}
 }
 
-// NewAccountCreatedEvent creates a new account created event
-func NewAccountCreatedEvent(accountID, userID uuid.UUID, currency, accountType, traceID string) *AccountCreatedEvent {
-	return &AccountCreatedEvent{
+// handleSagaCompletion handles successful saga completion
+func (sm *SagaManager) handleSagaCompletion(ctx context.Context, saga Saga) {
+	sm.metrics.SagasCompleted.Inc()
+	sm.sagas.Delete(saga.GetID())
+
+	// Publish saga completed event
+	event := &SagaCompletedEvent{
 		BaseEvent: BaseEvent{
 			ID:          uuid.New(),
-			Type:        "account_created",
-			AggregateID: fmt.Sprintf("account:%s:%s", userID.String(), currency),
+			Type:        "saga_completed",
+			AggregateID: saga.GetID().String(),
 			Version:     1,
 			Timestamp:   time.Now(),
-			Metadata:    make(map[string]interface{}),
+			Metadata:    map[string]interface{}{"saga_id": saga.GetID()},
 		},
-		AccountID:   accountID,
-		UserID:      userID,
-		Currency:    currency,
-		AccountType: accountType,
-		TraceID:     traceID,
-		Timestamp:   time.Now(),
+		SagaID: saga.GetID(),
 	}
+
+	sm.eventStore.PublishEvent(ctx, event)
+}
+
+// handleSagaFailure handles saga failure and initiates compensation
+func (sm *SagaManager) handleSagaFailure(ctx context.Context, saga Saga, err error) {
+	sm.metrics.SagasFailed.Inc()
+
+	// Execute compensations in reverse order
+	compensations := saga.GetCompensations()
+	for i := len(compensations) - 1; i >= 0; i-- {
+		if compErr := compensations[i].Execute(); compErr != nil {
+			sm.logger.Error("Compensation step failed",
+				zap.String("saga_id", saga.GetID().String()),
+				zap.Int("step", i),
+				zap.Error(compErr))
+		}
+	}
+
+	sm.metrics.SagasCompensated.Inc()
+	sm.sagas.Delete(saga.GetID())
+
+	// Publish saga compensated event
+	event := &SagaCompensatedEvent{
+		BaseEvent: BaseEvent{
+			ID:          uuid.New(),
+			Type:        "saga_compensated",
+			AggregateID: saga.GetID().String(),
+			Version:     1,
+			Timestamp:   time.Now(),
+			Metadata:    map[string]interface{}{"saga_id": saga.GetID()},
+		},
+		SagaID: saga.GetID(),
+	}
+
+	sm.eventStore.PublishEvent(ctx, event)
+}
+
+// NewTransferSaga creates a new transfer saga
+func NewTransferSaga(fromUserID, toUserID uuid.UUID, amount decimal.Decimal, currency string, logger *zap.Logger) *TransferSaga {
+	sagaID := uuid.New()
+	return &TransferSaga{
+		BaseEvent: BaseEvent{
+			ID:          sagaID,
+			Type:        "transfer_saga",
+			AggregateID: sagaID.String(),
+			Version:     1,
+			Timestamp:   time.Now(),
+			Metadata:    map[string]interface{}{"saga_id": sagaID},
+		},
+		sagaID:     sagaID,
+		fromUserID: fromUserID,
+		toUserID:   toUserID,
+		amount:     amount,
+		currency:   currency,
+		state:      SagaStateInitialized,
+		logger:     logger,
+		createdAt:  time.Now(),
+	}
+}
+
+// TransferSaga implementation
+func (ts *TransferSaga) GetID() uuid.UUID {
+	return ts.sagaID
+}
+
+func (ts *TransferSaga) HandleEvent(event Event) error {
+	switch event.GetType() {
+	case "transfer_initiated":
+		ts.state = SagaStateInProgress
+	case "transfer_completed":
+		ts.state = SagaStateCompleted
+	case "transfer_failed":
+		ts.state = SagaStateFailed
+	}
+	return nil
+}
+
+func (ts *TransferSaga) GetState() SagaState {
+	return ts.state
+}
+
+func (ts *TransferSaga) GetCompensations() []CompensationStep {
+	return ts.compensations
 }

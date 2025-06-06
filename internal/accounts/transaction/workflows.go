@@ -75,7 +75,8 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 	}
 
 	// Create XA resources with correct constructors
-	bookkeeperXA := NewBookkeeperXAResource(dto.bookkeeperSvc, nil, dto.logger)
+	bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(dto.bookkeeperSvc, nil)
+	bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, dto.logger)
 	settlementXA := NewSettlementXAResource(dto.settlementEngine, nil, dto.logger)
 
 	// Enlist resources in transaction
@@ -224,7 +225,8 @@ func (dto *DistributedTransactionOrchestrator) FiatDepositWorkflow(
 	}
 
 	// Create XA resources
-	bookkeeperXA := NewBookkeeperXAResource(dto.bookkeeperSvc, nil, dto.logger)
+	bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(dto.bookkeeperSvc, nil)
+	bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, dto.logger)
 	fiatXA := NewFiatXAResource(dto.fiatSvc, nil, dto.logger, xaTx.ID.String())
 
 	// Enlist resources
@@ -309,7 +311,8 @@ func (dto *DistributedTransactionOrchestrator) CryptoWithdrawalWorkflow(
 			if err != nil {
 				return fmt.Errorf("failed to begin transaction for fund locking: %w", err)
 			}
-			bookkeeperXA := NewBookkeeperXAResource(dto.bookkeeperSvc, nil, dto.logger)
+			bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(dto.bookkeeperSvc, nil)
+			bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, dto.logger)
 			if err := dto.xaManager.Enlist(xaTx, bookkeeperXA); err != nil {
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to enlist bookkeeper resource: %w", err)
@@ -334,7 +337,8 @@ func (dto *DistributedTransactionOrchestrator) CryptoWithdrawalWorkflow(
 			if err != nil {
 				return fmt.Errorf("failed to begin compensation transaction: %w", err)
 			}
-			bookkeeperXA := NewBookkeeperXAResource(dto.bookkeeperSvc, nil, dto.logger)
+			bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(dto.bookkeeperSvc, nil)
+			bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, dto.logger)
 			if err := dto.xaManager.Enlist(xaTx, bookkeeperXA); err != nil {
 				dto.xaManager.Abort(ctx, xaTx)
 				return fmt.Errorf("failed to enlist bookkeeper resource for compensation: %w", err)
@@ -414,7 +418,8 @@ func (dto *DistributedTransactionOrchestrator) CrossServiceTransferWorkflow(
 	}
 
 	// Create and enlist resources based on transfer type
-	bookkeeperXA := NewBookkeeperXAResource(dto.bookkeeperSvc, nil, dto.logger)
+	bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(dto.bookkeeperSvc, nil)
+	bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, dto.logger)
 	if err := dto.xaManager.Enlist(xaTx, bookkeeperXA); err != nil {
 		dto.xaManager.Abort(ctx, xaTx)
 		return fmt.Errorf("failed to enlist bookkeeper resource: %w", err)

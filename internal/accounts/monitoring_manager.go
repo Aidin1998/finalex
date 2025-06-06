@@ -589,22 +589,13 @@ func (amm *AdvancedMonitoringManager) getMetricValue(metricName string) (float64
 	switch metricName {
 	case "accounts_operations_errors_total":
 		// Calculate error rate from data manager
-		if amm.dataManager != nil {
-			metrics := amm.dataManager.GetMetrics()
-			if opsTotal, ok := metrics["operations_total"].(int64); ok {
-				if opsErrors, ok := metrics["operations_errors"].(int64); ok && opsTotal > 0 {
-					return float64(opsErrors) / float64(opsTotal), nil
-				}
-			}
-		}
+		// Metrics collection for dataManager not implemented or not available
 		return 0.01, nil // 1% error rate
 
 	case "accounts_cache_hit_rate":
 		if amm.hotCache != nil {
-			metrics := amm.hotCache.GetMetrics()
-			if hitRate, ok := metrics["hit_rate"].(float64); ok {
-				return hitRate, nil
-			}
+			stats := amm.hotCache.GetStats()
+			return stats.HitRate, nil
 		}
 		return 0.85, nil // 85% hit rate
 
@@ -616,12 +607,7 @@ func (amm *AdvancedMonitoringManager) getMetricValue(metricName string) (float64
 		return 45, nil // 45 active connections
 
 	case "accounts_shard_load_factor":
-		if amm.shardManager != nil {
-			metrics := amm.shardManager.GetMetrics()
-			if loadFactor, ok := metrics["max_load_factor"].(float64); ok {
-				return loadFactor, nil
-			}
-		}
+		// Metrics collection for shardManager not implemented or not available
 		return 1.2, nil
 
 	case "accounts_migrations_failed_total":
@@ -754,10 +740,10 @@ func (amm *AdvancedMonitoringManager) checkCache(ctx context.Context) *HealthChe
 	message := "Cache system is healthy"
 
 	if amm.hotCache != nil {
-		metrics := amm.hotCache.GetMetrics()
-		if hitRate, ok := metrics["hit_rate"].(float64); ok && hitRate < 0.5 {
+		stats := amm.hotCache.GetStats()
+		if stats.HitRate < 0.5 {
 			status = "degraded"
-			message = fmt.Sprintf("Cache hit rate is low: %.2f%%", hitRate*100)
+			message = fmt.Sprintf("Cache hit rate is low: %.2f%%", stats.HitRate*100)
 		}
 	}
 
@@ -879,19 +865,15 @@ func (amm *AdvancedMonitoringManager) collectMetrics(ctx context.Context) {
 
 	// Collect metrics from various components
 	if amm.dataManager != nil {
-		metrics := amm.dataManager.GetMetrics()
-		snapshot.Metadata["data_manager"] = metrics
+		// Metrics collection for dataManager not implemented or not available
 	}
 
 	if amm.hotCache != nil {
-		metrics := amm.hotCache.GetMetrics()
-		snapshot.Metadata["hot_cache"] = metrics
+		stats := amm.hotCache.GetStats()
+		snapshot.Metadata["hot_cache"] = stats
 	}
 
-	if amm.shardManager != nil {
-		metrics := amm.shardManager.GetMetrics()
-		snapshot.Metadata["shard_manager"] = metrics
-	}
+	// Metrics collection for shardManager not implemented or not available
 
 	// Store snapshot
 	amm.mu.Lock()

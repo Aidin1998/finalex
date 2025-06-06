@@ -121,20 +121,26 @@ type BookkeeperService interface {
 	BatchUnlockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
 }
 
-// Service implements BookkeeperService
+// Service implements BookkeeperService and BookkeeperXAService
 type Service struct {
 	logger    *zap.Logger
 	db        *gorm.DB
 	muMap     map[string]*sync.Mutex
 	muMapLock sync.Mutex // protects muMap
+
+	// XA transaction management
+	pendingXATransactions map[string]*XATransaction
+	xaMutex               sync.RWMutex
 }
 
 // NewService creates a new BookkeeperService
 func NewService(logger *zap.Logger, db *gorm.DB) (BookkeeperService, error) {
 	// Create service
 	svc := &Service{
-		logger: logger,
-		db:     db,
+		logger:                logger,
+		db:                    db,
+		muMap:                 make(map[string]*sync.Mutex),
+		pendingXATransactions: make(map[string]*XATransaction),
 	}
 
 	return svc, nil
@@ -1353,4 +1359,515 @@ func (s *Service) processBatchUnlockFunds(ctx context.Context, operations []Fund
 	}
 
 	return nil
+}
+
+// XA Transaction Support
+
+// XID represents a distributed transaction identifier
+type XID struct {
+	FormatID    int32
+	BranchID    []byte
+	GlobalTxnID []byte
+}
+
+func (x XID) String() string {
+	return fmt.Sprintf("%d-%x-%x", x.FormatID, x.GlobalTxnID, x.BranchID)
+}
+
+// XAResource defines the interface for XA transaction resources
+type XAResource interface {
+	GetResourceName() string
+	StartXA(xid XID) error
+	EndXA(xid XID, flags int) error
+	PrepareXA(xid XID) error
+	CommitXA(xid XID, onePhase bool) error
+	RollbackXA(xID XID) error
+	RecoverXA() ([]XID, error)
+}
+
+// XATransaction represents an XA transaction context
+type XATransaction struct {
+	XID              XID
+	Operations       []XAOperation
+	CompensationData map[string]interface{}
+	DBTransaction    *gorm.DB
+	State            string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// XAOperation represents an operation within an XA transaction
+type XAOperation struct {
+	Type        string // "lock_funds", "unlock_funds", "transfer", "create_transaction"
+	UserID      string
+	Currency    string
+	Amount      float64
+	FromUserID  string
+	ToUserID    string
+	Reference   string
+	Description string
+	Result      interface{}
+	Error       error
+	Timestamp   time.Time
+}
+
+// BookkeeperXAService extends BookkeeperService with XA transaction support
+type BookkeeperXAService interface {
+	BookkeeperService
+	XAResource
+
+	// XA-specific bookkeeper operations
+	LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error
+	UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error
+	TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error
+	CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error)
+}
+
+// XA Resource Implementation
+
+// GetResourceName returns the name of this XA resource
+func (s *Service) GetResourceName() string {
+	return "bookkeeper"
+}
+
+// StartXA begins a new XA transaction
+func (s *Service) StartXA(xid XID) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	if _, exists := s.pendingXATransactions[xidStr]; exists {
+		return fmt.Errorf("XA transaction already exists: %s", xidStr)
+	}
+
+	// Begin database transaction
+	dbTx := s.db.Begin()
+	if dbTx.Error != nil {
+		return fmt.Errorf("failed to begin database transaction: %w", dbTx.Error)
+	}
+
+	s.pendingXATransactions[xidStr] = &XATransaction{
+		XID:              xid,
+		Operations:       make([]XAOperation, 0),
+		CompensationData: make(map[string]interface{}),
+		DBTransaction:    dbTx,
+		State:            "active",
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	s.logger.Info("Started XA transaction",
+		zap.String("xid", xidStr))
+
+	return nil
+}
+
+// EndXA ends an XA transaction
+func (s *Service) EndXA(xid XID, flags int) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	txn.State = "ended"
+	txn.UpdatedAt = time.Now()
+
+	s.logger.Info("Ended XA transaction",
+		zap.String("xid", xidStr),
+		zap.Int("flags", flags))
+
+	return nil
+}
+
+// PrepareXA prepares an XA transaction for commit
+func (s *Service) PrepareXA(xid XID) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	if txn.State != "ended" {
+		return fmt.Errorf("XA transaction not in ended state: %s", txn.State)
+	}
+
+	// Validate all operations can be committed
+	for _, op := range txn.Operations {
+		if op.Error != nil {
+			s.logger.Error("XA transaction has failed operations",
+				zap.String("xid", xidStr),
+				zap.String("operation", op.Type),
+				zap.Error(op.Error))
+			return fmt.Errorf("XA transaction has failed operations")
+		}
+	}
+
+	txn.State = "prepared"
+	txn.UpdatedAt = time.Now()
+
+	s.logger.Info("Prepared XA transaction",
+		zap.String("xid", xidStr))
+
+	return nil
+}
+
+// CommitXA commits an XA transaction
+func (s *Service) CommitXA(xid XID, onePhase bool) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	if !onePhase && txn.State != "prepared" {
+		return fmt.Errorf("XA transaction not in prepared state: %s", txn.State)
+	}
+
+	// Commit the database transaction
+	if err := txn.DBTransaction.Commit().Error; err != nil {
+		s.logger.Error("Failed to commit XA transaction",
+			zap.String("xid", xidStr),
+			zap.Error(err))
+		return fmt.Errorf("failed to commit XA transaction: %w", err)
+	}
+
+	// Remove from pending transactions
+	delete(s.pendingXATransactions, xidStr)
+
+	s.logger.Info("Committed XA transaction",
+		zap.String("xid", xidStr),
+		zap.Bool("one_phase", onePhase))
+
+	return nil
+}
+
+// RollbackXA rolls back an XA transaction
+func (s *Service) RollbackXA(xid XID) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	// Rollback the database transaction
+	if err := txn.DBTransaction.Rollback().Error; err != nil {
+		s.logger.Error("Failed to rollback XA transaction",
+			zap.String("xid", xidStr),
+			zap.Error(err))
+		return fmt.Errorf("failed to rollback XA transaction: %w", err)
+	}
+
+	// Execute compensation operations if needed
+	s.executeCompensations(txn)
+
+	// Remove from pending transactions
+	delete(s.pendingXATransactions, xidStr)
+
+	s.logger.Info("Rolled back XA transaction",
+		zap.String("xid", xidStr))
+
+	return nil
+}
+
+// RecoverXA returns a list of prepared XA transactions for recovery
+func (s *Service) RecoverXA() ([]XID, error) {
+	s.xaMutex.RLock()
+	defer s.xaMutex.RUnlock()
+
+	var preparedXIDs []XID
+	for _, txn := range s.pendingXATransactions {
+		if txn.State == "prepared" {
+			preparedXIDs = append(preparedXIDs, txn.XID)
+		}
+	}
+
+	s.logger.Info("XA recovery found prepared transactions",
+		zap.Int("count", len(preparedXIDs)))
+
+	return preparedXIDs, nil
+}
+
+// XA-specific bookkeeper operations
+
+// LockFundsXA locks funds within an XA transaction
+func (s *Service) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	// Get current account state
+	var account models.Account
+	if err := txn.DBTransaction.Where("user_id = ? AND currency = ?", userID, currency).First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrAccountNotFound
+		}
+		return fmt.Errorf("failed to find account: %w", err)
+	}
+
+	// Store compensation data
+	compensationKey := fmt.Sprintf("lock_funds_%s_%s", userID, currency)
+	txn.CompensationData[compensationKey] = map[string]interface{}{
+		"original_available": account.Available,
+		"original_locked":    account.Locked,
+		"amount":             amount,
+	}
+
+	// Check if account has enough available funds
+	if account.Available < amount {
+		return ErrInsufficientFunds
+	}
+
+	// Update account within transaction
+	account.Available -= amount
+	account.Locked += amount
+	account.UpdatedAt = time.Now()
+
+	if err := txn.DBTransaction.Save(&account).Error; err != nil {
+		return fmt.Errorf("failed to lock funds: %w", err)
+	}
+
+	// Record operation
+	op := XAOperation{
+		Type:      "lock_funds",
+		UserID:    userID,
+		Currency:  currency,
+		Amount:    amount,
+		Timestamp: time.Now(),
+	}
+	txn.Operations = append(txn.Operations, op)
+
+	s.logger.Debug("Locked funds in XA transaction",
+		zap.String("xid", xidStr),
+		zap.String("user_id", userID),
+		zap.String("currency", currency),
+		zap.Float64("amount", amount))
+
+	return nil
+}
+
+// UnlockFundsXA unlocks funds within an XA transaction
+func (s *Service) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	// Get current account state
+	var account models.Account
+	if err := txn.DBTransaction.Where("user_id = ? AND currency = ?", userID, currency).First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrAccountNotFound
+		}
+		return fmt.Errorf("failed to find account: %w", err)
+	}
+
+	// Store compensation data
+	compensationKey := fmt.Sprintf("unlock_funds_%s_%s", userID, currency)
+	txn.CompensationData[compensationKey] = map[string]interface{}{
+		"original_available": account.Available,
+		"original_locked":    account.Locked,
+		"amount":             amount,
+	}
+
+	// Check if account has enough locked funds
+	if account.Locked < amount {
+		return fmt.Errorf("insufficient locked funds: locked %.8f, required %.8f", account.Locked, amount)
+	}
+
+	// Update account within transaction
+	account.Available += amount
+	account.Locked -= amount
+	account.UpdatedAt = time.Now()
+
+	if err := txn.DBTransaction.Save(&account).Error; err != nil {
+		return fmt.Errorf("failed to unlock funds: %w", err)
+	}
+
+	// Record operation
+	op := XAOperation{
+		Type:      "unlock_funds",
+		UserID:    userID,
+		Currency:  currency,
+		Amount:    amount,
+		Timestamp: time.Now(),
+	}
+	txn.Operations = append(txn.Operations, op)
+
+	s.logger.Debug("Unlocked funds in XA transaction",
+		zap.String("xid", xidStr),
+		zap.String("user_id", userID),
+		zap.String("currency", currency),
+		zap.Float64("amount", amount))
+
+	return nil
+}
+
+// TransferFundsXA transfers funds between accounts within an XA transaction
+func (s *Service) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	// Get both accounts
+	var fromAccount, toAccount models.Account
+
+	if err := txn.DBTransaction.Where("user_id = ? AND currency = ?", fromUserID, currency).First(&fromAccount).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("from account not found")
+		}
+		return fmt.Errorf("failed to find from account: %w", err)
+	}
+
+	if err := txn.DBTransaction.Where("user_id = ? AND currency = ?", toUserID, currency).First(&toAccount).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("to account not found")
+		}
+		return fmt.Errorf("failed to find to account: %w", err)
+	}
+
+	// Store compensation data
+	compensationKey := fmt.Sprintf("transfer_%s_%s_to_%s", fromUserID, currency, toUserID)
+	txn.CompensationData[compensationKey] = map[string]interface{}{
+		"from_original_available": fromAccount.Available,
+		"from_original_locked":    fromAccount.Locked,
+		"to_original_available":   toAccount.Available,
+		"to_original_locked":      toAccount.Locked,
+		"amount":                  amount,
+	}
+
+	// Check if from account has enough available funds
+	if fromAccount.Available < amount {
+		return ErrInsufficientFunds
+	}
+
+	// Update accounts
+	fromAccount.Available -= amount
+	toAccount.Available += amount
+
+	now := time.Now()
+	fromAccount.UpdatedAt = now
+	toAccount.UpdatedAt = now
+
+	// Save both accounts
+	if err := txn.DBTransaction.Save(&fromAccount).Error; err != nil {
+		return fmt.Errorf("failed to update from account: %w", err)
+	}
+
+	if err := txn.DBTransaction.Save(&toAccount).Error; err != nil {
+		return fmt.Errorf("failed to update to account: %w", err)
+	}
+
+	// Record operation
+	op := XAOperation{
+		Type:       "transfer",
+		FromUserID: fromUserID,
+		ToUserID:   toUserID,
+		Currency:   currency,
+		Amount:     amount,
+		Reference:  reference,
+		Timestamp:  now,
+	}
+	txn.Operations = append(txn.Operations, op)
+
+	s.logger.Debug("Transferred funds in XA transaction",
+		zap.String("xid", xidStr),
+		zap.String("from_user_id", fromUserID),
+		zap.String("to_user_id", toUserID),
+		zap.String("currency", currency),
+		zap.Float64("amount", amount),
+		zap.String("reference", reference))
+
+	return nil
+}
+
+// CreateTransactionXA creates a transaction within an XA transaction
+func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+	s.xaMutex.Lock()
+	defer s.xaMutex.Unlock()
+
+	xidStr := xid.String()
+	txn, exists := s.pendingXATransactions[xidStr]
+	if !exists {
+		return nil, fmt.Errorf("XA transaction not found: %s", xidStr)
+	}
+
+	// Create transaction record
+	transaction := &models.Transaction{
+		ID:          uuid.New(),
+		UserID:      uuid.MustParse(userID),
+		Type:        transactionType,
+		Amount:      amount,
+		Currency:    currency,
+		Reference:   reference,
+		Description: description,
+		Status:      "pending",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := txn.DBTransaction.Create(transaction).Error; err != nil {
+		return nil, fmt.Errorf("failed to create transaction: %w", err)
+	}
+
+	// Record operation
+	op := XAOperation{
+		Type:        "create_transaction",
+		UserID:      uuid.MustParse(userID),
+		Currency:    currency,
+		Amount:      amount,
+		Reference:   reference,
+		Description: description,
+		Result:      transaction,
+		Timestamp:   time.Now(),
+	}
+	txn.Operations = append(txn.Operations, op)
+
+	s.logger.Debug("Created transaction in XA transaction",
+		zap.String("xid", xidStr),
+		zap.String("user_id", userID),
+		zap.String("type", transactionType),
+		zap.Float64("amount", amount),
+		zap.String("currency", currency))
+
+	return transaction, nil
+}
+
+// executeCompensations executes compensation operations for a failed transaction
+func (s *Service) executeCompensations(txn *XATransaction) {
+	for key, data := range txn.CompensationData {
+		s.logger.Info("Executing compensation",
+			zap.String("xid", txn.XID.String()),
+			zap.String("compensation", key))
+
+		// Implementation depends on the specific compensation logic needed
+		// This is a placeholder for compensation execution
+		_ = data
+	}
 }

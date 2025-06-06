@@ -341,7 +341,6 @@ func (pm *PartitionManager) GetPartitionStats(ctx context.Context) (map[string]*
 func (pm *PartitionManager) initializePartitions() {
 	// Initialize default partitions based on configuration
 	partitionCount := pm.config.PartitionCount
-	hashSpace := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 	for i := 0; i < partitionCount; i++ {
 		partitionName := fmt.Sprintf("p%02d", i)
@@ -435,8 +434,8 @@ func (pm *PartitionManager) updateShardMap() {
 		}
 
 		// Map hash range to partition
-		startHash := partition.HashRange.Start
-		endHash := partition.HashRange.End
+		// startHash := partition.HashRange.Start
+		// endHash := partition.HashRange.End
 
 		// For simplicity, map the entire range to this partition
 		// In production, you'd have a more sophisticated mapping

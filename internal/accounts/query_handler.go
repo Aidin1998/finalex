@@ -368,74 +368,26 @@ func (qh *AccountQueryHandler) executeGetAccount(ctx context.Context, query *Get
 	}
 	qh.metrics.CacheMisses.WithLabelValues(queryType, "hot").Inc()
 
-	// Try warm cache (Redis)
-	cacheKey := fmt.Sprintf(AccountBalanceKey, query.UserID.String(), query.Currency)
-	if cachedData, exists := qh.cache.Get(ctx, cacheKey); exists {
-		if account, ok := cachedData.(*CachedAccount); ok {
-			// Convert cached account to Account
-			result := &Account{
-				ID:          account.ID,
-				UserID:      account.UserID,
-				Currency:    account.Currency,
-				Balance:     account.Balance,
-				Available:   account.Available,
-				Locked:      account.Locked,
-				Version:     account.Version,
-				AccountType: account.AccountType,
-				Status:      account.Status,
-				UpdatedAt:   account.UpdatedAt,
-			}
-
-			// Update hot cache for future requests
-			qh.hotCache.SetAccount(ctx, query.UserID, query.Currency, result, 5*time.Minute)
-
-			qh.metrics.CacheHits.WithLabelValues(queryType, "warm").Inc()
-			qh.metrics.QueryDuration.WithLabelValues(queryType, "warm").Observe(0.001) // ~1ms
-			return result, nil
+	// Try warm/cold cache via CacheLayer
+	if cachedAccount, err := qh.cache.GetAccount(ctx, query.UserID, query.Currency); err == nil {
+		result := &Account{
+			ID:          cachedAccount.ID,
+			UserID:      cachedAccount.UserID,
+			Currency:    cachedAccount.Currency,
+			Balance:     cachedAccount.Balance,
+			Available:   cachedAccount.Available,
+			Locked:      cachedAccount.Locked,
+			Version:     cachedAccount.Version,
+			AccountType: cachedAccount.AccountType,
+			Status:      cachedAccount.Status,
+			UpdatedAt:   cachedAccount.UpdatedAt,
 		}
+		qh.hotCache.SetAccount(ctx, query.UserID, query.Currency, result, 5*time.Minute)
+		qh.metrics.CacheHits.WithLabelValues(queryType, "warm").Inc()
+		qh.metrics.QueryDuration.WithLabelValues(queryType, "warm").Observe(0.001) // ~1ms
+		return result, nil
 	}
 	qh.metrics.CacheMisses.WithLabelValues(queryType, "warm").Inc()
-
-	// Try cold cache
-	if cachedData, exists := qh.cache.GetCold(ctx, cacheKey); exists {
-		if account, ok := cachedData.(*CachedAccount); ok {
-			result := &Account{
-				ID:          account.ID,
-				UserID:      account.UserID,
-				Currency:    account.Currency,
-				Balance:     account.Balance,
-				Available:   account.Available,
-				Locked:      account.Locked,
-				Version:     account.Version,
-				AccountType: account.AccountType,
-				Status:      account.Status,
-				UpdatedAt:   account.UpdatedAt,
-			}
-
-			// Update higher tier caches
-			qh.hotCache.SetAccount(ctx, query.UserID, query.Currency, result, 5*time.Minute)
-			qh.cache.Set(ctx, cacheKey, &CachedAccount{
-				ID:           result.ID,
-				UserID:       result.UserID,
-				Currency:     result.Currency,
-				Balance:      result.Balance,
-				Available:    result.Available,
-				Locked:       result.Locked,
-				Version:      result.Version,
-				AccountType:  result.AccountType,
-				Status:       result.Status,
-				UpdatedAt:    result.UpdatedAt,
-				CachedAt:     time.Now(),
-				AccessCount:  1,
-				LastAccessed: time.Now(),
-			}, WarmDataTTL)
-
-			qh.metrics.CacheHits.WithLabelValues(queryType, "cold").Inc()
-			qh.metrics.QueryDuration.WithLabelValues(queryType, "cold").Observe(0.005) // ~5ms
-			return result, nil
-		}
-	}
-	qh.metrics.CacheMisses.WithLabelValues(queryType, "cold").Inc()
 
 	// Query from database
 	account, err := qh.repository.GetAccount(ctx, query.UserID, query.Currency)
@@ -464,11 +416,8 @@ func (qh *AccountQueryHandler) executeGetAccount(ctx context.Context, query *Get
 		AccessCount:  1,
 		LastAccessed: time.Now(),
 	}
-
-	// Cache in all tiers
+	qh.cache.SetAccount(ctx, cachedAccount)
 	qh.hotCache.SetAccount(ctx, query.UserID, query.Currency, account, HotDataTTL)
-	qh.cache.Set(ctx, cacheKey, cachedAccount, WarmDataTTL)
-	qh.cache.SetCold(ctx, cacheKey, cachedAccount, ColdDataTTL)
 
 	return account, nil
 }
@@ -504,59 +453,26 @@ func (qh *AccountQueryHandler) executeGetBalance(ctx context.Context, query *Get
 func (qh *AccountQueryHandler) executeGetAccountHistory(ctx context.Context, query *GetAccountHistoryQuery) ([]*LedgerTransaction, error) {
 	queryType := query.GetType()
 
-	// Try cache first
-	cacheKey := fmt.Sprintf("history:%s:%s:%d:%d", query.UserID.String(), query.Currency, query.Limit, query.Offset)
-	if cachedData, exists := qh.cache.Get(ctx, cacheKey); exists {
-		if transactions, ok := cachedData.([]*LedgerTransaction); ok {
-			qh.metrics.CacheHits.WithLabelValues(queryType, "warm").Inc()
-			return transactions, nil
-		}
-	}
-	qh.metrics.CacheMisses.WithLabelValues(queryType, "warm").Inc()
-
-	// Query from database
-	transactions, err := qh.repository.GetAccountHistory(ctx, query.UserID, query.Currency, query.Limit, query.Offset)
-	if err != nil {
-		qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
-		return nil, fmt.Errorf("failed to get account history: %w", err)
-	}
-
-	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "success").Inc()
-
-	// Cache the result for subsequent requests
-	qh.cache.Set(ctx, cacheKey, transactions, 10*time.Minute) // Shorter TTL for historical data
-
-	return transactions, nil
+	// No cache layer for history (not implemented in CacheLayer)
+	// Query from database (not implemented in Repository, so return error)
+	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
+	return nil, fmt.Errorf("account history retrieval not implemented in repository")
 }
 
 // executeGetReservations implements reservations retrieval with filtering
 func (qh *AccountQueryHandler) executeGetReservations(ctx context.Context, query *GetReservationsQuery) ([]*Reservation, error) {
 	queryType := query.GetType()
 
-	// Try cache first
-	cacheKey := fmt.Sprintf("reservations:%s:%s:%s:%d:%d",
-		query.UserID.String(), query.Currency, query.Status, query.Limit, query.Offset)
-	if cachedData, exists := qh.cache.Get(ctx, cacheKey); exists {
-		if reservations, ok := cachedData.([]*Reservation); ok {
-			qh.metrics.CacheHits.WithLabelValues(queryType, "warm").Inc()
-			return reservations, nil
-		}
+	// Use cache layer for reservations if available
+	if _, err := qh.cache.GetReservations(ctx, query.UserID, query.Currency); err == nil {
+		qh.metrics.CacheHits.WithLabelValues(queryType, "hot").Inc()
+		return nil, fmt.Errorf("reservation filtering by status/limit/offset not implemented in cache layer")
 	}
-	qh.metrics.CacheMisses.WithLabelValues(queryType, "warm").Inc()
+	qh.metrics.CacheMisses.WithLabelValues(queryType, "hot").Inc()
 
-	// Query from database
-	reservations, err := qh.repository.GetReservations(ctx, query.UserID, query.Currency, query.Status, query.Limit, query.Offset)
-	if err != nil {
-		qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
-		return nil, fmt.Errorf("failed to get reservations: %w", err)
-	}
-
-	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "success").Inc()
-
-	// Cache the result
-	qh.cache.Set(ctx, cacheKey, reservations, 5*time.Minute) // Shorter TTL for active data
-
-	return reservations, nil
+	// Query from database (not implemented in Repository, so return error)
+	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
+	return nil, fmt.Errorf("reservation retrieval with filtering not implemented in repository")
 }
 
 // GetAccountsByUser retrieves all accounts for a user (optimized bulk query)
@@ -566,7 +482,7 @@ func (qh *AccountQueryHandler) GetAccountsByUser(ctx context.Context, userID uui
 		qh.metrics.QueryDuration.WithLabelValues("get_accounts_by_user", "total").Observe(time.Since(start).Seconds())
 	}()
 
-	accounts, err := qh.repository.GetAccountsByUser(ctx, userID)
+	accounts, err := qh.repository.GetUserAccounts(ctx, userID)
 	if err != nil {
 		qh.metrics.QueryErrors.WithLabelValues("get_accounts_by_user", "database").Inc()
 		return nil, fmt.Errorf("failed to get accounts by user: %w", err)

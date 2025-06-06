@@ -57,7 +57,7 @@ func NewTransactionManagerSuite(
 	// config := configManager.GetConfig() // not used
 
 	// Initialize XA Resources
-	bookkeeperXA := NewBookkeeperXAResource(bookkeeperSvc, db, logger)
+	bookkeeperXA := NewBookkeeperXAResource(bookkeeperSvc, logger)
 	settlementXA := NewSettlementXAResource(settlementEngine, db, logger)
 	tradingXA := NewTradingXAResource(db, tradingPathManager, logger)
 	fiatXA := NewFiatXAResource(fiatSvc, db, logger, "")
