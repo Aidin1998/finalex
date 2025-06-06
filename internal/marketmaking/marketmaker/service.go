@@ -387,6 +387,11 @@ type Service struct {
 	marketDataStream     <-chan *MarketDataUpdate
 	batchProcessor       *BatchProcessor
 	performanceOptimizer *PerformanceOptimizer
+
+	// In Service struct, add per-pair strategy and order tracking
+	pairStrategies map[string]Strategy                 // strategy instance per pair
+	openOrders     map[string]map[string]*models.Order // pair -> orderID -> order
+	ledger         *Ledger                             // dedicated ledger for MM activity
 }
 
 // BatchProcessor handles batch operations for better performance
@@ -813,6 +818,11 @@ func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *S
 		objectPool:           NewObjectPool(),
 		batchProcessor:       NewBatchProcessor(trading, 100, 100*time.Millisecond),
 		performanceOptimizer: &PerformanceOptimizer{},
+
+		// In NewService, initialize new fields
+		pairStrategies: make(map[string]Strategy),
+		openOrders:     make(map[string]map[string]*models.Order),
+		ledger:         NewLedger(),
 	}
 
 	// Initialize advanced components
@@ -1254,14 +1264,26 @@ func (s *Service) executeOptimizedMarketMakingCycle(ctx context.Context, riskMgr
 			continue
 		}
 
-		// Get enhanced market data with optimized caching
-		marketData := s.getEnhancedMarketDataCached(pair)
-		if marketData == nil {
-			continue
+		// Ensure strategy instance for this pair
+		if _, ok := s.pairStrategies[pair]; !ok {
+			s.pairStrategies[pair] = s.instantiateStrategyForPair(pair)
+		}
+		// Ensure open order map
+		if _, ok := s.openOrders[pair]; !ok {
+			s.openOrders[pair] = make(map[string]*models.Order)
 		}
 
-		// Execute sophisticated quoting with batch processing
-		s.executeSophisticatedQuotingOptimized(ctx, pair, marketData, riskMgr)
+		strat := s.pairStrategies[pair]
+		inv := s.getCurrentInventory(pair)
+		marketData := s.getEnhancedMarketDataCached(pair)
+		if marketData == nil || strat == nil {
+			continue
+		}
+		// Compute optimal quote (bid, ask, size) with inventory/volatility
+		bid, ask, size := strat.Quote(marketData.Mid, marketData.Volatility, inv)
+		bid, ask, size = s.applyRiskAdjustments(bid, ask, size, pair, riskMgr)
+		// Place or amend orders atomically
+		s.manageOrderLifecycle(ctx, pair, bid, ask, size, marketData)
 
 		// Update provider metrics in batch
 		s.updateProviderMetricsOptimized(providers, pair, marketData)
@@ -1488,15 +1510,13 @@ func (s *Service) performanceAnalyticsLoop(ctx context.Context) {
 
 // marketDataProcessingLoop processes market data in a background goroutine
 func (s *Service) marketDataProcessingLoop(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			for _, pair := range s.cfg.Pairs {
-				s.processMarketData(pair)
-			}
+			s.processAllMarketData()
 		case <-ctx.Done():
 			return
 		case <-s.quit:
@@ -1505,158 +1525,109 @@ func (s *Service) marketDataProcessingLoop(ctx context.Context) {
 	}
 }
 
-// cancelAllOrders cancels all orders for a specific pair
-func (s *Service) cancelAllOrders(ctx context.Context, pair string) error {
-	if s.trading == nil {
-		return nil
-	}
-
-	// Use structured error handling without adding latency
-	select {
-	default:
-		// Non-blocking error log - fallback to individual cancels
-		s.logger.Warnf("Attempting to cancel all orders for pair: %s", pair)
-	}
-
-	// In a real implementation, this would call the trading API
-	// return s.trading.CancelAllOrders(ctx, pair)
-	return nil
-}
-
-// getEnhancedMarketData gets enhanced market data for a pair
-func (s *Service) getEnhancedMarketData(pair string) *EnhancedMarketData {
+// processAllMarketData processes market data for all configured pairs
+func (s *Service) processAllMarketData() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return cached market data if available
-	if data, exists := s.marketData[pair]; exists {
-		return data
-	}
-
-	// Return empty data if not available
-	return &EnhancedMarketData{
-		Pair:       pair,
-		Mid:        0,
-		Spread:     0,
-		Volatility: 0,
-		Timestamp:  time.Now(),
+	for pair := range s.cfg.Pairs {
+		marketData := s.getEnhancedMarketDataCached(pair)
+		if marketData != nil {
+			s.processMarketData(pair)
+		}
 	}
 }
 
-// getEnhancedMarketDataCached gets cached market data with optimizations
-func (s *Service) getEnhancedMarketDataCached(pair string) *EnhancedMarketData {
-	// Use the existing getEnhancedMarketData method
-	return s.getEnhancedMarketData(pair)
-}
+// manageOrderLifecycle manages the lifecycle of orders for a given trading pair
+func (s *Service) manageOrderLifecycle(ctx context.Context, pair string, bid, ask, size float64, marketData *EnhancedMarketData) {
+	s.orderMu.Lock()
+	defer s.orderMu.Unlock()
+	open := s.openOrders[pair]
+	var toCancel []string
+	var toAmend []*models.Order
+	var needNewBid, needNewAsk bool = true, true
 
-// executeSophisticatedQuoting executes sophisticated quoting logic
-func (s *Service) executeSophisticatedQuoting(ctx context.Context, pair string, marketData *EnhancedMarketData, riskMgr *RiskManager) {
-	// Placeholder implementation for sophisticated quoting
-	s.logger.Debugf("Executing sophisticated quoting for %s", pair)
-
-	// In a real implementation, this would contain complex quoting algorithms
-	// considering market microstructure, order flow, and risk metrics
-}
-
-// executeSophisticatedQuotingOptimized executes optimized sophisticated quoting
-func (s *Service) executeSophisticatedQuotingOptimized(ctx context.Context, pair string, marketData *EnhancedMarketData, riskMgr *RiskManager) {
-	// Use the existing executeSophisticatedQuoting method
-	s.executeSophisticatedQuoting(ctx, pair, marketData, riskMgr)
-}
-
-// applyRiskAdjustments applies risk adjustments to bid/ask/size
-func (s *Service) applyRiskAdjustments(bid, ask, size float64, pair string, riskMgr *RiskManager) (float64, float64, float64) {
-	s.mu.RLock()
-	riskLevel := s.riskLevel
-	s.mu.RUnlock()
-
-	// Apply risk-based adjustments
-	switch riskLevel {
-	case "HIGH":
-		// Reduce size and widen spread
-		size *= 0.5
-		spread := ask - bid
-		bid -= spread * 0.1
-		ask += spread * 0.1
-	case "MEDIUM":
-		// Moderate adjustments
-		size *= 0.8
-		spread := ask - bid
-		bid -= spread * 0.05
-		ask += spread * 0.05
-	default:
-		// No adjustments for LOW risk
+	// Check for existing open orders and decide if they need to be canceled/amended
+	for orderID, order := range open {
+		// If order is not at the new price/size, mark for cancel/amend
+		if order.Side == "buy" && (order.Price != bid || order.Quantity != size) {
+			toCancel = append(toCancel, orderID)
+		} else if order.Side == "sell" && (order.Price != ask || order.Quantity != size) {
+			toCancel = append(toCancel, orderID)
+		} else {
+			if order.Side == "buy" {
+				needNewBid = false
+			} else if order.Side == "sell" {
+				needNewAsk = false
+			}
+		}
 	}
 
-	return bid, ask, size
-}
-
-// calculateVWAP calculates Volume Weighted Average Price for a pair
-func (s *Service) calculateVWAP(pair string) float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Placeholder implementation
-	if data, exists := s.marketData[pair]; exists {
-		return data.Mid
+	// Cancel outdated orders
+	for _, orderID := range toCancel {
+		err := s.trading.CancelOrder(ctx, orderID)
+		if err == nil {
+			delete(open, orderID)
+			s.ledger.Record(LedgerEvent{
+				Timestamp: time.Now(),
+				Pair:      pair,
+				Action:    "cancel",
+				OrderID:   orderID,
+				Details:   map[string]interface{}{"reason": "price/size moved"},
+			})
+		} else {
+			s.logger.Warnf("Failed to cancel order %s: %v", orderID, err)
+		}
 	}
-	return 0.0
-}
 
-// estimateMarketImpact estimates market impact for a given size
-func (s *Service) estimateMarketImpact(pair string, size float64) float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Simple market impact model: impact = size * volatility * factor
-	if data, exists := s.marketData[pair]; exists {
-		return size * data.Volatility * 0.001
+	// Place new bid order if needed
+	if needNewBid && size > 0 {
+		order := &models.Order{
+			Pair:     pair,
+			Side:     "buy",
+			Price:    bid,
+			Quantity: size,
+			// ...other fields as needed...
+		}
+		placed, err := s.trading.PlaceOrder(ctx, order)
+		if err == nil && placed != nil {
+			open[placed.ID] = placed
+			s.ledger.Record(LedgerEvent{
+				Timestamp: time.Now(),
+				Pair:      pair,
+				Action:    "create",
+				OrderID:   placed.ID,
+				Details:   map[string]interface{}{"side": "buy", "price": bid, "qty": size},
+			})
+		} else {
+			s.logger.Warnf("Failed to place bid order for %s: %v", pair, err)
+		}
 	}
-	return 0.0
-}
-
-// calculateTotalPnL calculates total profit and loss
-func (s *Service) calculateTotalPnL() float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	totalPnL := 0.0
-	for _, pnl := range s.pnlHistory {
-		totalPnL += pnl
+	// Place new ask order if needed
+	if needNewAsk && size > 0 {
+		order := &models.Order{
+			Pair:     pair,
+			Side:     "sell",
+			Price:    ask,
+			Quantity: size,
+			// ...other fields as needed...
+		}
+		placed, err := s.trading.PlaceOrder(ctx, order)
+		if err == nil && placed != nil {
+			open[placed.ID] = placed
+			s.ledger.Record(LedgerEvent{
+				Timestamp: time.Now(),
+				Pair:      pair,
+				Action:    "create",
+				OrderID:   placed.ID,
+				Details:   map[string]interface{}{"side": "sell", "price": ask, "qty": size},
+			})
+		} else {
+			s.logger.Warnf("Failed to place ask order for %s: %v", pair, err)
+		}
 	}
-	return totalPnL
-}
 
-// updateProviderMetricsOptimized updates provider metrics in an optimized way
-func (s *Service) updateProviderMetricsOptimized(providers *ProviderRegistry, pair string, marketData *EnhancedMarketData) {
-	// Placeholder implementation for provider metrics
-	s.logger.Debugf("Updating provider metrics for %s", pair)
-}
-
-// checkCrossExchangeArbitrageOptimized checks for arbitrage opportunities
-func (s *Service) checkCrossExchangeArbitrageOptimized(ctx context.Context, pair string, marketData *EnhancedMarketData) {
-	// Placeholder implementation for arbitrage detection
-	s.logger.Debugf("Checking arbitrage opportunities for %s", pair)
-}
-
-// getHistoricalReturns gets historical returns for calculations
-func (s *Service) getHistoricalReturns() []float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Return a copy of PnL history as returns
-	returns := make([]float64, len(s.pnlHistory))
-	copy(returns, s.pnlHistory)
-	return returns
-}
-
-// getPnLHistory gets PnL history
-func (s *Service) getPnLHistory() []float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Return a copy of PnL history
-	history := make([]float64, len(s.pnlHistory))
-	copy(history, s.pnlHistory)
-	return history
+	// Integration: If real-time balance/position update triggers, cancel/amend instantly
+	// (Assume a callback or event updates inventory, which can call this method or a similar one)
+	// TODO: Wire up event/callback from accounts module to trigger this logic on balance/position change
 }
