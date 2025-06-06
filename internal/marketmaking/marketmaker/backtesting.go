@@ -597,6 +597,9 @@ func (be *BacktestEngine) calculateCVaR(returns []float64, confidence float64) f
 	return -sum / float64(count)
 }
 
+// --- REMOVE DUPLICATE TYPE STUBS: These types are defined elsewhere in the codebase. ---
+// StructuredLogger, MetricsCollector, AdminToolsManager, HealthCheckResult, HealthStatus, PrometheusMetricsCollector, RiskSignalType, RiskSeverity, RiskManager, Service, TraceIDContextKey
+// --- END: Type stubs for missing types ---
 // Additional methods would be implemented for:
 // - loadMarketData
 // - updateMarketData

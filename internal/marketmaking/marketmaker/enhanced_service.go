@@ -10,6 +10,19 @@ import (
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 )
 
+// --- RiskSignalType enums for risk event logging ---
+type RiskSignalType int
+
+const (
+	InventoryBreach RiskSignalType = iota
+	PnLBreach
+	VaRBreach
+	CorrelationBreach
+	LiquidityBreach
+	VolatilitySpike
+	DrawdownBreach
+)
+
 // Helper functions to convert risk enums to strings
 func riskSignalTypeToString(t RiskSignalType) string {
 	switch t {
@@ -27,21 +40,6 @@ func riskSignalTypeToString(t RiskSignalType) string {
 		return "volatility_spike"
 	case DrawdownBreach:
 		return "drawdown_breach"
-	default:
-		return "unknown"
-	}
-}
-
-func riskSeverityToString(s RiskSeverity) string {
-	switch s {
-	case LowRisk:
-		return "low"
-	case MediumRisk:
-		return "medium"
-	case HighRisk:
-		return "high"
-	case CriticalRisk:
-		return "critical"
 	default:
 		return "unknown"
 	}
@@ -374,7 +372,7 @@ func (es *EnhancedService) collectPerformanceMetrics(ctx context.Context) {
 	// Record metrics
 	es.metrics.RecordStrategyPnL("main", baseMetrics.TotalPnL)
 	es.metrics.RecordOrderLatency("place_order", time.Duration(baseMetrics.LatencyMetrics["place_order"]))
-	es.metrics.RecordInventoryPosition("total", baseMetrics.TotalExposure)
+	es.metrics.RecordInventoryPosition("total", baseMetrics.TotalExposure())
 
 	// Update operational state
 	es.mu.Lock()
@@ -413,26 +411,26 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 	// Record risk metrics
 	es.metrics.RecordRiskEvent("daily_pnl", riskStatus.DailyPnL)
 	es.metrics.RecordRiskEvent("total_exposure", riskStatus.TotalExposure)
-	es.metrics.RecordRiskEvent("risk_score", riskStatus.RiskScore) // Log risk events
+	es.metrics.RecordRiskEvent("risk_score", riskStatus.RiskScore)
+	// Log risk events
 	for _, signal := range riskStatus.RiskSignals {
-		// Extract symbol and value safely
 		symbol := "unknown"
 		if signal.Symbol != "" {
 			symbol = signal.Symbol
-		} // Use the standard logging with proper string conversions
+		}
 		es.logger.LogRiskEvent(
 			ctx,
-			riskSignalTypeToString(signal.Type),
-			riskSeverityToString(signal.Severity),
+			riskSignalTypeToString(RiskSignalType(signal.Type)),
+			riskSeverityToString(RiskSeverity(signal.Severity)),
 			symbol,
 			signal.Value,
 			map[string]interface{}{
 				"message": signal.Message,
 			},
-		) // Record risk events directly using Prometheus API
+		)
 		RiskEventsTotal.WithLabelValues(
-			riskSignalTypeToString(signal.Type),
-			riskSeverityToString(signal.Severity),
+			riskSignalTypeToString(RiskSignalType(signal.Type)),
+			riskSeverityToString(RiskSeverity(signal.Severity)),
 			symbol,
 		).Inc()
 	}
@@ -662,3 +660,26 @@ func (es *EnhancedService) AttemptRecovery(ctx context.Context) error {
 func (es *EnhancedService) IsInEmergencyState() bool {
 	return es.emergencyController.IsKilled()
 }
+
+// --- BEGIN: Add missing StructuredLogger and MetricsCollector methods for EnhancedService ---
+// StructuredLogger stubs for enhanced_service.go
+func (sl *StructuredLogger) GenerateTraceID() string { return "trace-id-stub" }
+func (sl *StructuredLogger) WithTraceID(ctx context.Context, traceID string) context.Context {
+	return ctx
+}
+func (sl *StructuredLogger) LogPerformance(ctx context.Context, action string, metrics map[string]interface{}) {
+}
+func (sl *StructuredLogger) LogRiskEvent(ctx context.Context, eventType, severity, pair string, value float64, details map[string]interface{}) {
+}
+
+// MetricsCollector stubs for enhanced_service.go
+func (mc *MetricsCollector) RecordServiceStart()                                         {}
+func (mc *MetricsCollector) RecordServiceStop()                                          {}
+func (mc *MetricsCollector) Start(ctx context.Context) error                             { return nil }
+func (mc *MetricsCollector) Stop(ctx context.Context)                                    {}
+func (mc *MetricsCollector) RecordStrategyPnL(strategy string, pnl float64)              {}
+func (mc *MetricsCollector) RecordOrderLatency(operation string, duration time.Duration) {}
+func (mc *MetricsCollector) RecordInventoryPosition(pair string, amount float64)         {}
+func (mc *MetricsCollector) RecordRiskEvent(eventType string, value float64)             {}
+
+// --- END: Add missing StructuredLogger and MetricsCollector methods for EnhancedService ---

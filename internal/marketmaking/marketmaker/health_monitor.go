@@ -456,6 +456,9 @@ func (t *TradingAPIHealthChecker) Check(ctx context.Context) HealthCheckResult {
 	if err != nil {
 		result.Status = HealthUnhealthy
 		result.Message = fmt.Sprintf("Failed to get account balance: %v", err)
+		result.Details["error"] = err.Error()
+		return result
+	}
 
 	result.Details["account_balance"] = balance
 

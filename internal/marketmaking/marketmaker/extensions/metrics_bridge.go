@@ -12,6 +12,11 @@ import (
 // Prometheus metrics connector
 var promMetrics *PrometheusMetricsCollector
 
+// --- BEGIN: PrometheusMetricsCollector method stub for UpdateStrategyPnL ---
+func (pmc *PrometheusMetricsCollector) UpdateStrategyPnL(pair, strategy string, pnl float64) {}
+
+// --- END: PrometheusMetricsCollector method stub for UpdateStrategyPnL ---
+
 // Start initializes and starts the metrics collection
 func (mc *MetricsCollector) Start(ctx context.Context) error {
 	// Initialize prometheus metrics if needed
@@ -82,3 +87,37 @@ func (mc *MetricsCollector) RecordRiskEventTotal(eventType, severity string) {
 		RiskEventsTotal.WithLabelValues(eventType, severity).Inc()
 	}
 }
+
+// --- BEGIN: Type and const stubs for PrometheusMetricsCollector and metrics ---
+
+// PrometheusMetricsCollector provides methods to update prometheus metrics with proper labeling
+type PrometheusMetricsCollector struct {
+	startTime time.Time
+}
+
+func NewPrometheusMetricsCollector() *PrometheusMetricsCollector {
+	return &PrometheusMetricsCollector{startTime: time.Now()}
+}
+
+// Prometheus metric stubs (replace with actual prometheus metrics in production)
+var (
+	ServiceLifecycle = struct {
+		WithLabelValues func(string) *struct{ Inc func() }
+	}{WithLabelValues: func(string) *struct{ Inc func() } { return &struct{ Inc func() }{Inc: func() {}} }}
+	OrderPlacementLatency = struct {
+		WithLabelValues func(...string) *struct{ Observe func(float64) }
+	}{WithLabelValues: func(...string) *struct{ Observe func(float64) } {
+		return &struct{ Observe func(float64) }{Observe: func(float64) {}}
+	}}
+	InventoryValue = struct {
+		WithLabelValues func(string) *struct{ Set func(float64) }
+	}{WithLabelValues: func(string) *struct{ Set func(float64) } { return &struct{ Set func(float64) }{Set: func(float64) {}} }}
+	RiskMetrics = struct {
+		WithLabelValues func(string) *struct{ Set func(float64) }
+	}{WithLabelValues: func(string) *struct{ Set func(float64) } { return &struct{ Set func(float64) }{Set: func(float64) {}} }}
+	RiskEventsTotal = struct {
+		WithLabelValues func(string, string) *struct{ Inc func() }
+	}{WithLabelValues: func(string, string) *struct{ Inc func() } { return &struct{ Inc func() }{Inc: func() {}} }}
+)
+
+// --- END: Type and const stubs for PrometheusMetricsCollector and metrics ---

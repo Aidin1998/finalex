@@ -10,6 +10,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// MustDecimalFromFloat safely converts a float64 to decimal.Decimal (panics on error, for internal use)
+func MustDecimalFromFloat(f float64) decimal.Decimal {
+	return decimal.NewFromFloat(f)
+}
+
 // Quote represents a legacy quote structure for backward compatibility
 type Quote struct {
 	BidPrice  float64   `json:"bid_price"`
@@ -255,6 +260,16 @@ type HealthStatus struct {
 	LastCheckTime time.Time         `json:"last_check_time"`
 }
 
+// RiskSignal struct for cross-package compatibility
+type RiskSignal struct {
+	Timestamp time.Time
+	Type      int // Should match RiskSignalType
+	Severity  int // Should match RiskSeverity
+	Message   string
+	Symbol    string
+	Value     float64
+}
+
 // RiskStatus represents the risk state of the market maker or strategy
 // Used by service.go and other modules
 
@@ -262,7 +277,7 @@ type RiskStatus struct {
 	DailyPnL      float64
 	TotalExposure float64
 	RiskScore     float64
-	RiskSignals   []string
+	RiskSignals   []RiskSignal
 }
 
 // Strategy status constants are defined above

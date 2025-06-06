@@ -4,6 +4,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/yourusername/yourproject/common" // Adjust the import path as necessary
 )
 
 // Enhanced risk management structures
@@ -68,7 +70,7 @@ type RiskManager struct {
 	correlationMatrix map[string]map[string]float64
 	varParams         VaRParams
 	lastRiskUpdate    time.Time
-	riskSignals       []RiskSignal
+	riskSignals       []common.RiskSignal // Use the common.RiskSignal type
 
 	// Kelly criterion parameters
 	kellyEnabled    bool
@@ -77,29 +79,6 @@ type RiskManager struct {
 
 	mu sync.RWMutex
 }
-
-type RiskSignal struct {
-	Timestamp time.Time
-	Type      RiskSignalType
-	Severity  RiskSeverity
-	Message   string
-	Symbol    string
-	Value     float64
-}
-
-type RiskSignalType int
-
-const (
-	InventoryBreach RiskSignalType = iota
-	PnLBreach
-	VaRBreach
-	CorrelationBreach
-	LiquidityBreach
-	VolatilitySpike
-	DrawdownBreach
-)
-
-type RiskSeverity int
 
 const (
 	LowRisk RiskSeverity = iota
@@ -482,7 +461,7 @@ func (r *RiskManager) Breach() bool {
 }
 
 func (r *RiskManager) addRiskSignal(signalType RiskSignalType, severity RiskSeverity, message, symbol string, value float64) {
-	signal := RiskSignal{
+	signal := common.RiskSignal{
 		Timestamp: time.Now(),
 		Type:      signalType,
 		Severity:  severity,
@@ -499,11 +478,11 @@ func (r *RiskManager) addRiskSignal(signalType RiskSignalType, severity RiskSeve
 	}
 }
 
-func (r *RiskManager) GetRiskSignals(severity RiskSeverity) []RiskSignal {
+func (r *RiskManager) GetRiskSignals(severity RiskSeverity) []common.RiskSignal {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var filtered []RiskSignal
+	var filtered []common.RiskSignal
 	for _, signal := range r.riskSignals {
 		if signal.Severity >= severity {
 			filtered = append(filtered, signal)

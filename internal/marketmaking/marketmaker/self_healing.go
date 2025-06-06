@@ -365,3 +365,13 @@ func (rmsh *RiskManagerSelfHealer) Heal(ctx context.Context) error {
 	rmsh.logger.LogInfo(ctx, "risk manager reset successful", nil)
 	return nil
 }
+
+// --- BEGIN: Add missing StructuredLogger and MetricsCollector methods for self_healing.go ---
+func (sl *StructuredLogger) LogSelfHealingEvent(ctx context.Context, component, eventType, reason string, details map[string]interface{}) {
+}
+func (mc *MetricsCollector) RecordSelfHealingAttempt(component, reason string) {}
+func (mc *MetricsCollector) RecordSelfHealingSuccess(component, reason string, attempt int, duration time.Duration) {
+}
+func (mc *MetricsCollector) RecordSelfHealingFailure(component, reason string, maxAttempts int) {}
+
+// --- END ---

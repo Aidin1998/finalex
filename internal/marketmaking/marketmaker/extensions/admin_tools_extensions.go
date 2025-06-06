@@ -26,7 +26,6 @@ func (mc *MetricsCollector) RecordStrategyEvent(strategyName, eventType string) 
 func (atm *AdminToolsManager) calculateOverallHealth(results map[string]*HealthCheckResult) string {
 	unhealthy := 0
 	degraded := 0
-	total := len(results)
 
 	for _, result := range results {
 		if result.Status == HealthUnhealthy {
@@ -55,5 +54,23 @@ func (mc *MetricsCollector) GetAllMetrics() map[string]interface{} {
 		"inventory_value_usd": 10000.0,
 	}
 }
+
+// Add type stubs for extension build
+// These should match the real types in the main codebase
+
+type StructuredLogger struct{}
+type MetricsCollector struct{}
+type AdminToolsManager struct{}
+type HealthCheckResult struct {
+	Status int
+}
+
+const (
+	HealthUnhealthy = 2
+	HealthDegraded  = 1
+)
+
+// Add stub for LogInfo
+func (sl *StructuredLogger) LogInfo(ctx context.Context, msg string, fields map[string]interface{}) {}
 
 // If AdminToolsManager or related types reference legacy strategy types, update to use new interfaces or stub as needed.

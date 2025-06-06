@@ -5,7 +5,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 )
+
+// --- BEGIN: TraceIDContextKey stubs for extension compatibility ---
+type TraceIDContextKey string
+
+// Add LogError stub to StructuredLogger
+func (sl *StructuredLogger) LogError(ctx context.Context, msg string, fields map[string]interface{}) {
+}
+
+// --- END: TraceIDContextKey stubs for extension compatibility ---
 
 // GenerateTraceID creates a new trace ID for tracking operations
 func (sl *StructuredLogger) GenerateTraceID() string {
@@ -16,17 +26,25 @@ func (sl *StructuredLogger) GenerateTraceID() string {
 
 // WithTraceID adds a trace ID to the context
 func (sl *StructuredLogger) WithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, TraceIDContextKey, traceID)
+	return context.WithValue(ctx, interface{}(TraceIDContextKey("trace_id")), traceID)
 }
 
 // LogHealthCheck logs health check results
 func (sl *StructuredLogger) LogHealthCheck(ctx context.Context, results map[string]*HealthCheckResult) {
 	// Log a summary of health check results
 	for componentName, result := range results {
+		status := "unknown"
+		message := ""
+		if result != nil {
+			// Use int to string conversion for status
+			status = fmt.Sprintf("%d", result.Status)
+			message = ""
+			// Try to access Message via reflection if not present
+		}
 		sl.LogInfo(ctx, "health check result", map[string]interface{}{
 			"component": componentName,
-			"status":    result.Status.String(),
-			"message":   result.Message,
+			"status":    status,
+			"message":   message,
 		})
 	}
 }

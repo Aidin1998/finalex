@@ -1,6 +1,30 @@
 // Extension methods for risk-related types
 package marketmaker
 
+// --- BEGIN: RiskSignalType and RiskSeverity stubs for extension compatibility ---
+type RiskSignalType int
+
+const (
+	InventoryBreach RiskSignalType = iota
+	PnLBreach
+	VaRBreach
+	CorrelationBreach
+	LiquidityBreach
+	VolatilitySpike
+	DrawdownBreach
+)
+
+type RiskSeverity int
+
+const (
+	LowRisk RiskSeverity = iota
+	MediumRisk
+	HighRisk
+	CriticalRisk
+)
+
+// --- END: RiskSignalType and RiskSeverity stubs for extension compatibility ---
+
 // String method for RiskSignalType
 func (r RiskSignalType) String() string {
 	switch r {
