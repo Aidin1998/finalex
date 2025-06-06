@@ -21,11 +21,11 @@ import (
 	eventjournal "github.com/Aidin1998/finalex/internal/trading/eventjournal"
 	model "github.com/Aidin1998/finalex/internal/trading/model"
 	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
+	realtime "github.com/Aidin1998/finalex/internal/trading/realtime"
 
 	// Using root persistence package instead of non-existent internal/trading/persistence
 	settlement "github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/internal/trading/trigger"
-	"github.com/Aidin1998/finalex/persistence"
 )
 
 // =============================
@@ -45,6 +45,9 @@ type HighPerformanceMatchingEngine struct {
 	riskManager      interface{}
 	settlementEngine *settlement.SettlementEngine
 	triggerMonitor   *trigger.TriggerMonitor
+
+	// Ultra-low latency broadcasting system
+	broadcaster *realtime.UltraLowLatencyBroadcaster
 
 	// High-performance concurrency components
 	shardedMarketState *ShardedMarketState
@@ -66,8 +69,6 @@ type HighPerformanceMatchingEngine struct {
 	// Event processing control
 	eventProcessorRunning int32
 	stopEventProcessor    chan struct{}
-	// Persistence layer with batching
-	persistenceLayer *persistence.PersistenceLayer
 }
 
 // NewHighPerformanceMatchingEngine creates a new high-performance matching engine
@@ -85,6 +86,14 @@ func NewHighPerformanceMatchingEngine(
 	triggerMonitor *trigger.TriggerMonitor,
 ) *HighPerformanceMatchingEngine {
 
+	// Initialize ultra-low latency broadcaster
+	broadcasterConfig := realtime.DefaultBroadcasterConfig()
+	broadcaster := realtime.NewUltraLowLatencyBroadcaster(
+		wsHub,
+		logger.Desugar(),
+		broadcasterConfig,
+	)
+
 	// Create high-performance components
 	engine := &HighPerformanceMatchingEngine{
 		orderRepo:        orderRepo,
@@ -96,6 +105,9 @@ func NewHighPerformanceMatchingEngine(
 		riskManager:      riskManager,
 		settlementEngine: settlementEngine,
 		triggerMonitor:   triggerMonitor,
+
+		// Initialize ultra-low latency broadcaster
+		broadcaster: broadcaster,
 
 		// Initialize high-performance components
 		shardedMarketState: NewShardedMarketState(),
@@ -114,19 +126,24 @@ func NewHighPerformanceMatchingEngine(
 		queueSize = config.Engine.WorkerPoolQueueSize
 	}
 	engine.highThroughputPool = NewHighThroughputWorkerPool(workerCount, queueSize, logger)
-
 	// Initialize object pools
 	engine.initializeObjectPools()
 
 	// Start event processor
 	engine.startEventProcessor()
 
+	// Start ultra-low latency broadcaster
+	if err := engine.broadcaster.Start(); err != nil {
+		logger.Errorw("Failed to start ultra-low latency broadcaster", "error", err)
+	}
+
 	if logger != nil {
 		logger.Infow("HighPerformanceMatchingEngine initialized",
 			"workerCount", workerCount,
 			"queueSize", queueSize,
 			"marketShards", MARKET_STATE_SHARDS,
-			"eventBufferSize", EVENT_RING_BUFFER_SIZE)
+			"eventBufferSize", EVENT_RING_BUFFER_SIZE,
+			"broadcasterEnabled", true)
 	}
 
 	return engine
@@ -187,7 +204,7 @@ func (hpme *HighPerformanceMatchingEngine) processEvent(event RingBufferEvent) {
 		}
 	case 2: // Trade event
 		if tradeEvent, ok := event.Data.(TradeEvent); ok {
-			hpme.tradeHandlers.ForEach(func(handler EventHandler) {
+			hpme.tradeHandlers.ForEach(func handler(EventHandler) {
 				if h, ok := handler.(func(TradeEvent)); ok {
 					go h(tradeEvent) // Process asynchronously
 				}
@@ -258,10 +275,12 @@ func (hpme *HighPerformanceMatchingEngine) ProcessOrderHighThroughput(
 		hpme.recordFailedOrderAsync(order, err, source)
 		return nil, nil, nil, err
 	}
-
 	// Update performance counters
 	if len(trades) > 0 {
 		hpme.perfCounters.IncrementTrades()
+
+		// Broadcast trades immediately for ultra-low latency distribution
+		hpme.broadcastTradesImmediate(trades)
 	}
 
 	// Process trades and updates asynchronously for maximum throughput
@@ -269,8 +288,8 @@ func (hpme *HighPerformanceMatchingEngine) ProcessOrderHighThroughput(
 		hpme.processTradesTooAsync(ctx, trades, order)
 	}
 
-	// Enqueue order book update event
-	hpme.enqueueOrderBookUpdate(order.Pair, ob)
+	// Broadcast order book update with ultra-low latency
+	hpme.broadcastOrderBookUpdateImmediate(order.Pair, ob)
 
 	// Record business metrics asynchronously
 	hpme.recordBusinessMetricsAsync(order, trades, source)
@@ -563,4 +582,54 @@ func (hpme *HighPerformanceMatchingEngine) Shutdown() {
 	hpme.logger.Infow("Final performance metrics", "metrics", metrics)
 
 	hpme.logger.Info("HighPerformanceMatchingEngine shutdown complete")
+}
+
+// =============================
+// Ultra-Low Latency Broadcasting Integration
+// =============================
+
+// broadcastTradesImmediate broadcasts trades with ultra-low latency (<10μs target)
+func (hpme *HighPerformanceMatchingEngine) broadcastTradesImmediate(trades []*model.Trade) {
+	if hpme.broadcaster == nil {
+		return
+	}
+
+	// Broadcast each trade immediately for maximum speed
+	for _, trade := range trades {
+		hpme.broadcaster.BroadcastTrade(trade)
+	}
+}
+
+// Helper to convert [][]string snapshot to []orderbook.PriceLevel
+func snapshotToPriceLevels(snapshot [][]string) []orderbook.PriceLevel {
+	levels := make([]orderbook.PriceLevel, 0, len(snapshot))
+	for _, lvl := range snapshot {
+		if len(lvl) < 2 {
+			continue
+		}
+		levels = append(levels, orderbook.PriceLevel{
+			Price: lvl[0],
+			// Add other fields if needed
+		})
+	}
+	return levels
+}
+
+// broadcastOrderBookUpdateImmediate broadcasts order book updates with ultra-low latency
+func (hpme *HighPerformanceMatchingEngine) broadcastOrderBookUpdateImmediate(pair string, ob *orderbook.OrderBook) {
+	if hpme.broadcaster == nil {
+		return
+	}
+	bids, asks := ob.GetSnapshot(10)
+	bidLevels := snapshotToPriceLevels(bids)
+	askLevels := snapshotToPriceLevels(asks)
+	hpme.broadcaster.BroadcastOrderBookUpdate(pair, bidLevels, askLevels)
+}
+
+// broadcastOrderUpdateImmediate broadcasts order status updates with ultra-low latency
+func (hpme *HighPerformanceMatchingEngine) broadcastOrderUpdateImmediate(order *model.Order) {
+	if hpme.broadcaster == nil {
+		return
+	}
+	hpme.broadcaster.BroadcastOrderUpdate(order)
 }
