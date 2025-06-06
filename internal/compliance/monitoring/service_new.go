@@ -189,16 +189,16 @@ func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID, stat
 	// Audit the status change
 	if m.auditSvc != nil {
 		auditEvent := interfaces.AuditEvent{
-			EventType:  "alert_status_updated",
-			UserID:     alert.UserID,
-			Action:     "update_alert_status",
-			EntityType: "monitoring_alert",
-			EntityID:   alertID,
-			OldValue:   oldStatus,
-			NewValue:   status,
-			Metadata:   map[string]interface{}{"alert_type": alert.AlertType},
-			Timestamp:  time.Now(),
-			Severity:   "info",
+			EventType:   "alert_status_updated",
+			UserID:      alert.UserID,
+			Action:      "update_alert_status",
+			EntityType:  "monitoring_alert",
+			EntityID:    alertID,
+			OldValue:    oldStatus,
+			NewValue:    status,
+			Metadata:    map[string]interface{}{"alert_type": alert.AlertType},
+			Timestamp:   time.Now(),
+			Severity:    "info",
 		}
 		m.auditSvc.LogEvent(ctx, auditEvent)
 	}
@@ -209,17 +209,17 @@ func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID, stat
 // UpdatePolicy updates or creates a monitoring policy
 func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy interfaces.MonitoringPolicy) error {
 	policyModel := &MonitoringPolicyModel{
-		ID:         policy.ID,
-		Name:       policy.Name,
-		AlertType:  policy.AlertType,
-		Enabled:    policy.Enabled,
-		Threshold:  policy.Threshold,
-		TimeWindow: policy.TimeWindow,
-		Action:     policy.Action,
-		Conditions: policy.Conditions,
-		Recipients: policy.Recipients,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		ID:          policy.ID,
+		Name:        policy.Name,
+		AlertType:   policy.AlertType,
+		Enabled:     policy.Enabled,
+		Threshold:   policy.Threshold,
+		TimeWindow:  policy.TimeWindow,
+		Action:      policy.Action,
+		Conditions:  policy.Conditions,
+		Recipients:  policy.Recipients,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	if policy.ID == "" {
@@ -242,14 +242,14 @@ func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy interfaces.
 	// Audit the policy update
 	if m.auditSvc != nil {
 		auditEvent := interfaces.AuditEvent{
-			EventType:  "monitoring_policy_updated",
-			Action:     "update_policy",
-			EntityType: "monitoring_policy",
-			EntityID:   policyModel.ID,
-			NewValue:   fmt.Sprintf("%+v", policy),
-			Metadata:   map[string]interface{}{"policy_name": policy.Name},
-			Timestamp:  time.Now(),
-			Severity:   "info",
+			EventType:   "monitoring_policy_updated",
+			Action:      "update_policy",
+			EntityType:  "monitoring_policy",
+			EntityID:    policyModel.ID,
+			NewValue:    fmt.Sprintf("%+v", policy),
+			Metadata:    map[string]interface{}{"policy_name": policy.Name},
+			Timestamp:   time.Now(),
+			Severity:    "info",
 		}
 		m.auditSvc.LogEvent(ctx, auditEvent)
 	}
@@ -272,7 +272,7 @@ func (m *MonitoringService) GetPolicy(ctx context.Context, policyID string) (*in
 	}
 
 	policy := policyModel.ToInterface()
-
+	
 	// Update cache
 	m.mu.Lock()
 	m.policyCache[policyID] = &policy
@@ -305,7 +305,7 @@ func (m *MonitoringService) alertProcessor(ctx context.Context) {
 				// Log error but continue processing
 				continue
 			}
-
+			
 			m.metrics.mu.Lock()
 			m.metrics.AlertsProcessed++
 			m.metrics.ProcessingLatency = time.Since(start)
@@ -323,16 +323,16 @@ func (m *MonitoringService) alertProcessor(ctx context.Context) {
 func (m *MonitoringService) processAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
 	// Save alert to database
 	alertModel := &MonitoringAlertModel{
-		ID:        alert.ID,
-		UserID:    alert.UserID,
-		AlertType: alert.AlertType,
-		Severity:  alert.Severity,
-		Message:   alert.Message,
-		Data:      alert.Data,
-		Status:    alert.Status,
-		Timestamp: alert.Timestamp,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:          alert.ID,
+		UserID:      alert.UserID,
+		AlertType:   alert.AlertType,
+		Severity:    alert.Severity,
+		Message:     alert.Message,
+		Data:        alert.Data,
+		Status:      alert.Status,
+		Timestamp:   alert.Timestamp,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	if err := m.db.WithContext(ctx).Create(alertModel).Error; err != nil {
@@ -357,15 +357,15 @@ func (m *MonitoringService) processAlert(ctx context.Context, alert interfaces.M
 	// Audit the alert
 	if m.auditSvc != nil {
 		auditEvent := interfaces.AuditEvent{
-			EventType:  "monitoring_alert_generated",
-			UserID:     alert.UserID,
-			Action:     "generate_alert",
-			EntityType: "monitoring_alert",
-			EntityID:   alert.ID,
-			NewValue:   alert.Message,
-			Metadata:   map[string]interface{}{"alert_type": alert.AlertType, "severity": alert.Severity},
-			Timestamp:  time.Now(),
-			Severity:   alert.Severity,
+			EventType:   "monitoring_alert_generated",
+			UserID:      alert.UserID,
+			Action:      "generate_alert",
+			EntityType:  "monitoring_alert",
+			EntityID:    alert.ID,
+			NewValue:    alert.Message,
+			Metadata:    map[string]interface{}{"alert_type": alert.AlertType, "severity": alert.Severity},
+			Timestamp:   time.Now(),
+			Severity:    alert.Severity,
 		}
 		m.auditSvc.LogEvent(ctx, auditEvent)
 	}

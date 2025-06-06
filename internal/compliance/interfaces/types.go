@@ -280,3 +280,91 @@ type MonitoringMetrics struct {
 	ResourceUsage        map[string]float64 `json:"resource_usage"`
 	LastUpdated          time.Time          `json:"last_updated"`
 }
+
+// KYCRequest represents a KYC verification request
+type KYCRequest struct {
+	ID              uuid.UUID              `json:"id"`
+	UserID          uuid.UUID              `json:"user_id"`
+	RequestType     string                 `json:"request_type"` // identity, document, enhanced
+	Level           KYCLevel               `json:"level"`
+	Documents       map[string]interface{} `json:"documents,omitempty"`
+	PersonalInfo    map[string]interface{} `json:"personal_info,omitempty"`
+	AddressInfo     map[string]interface{} `json:"address_info,omitempty"`
+	ProviderData    map[string]interface{} `json:"provider_data,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	RequestedAt     time.Time              `json:"requested_at"`
+	IPAddress       string                 `json:"ip_address,omitempty"`
+	UserAgent       string                 `json:"user_agent,omitempty"`
+}
+
+// KYCResult represents the result of KYC verification
+type KYCResult struct {
+	RequestID       uuid.UUID        `json:"request_id"`
+	UserID          uuid.UUID        `json:"user_id"`
+	Status          ComplianceStatus `json:"status"`
+	Level           KYCLevel         `json:"level"`
+	RiskScore       decimal.Decimal  `json:"risk_score"`
+	VerificationID  string           `json:"verification_id,omitempty"`
+	Documents       []KYCDocument    `json:"documents,omitempty"`
+	Flags           []string         `json:"flags,omitempty"`
+	RequiredActions []string         `json:"required_actions,omitempty"`
+	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`
+	ProcessedAt     time.Time        `json:"processed_at"`
+	ProcessedBy     string           `json:"processed_by,omitempty"`
+	Notes           string           `json:"notes,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// KYCDocument represents a document submitted for KYC
+type KYCDocument struct {
+	ID           uuid.UUID              `json:"id"`
+	Type         string                 `json:"type"` // passport, driver_license, national_id, etc.
+	Status       ComplianceStatus       `json:"status"`
+	DocumentData map[string]interface{} `json:"document_data,omitempty"`
+	ExtractionData map[string]interface{} `json:"extraction_data,omitempty"`
+	VerificationData map[string]interface{} `json:"verification_data,omitempty"`
+	QualityScore decimal.Decimal        `json:"quality_score"`
+	Confidence   decimal.Decimal        `json:"confidence"`
+	Flags        []string               `json:"flags,omitempty"`
+	SubmittedAt  time.Time              `json:"submitted_at"`
+	ProcessedAt  *time.Time             `json:"processed_at,omitempty"`
+	ExpiresAt    *time.Time             `json:"expires_at,omitempty"`
+}
+
+// DocumentVerification represents document verification results
+type DocumentVerification struct {
+	DocumentID      uuid.UUID              `json:"document_id"`
+	Type            string                 `json:"type"`
+	Status          ComplianceStatus       `json:"status"`
+	Authentic       bool                   `json:"authentic"`
+	QualityScore    decimal.Decimal        `json:"quality_score"`
+	ConfidenceScore decimal.Decimal        `json:"confidence_score"`
+	ExtractedData   map[string]interface{} `json:"extracted_data,omitempty"`
+	Anomalies       []string               `json:"anomalies,omitempty"`
+	Warnings        []string               `json:"warnings,omitempty"`
+	VerifiedFields  []string               `json:"verified_fields,omitempty"`
+	ProcessedAt     time.Time              `json:"processed_at"`
+	ExpiresAt       *time.Time             `json:"expires_at,omitempty"`
+}
+
+// KYCStatus represents KYC status information
+type KYCStatus struct {
+	UserID       uuid.UUID    `json:"user_id"`
+	Level        KYCLevel     `json:"level"`
+	Status       ComplianceStatus `json:"status"`
+	CompletedAt  *time.Time   `json:"completed_at,omitempty"`
+	ExpiresAt    *time.Time   `json:"expires_at,omitempty"`
+	LastUpdated  time.Time    `json:"last_updated"`
+	Documents    []KYCDocument `json:"documents,omitempty"`
+	Limits       *KYCLimits   `json:"limits,omitempty"`
+	Restrictions []string     `json:"restrictions,omitempty"`
+}
+
+// KYCLimits represents transaction limits based on KYC level
+type KYCLimits struct {
+	DailyWithdrawal   decimal.Decimal `json:"daily_withdrawal"`
+	MonthlyWithdrawal decimal.Decimal `json:"monthly_withdrawal"`
+	DailyDeposit      decimal.Decimal `json:"daily_deposit"`
+	MonthlyDeposit    decimal.Decimal `json:"monthly_deposit"`
+	SingleTransaction decimal.Decimal `json:"single_transaction"`
+}
