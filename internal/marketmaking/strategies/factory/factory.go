@@ -2,12 +2,14 @@
 package factory
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
-	"github.com/Orbit-CEX/Finalex/internal/marketmaking/strategies/advanced"
-	"github.com/Orbit-CEX/Finalex/internal/marketmaking/strategies/basic"
-	"github.com/Orbit-CEX/Finalex/internal/marketmaking/strategies/common"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/advanced"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/arbitrage"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/basic"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 )
 
 // StrategyFactory creates and manages trading strategies
@@ -326,6 +328,188 @@ func (f *StrategyFactory) registerPredictiveStrategy() {
 				MinValue:    100.0,
 				MaxValue:    100000.0,
 				Description: "Maximum position size",
+				Required:    true,
+			},
+		},
+	}
+}
+
+// registerVolatilitySurfaceStrategy registers the volatility surface strategy
+func (f *StrategyFactory) registerVolatilitySurfaceStrategy() {
+	f.availableStrategies["volatility_surface"] = func(config common.StrategyConfig) (common.MarketMakingStrategy, error) {
+		return advanced.NewVolatilitySurfaceStrategy(config)
+	}
+
+	f.metadata["volatility_surface"] = common.StrategyInfo{
+		Name:        "Volatility Surface Strategy",
+		Description: "Advanced volatility modeling for options-like market making",
+		RiskLevel:   common.RiskHigh,
+		Complexity:  common.ComplexityHigh,
+		Version:     "1.0.0",
+		Parameters: []common.ParameterDefinition{
+			{
+				Name:        "base_spread",
+				Type:        "float",
+				Default:     0.001,
+				MinValue:    0.0001,
+				MaxValue:    0.01,
+				Description: "Base spread percentage",
+				Required:    true,
+			},
+			{
+				Name:        "vol_smile_steepness",
+				Type:        "float",
+				Default:     1.0,
+				MinValue:    0.1,
+				MaxValue:    10.0,
+				Description: "Volatility smile steepness",
+				Required:    true,
+			},
+			{
+				Name:        "time_decay_rate",
+				Type:        "float",
+				Default:     0.05,
+				MinValue:    0.01,
+				MaxValue:    0.5,
+				Description: "Time decay rate for volatility",
+				Required:    true,
+			},
+			{
+				Name:        "max_position",
+				Type:        "float",
+				Default:     1000.0,
+				MinValue:    100.0,
+				MaxValue:    100000.0,
+				Description: "Maximum position size",
+				Required:    true,
+			},
+		},
+	}
+}
+
+// registerMicroStructureStrategy registers the micro structure strategy
+func (f *StrategyFactory) registerMicroStructureStrategy() {
+	f.availableStrategies["microstructure"] = func(config common.StrategyConfig) (common.MarketMakingStrategy, error) {
+		return advanced.NewMicroStructureStrategy(config)
+	}
+
+	f.metadata["microstructure"] = common.StrategyInfo{
+		Name:        "Micro Structure Strategy",
+		Description: "Market microstructure-aware high-frequency market making",
+		RiskLevel:   common.RiskHigh,
+		Complexity:  common.ComplexityHigh,
+		Version:     "1.0.0",
+		Parameters: []common.ParameterDefinition{
+			{
+				Name:        "base_spread",
+				Type:        "float",
+				Default:     0.0005,
+				MinValue:    0.0001,
+				MaxValue:    0.01,
+				Description: "Base spread percentage",
+				Required:    true,
+			},
+			{
+				Name:        "queue_priority_weight",
+				Type:        "float",
+				Default:     0.3,
+				MinValue:    0.0,
+				MaxValue:    1.0,
+				Description: "Queue priority weight factor",
+				Required:    true,
+			},
+			{
+				Name:        "adverse_selection_protection",
+				Type:        "float",
+				Default:     0.001,
+				MinValue:    0.0001,
+				MaxValue:    0.01,
+				Description: "Adverse selection protection spread",
+				Required:    true,
+			},
+			{
+				Name:        "tick_aggressiveness",
+				Type:        "float",
+				Default:     0.5,
+				MinValue:    0.0,
+				MaxValue:    1.0,
+				Description: "Tick aggressiveness factor",
+				Required:    true,
+			},
+			{
+				Name:        "max_position",
+				Type:        "float",
+				Default:     1000.0,
+				MinValue:    100.0,
+				MaxValue:    100000.0,
+				Description: "Maximum position size",
+				Required:    true,
+			},
+		},
+	}
+}
+
+// registerCrossExchangeStrategy registers the cross-exchange arbitrage strategy
+func (f *StrategyFactory) registerCrossExchangeStrategy() {
+	f.availableStrategies["cross_exchange"] = func(config common.StrategyConfig) (common.MarketMakingStrategy, error) {
+		// Create instance and configure it
+		strategy := arbitrage.NewCrossExchangeStrategy()
+		if err := strategy.Initialize(context.Background(), config); err != nil {
+			return nil, fmt.Errorf("failed to initialize cross-exchange strategy: %w", err)
+		}
+		return strategy, nil
+	}
+
+	f.metadata["cross_exchange"] = common.StrategyInfo{
+		Name:        "Cross-Exchange Arbitrage Strategy",
+		Description: "Multi-exchange arbitrage market making with cross-venue optimization",
+		RiskLevel:   common.RiskHigh,
+		Complexity:  common.ComplexityHigh,
+		Version:     "1.0.0",
+		Parameters: []common.ParameterDefinition{
+			{
+				Name:        "base_spread",
+				Type:        "float",
+				Default:     0.001,
+				MinValue:    0.0001,
+				MaxValue:    0.01,
+				Description: "Base spread percentage",
+				Required:    true,
+			},
+			{
+				Name:        "arbitrage_threshold",
+				Type:        "float",
+				Default:     0.002,
+				MinValue:    0.0005,
+				MaxValue:    0.02,
+				Description: "Minimum arbitrage threshold",
+				Required:    true,
+			},
+			{
+				Name:        "max_position_per_exchange",
+				Type:        "float",
+				Default:     500.0,
+				MinValue:    50.0,
+				MaxValue:    50000.0,
+				Description: "Maximum position per exchange",
+				Required:    true,
+			},
+			{
+				Name:        "latency_buffer_ms",
+				Type:        "int",
+				Default:     50,
+				MinValue:    10,
+				MaxValue:    1000,
+				Description: "Latency buffer in milliseconds",
+				Required:    true,
+			},
+			{
+				Name:        "hedge_ratio",
+				Type:        "float",
+				Default:     1.0,
+				MinValue:    0.5,
+				MaxValue:    2.0,
+				Description: "Hedge ratio for risk management",
 				Required:    true,
 			},
 		},

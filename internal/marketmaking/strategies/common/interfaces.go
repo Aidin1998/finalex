@@ -213,6 +213,27 @@ type RiskLimits struct {
 	MaxConcentration decimal.Decimal `json:"max_concentration"`
 }
 
+// Additional enum types needed by strategies
+type RegimeType string
+
+const (
+	RegimeTrending RegimeType = "trending"
+	RegimeRanging  RegimeType = "ranging"
+	RegimeVolatile RegimeType = "volatile"
+	RegimeCalm     RegimeType = "calm"
+	RegimeUnknown  RegimeType = "unknown"
+)
+
+// HealthStatus represents the health status of a strategy
+type HealthStatus struct {
+	IsHealthy     bool              `json:"is_healthy"`
+	Status        StrategyStatus    `json:"status"`
+	Message       string            `json:"message,omitempty"`
+	Checks        map[string]bool   `json:"checks"`
+	Metrics       map[string]string `json:"metrics,omitempty"`
+	LastCheckTime time.Time         `json:"last_check_time"`
+}
+
 // StrategyStatus represents the current status of a strategy
 type StrategyStatus string
 
@@ -225,34 +246,79 @@ const (
 	StatusPaused   StrategyStatus = "paused"
 )
 
-// RiskLevel represents the risk level of a strategy
-type RiskLevel string
+// Strategy metadata and classification types
+type RiskLevel int
 
 const (
-	RiskLow      RiskLevel = "low"
-	RiskMedium   RiskLevel = "medium"
-	RiskHigh     RiskLevel = "high"
-	RiskCritical RiskLevel = "critical"
+	RiskLow RiskLevel = iota
+	RiskMedium
+	RiskHigh
+	RiskExtreme
 )
 
-// RegimeType represents different market regimes
-type RegimeType string
+func (r RiskLevel) String() string {
+	switch r {
+	case RiskLow:
+		return "Low"
+	case RiskMedium:
+		return "Medium"
+	case RiskHigh:
+		return "High"
+	case RiskExtreme:
+		return "Extreme"
+	default:
+		return "Unknown"
+	}
+}
+
+type ComplexityLevel int
 
 const (
-	TrendingRegime       RegimeType = "trending"
-	MeanRevertingRegime  RegimeType = "mean_reverting"
-	HighVolatilityRegime RegimeType = "high_volatility"
-	LowLiquidityRegime   RegimeType = "low_liquidity"
-	CrisisRegime         RegimeType = "crisis"
+	ComplexityLow ComplexityLevel = iota
+	ComplexityMedium
+	ComplexityHigh
+	ComplexityAdvanced
 )
 
-// HealthStatus represents the health status of a strategy
-type HealthStatus struct {
-	Healthy   bool                   `json:"healthy"`
-	Status    string                 `json:"status"`
-	LastCheck time.Time              `json:"last_check"`
-	Issues    []string               `json:"issues,omitempty"`
-	Metrics   map[string]interface{} `json:"metrics,omitempty"`
+func (c ComplexityLevel) String() string {
+	switch c {
+	case ComplexityLow:
+		return "Low"
+	case ComplexityMedium:
+		return "Medium"
+	case ComplexityHigh:
+		return "High"
+	case ComplexityAdvanced:
+		return "Advanced"
+	default:
+		return "Unknown"
+	}
+}
+
+// StrategyInfo holds metadata about a strategy
+type StrategyInfo struct {
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Version     string                `json:"version"`
+	RiskLevel   RiskLevel             `json:"risk_level"`
+	Complexity  ComplexityLevel       `json:"complexity"`
+	Parameters  []ParameterDefinition `json:"parameters"`
+	Author      string                `json:"author,omitempty"`
+	Tags        []string              `json:"tags,omitempty"`
+	CreatedAt   time.Time             `json:"created_at,omitempty"`
+	UpdatedAt   time.Time             `json:"updated_at,omitempty"`
+}
+
+// ParameterDefinition defines a strategy parameter
+type ParameterDefinition struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"` // "string", "int", "float", "bool"
+	Default     interface{} `json:"default"`
+	MinValue    interface{} `json:"min_value,omitempty"`
+	MaxValue    interface{} `json:"max_value,omitempty"`
+	Description string      `json:"description"`
+	Required    bool        `json:"required"`
+	Options     []string    `json:"options,omitempty"` // For enum-like parameters
 }
 
 // StrategyFactory interface for creating strategy instances
@@ -276,18 +342,6 @@ type StrategyMetadata struct {
 	Complexity  string                `json:"complexity"`
 	Parameters  []ParameterDefinition `json:"parameters"`
 	Tags        []string              `json:"tags,omitempty"`
-}
-
-// ParameterDefinition defines a strategy parameter
-type ParameterDefinition struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Description string      `json:"description"`
-	Required    bool        `json:"required"`
-	Default     interface{} `json:"default,omitempty"`
-	MinValue    interface{} `json:"min_value,omitempty"`
-	MaxValue    interface{} `json:"max_value,omitempty"`
-	Options     []string    `json:"options,omitempty"`
 }
 
 // StrategyRegistry interface for strategy discovery and management

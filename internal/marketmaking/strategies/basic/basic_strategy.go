@@ -3,79 +3,149 @@ package basic
 import (
 	"context"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
-	"github.com/Finalex/internal/marketmaking/strategies/common"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
-// BasicStrategy implements simple spread-based market making
+// BasicStrategy implements a simple fixed-spread market making strategy
 type BasicStrategy struct {
-	config   *BasicConfig
-	metrics  *common.StrategyMetrics
+	config   common.StrategyConfig
+	name     string
+	version  string
 	status   common.StrategyStatus
+	metrics  *common.StrategyMetrics
 	mu       sync.RWMutex
-	stopChan chan struct{}
+	spread   decimal.Decimal
+	size     decimal.Decimal
+	tickSize decimal.Decimal
 }
 
-type BasicConfig struct {
-	Spread   float64 `json:"spread"`
-	Size     float64 `json:"size"`
-	TickSize float64 `json:"tick_size"`
-}
+// NewBasicStrategy creates a new basic strategy instance
+func NewBasicStrategy(config common.StrategyConfig) (common.MarketMakingStrategy, error) {
+	// Default values
+	spread := decimal.NewFromFloat(0.002) // 20 bps
+	size := decimal.NewFromFloat(100.0)
+	tickSize := decimal.NewFromFloat(0.01)
 
-// NewBasicStrategy creates a new basic market making strategy
-func NewBasicStrategy() *BasicStrategy {
-	return &BasicStrategy{
-		config: &BasicConfig{
-			Spread:   0.001,
-			Size:     100.0,
-			TickSize: 0.01,
-		},
-		metrics: &common.StrategyMetrics{
-			StartTime: time.Now(),
-		},
-		status:   common.StatusStopped,
-		stopChan: make(chan struct{}),
+	// Parse config parameters
+	if val, ok := config.Parameters["spread"]; ok {
+		if f, ok := val.(float64); ok {
+			spread = decimal.NewFromFloat(f)
+		}
 	}
+	if val, ok := config.Parameters["size"]; ok {
+		if f, ok := val.(float64); ok {
+			size = decimal.NewFromFloat(f)
+		}
+	}
+	if val, ok := config.Parameters["tick_size"]; ok {
+		if f, ok := val.(float64); ok {
+			tickSize = decimal.NewFromFloat(f)
+		}
+	}
+
+	strategy := &BasicStrategy{
+		config:   config,
+		name:     "Basic",
+		version:  "1.0.0",
+		status:   common.StatusStopped,
+		spread:   spread,
+		size:     size,
+		tickSize: tickSize,
+		metrics: &common.StrategyMetrics{
+			TotalPnL:          decimal.Zero,
+			DailyPnL:          decimal.Zero,
+			SharpeRatio:       decimal.Zero,
+			MaxDrawdown:       decimal.Zero,
+			WinRate:           decimal.Zero,
+			OrdersPlaced:      0,
+			OrdersFilled:      0,
+			OrdersCancelled:   0,
+			SuccessRate:       decimal.Zero,
+			SpreadCapture:     decimal.Zero,
+			InventoryTurnover: decimal.Zero,
+			QuoteUptime:       decimal.Zero,
+			LastUpdated:       time.Now(),
+		},
+	}
+
+	return strategy, nil
 }
 
-// Initialize prepares the strategy for trading
+// Core interface methods
+
+func (s *BasicStrategy) Quote(ctx context.Context, input common.QuoteInput) (*common.QuoteOutput, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.status != common.StatusRunning {
+		return nil, fmt.Errorf("strategy not running")
+	}
+
+	// Calculate spread-based quotes
+	halfSpread := s.spread.Div(decimal.NewFromInt(2))
+
+	bid := input.MidPrice.Mul(decimal.NewFromInt(1).Sub(halfSpread))
+	ask := input.MidPrice.Mul(decimal.NewFromInt(1).Add(halfSpread))
+
+	// Round to tick size if specified
+	if s.tickSize.GreaterThan(decimal.Zero) {
+		bid = s.roundToTick(bid, false)
+		ask = s.roundToTick(ask, true)
+	}
+
+	output := &common.QuoteOutput{
+		BidPrice:    bid,
+		AskPrice:    ask,
+		BidSize:     s.size,
+		AskSize:     s.size,
+		Confidence:  decimal.NewFromFloat(0.8), // Basic strategy has moderate confidence
+		TTL:         time.Second * 30,          // 30 second TTL
+		GeneratedAt: time.Now(),
+		Metadata: map[string]interface{}{
+			"strategy_type": "basic",
+			"spread":        s.spread.String(),
+		},
+	}
+
+	// Update metrics
+	s.updateQuoteMetrics(output)
+
+	return output, nil
+}
+
 func (s *BasicStrategy) Initialize(ctx context.Context, config common.StrategyConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Parse basic strategy config
-	if spread, ok := config.Parameters["spread"].(float64); ok {
-		s.config.Spread = spread
-	}
-	if size, ok := config.Parameters["size"].(float64); ok {
-		s.config.Size = size
-	}
-	if tickSize, ok := config.Parameters["tick_size"].(float64); ok {
-		s.config.TickSize = tickSize
+	s.config = config
+	if err := s.parseConfig(); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	s.status = common.StatusInitialized
+	s.status = common.StatusStarting
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Start begins strategy execution
 func (s *BasicStrategy) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.status != common.StatusInitialized && s.status != common.StatusStopped {
+	if s.status != common.StatusStarting && s.status != common.StatusStopped {
 		return fmt.Errorf("cannot start strategy in status: %s", s.status)
 	}
 
 	s.status = common.StatusRunning
-	s.metrics.StartTime = time.Now()
+	s.startTime = time.Now()
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Stop halts strategy execution
 func (s *BasicStrategy) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,121 +154,85 @@ func (s *BasicStrategy) Stop(ctx context.Context) error {
 		return fmt.Errorf("cannot stop strategy in status: %s", s.status)
 	}
 
-	close(s.stopChan)
 	s.status = common.StatusStopped
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Quote generates bid/ask quotes for the given market conditions
-func (s *BasicStrategy) Quote(input common.QuoteInput) (common.QuoteOutput, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.status != common.StatusRunning {
-		return common.QuoteOutput{}, fmt.Errorf("strategy not running")
-	}
-
-	// Simple spread-based quoting
-	halfSpread := s.config.Spread / 2
-	bid := input.MidPrice * (1 - halfSpread)
-	ask := input.MidPrice * (1 + halfSpread)
-
-	// Round to tick size
-	if s.config.TickSize > 0 {
-		bid = s.roundToTick(bid, false)
-		ask = s.roundToTick(ask, true)
-	}
-
-	output := common.QuoteOutput{
-		BidPrice:   bid,
-		AskPrice:   ask,
-		BidSize:    s.config.Size,
-		AskSize:    s.config.Size,
-		Confidence: 0.8, // Basic strategy has moderate confidence
-		Timestamp:  time.Now(),
-	}
-
-	// Update metrics
-	s.updateMetrics(output)
-
-	return output, nil
-}
-
-// OnMarketData handles market data updates
-func (s *BasicStrategy) OnMarketData(data common.MarketData) error {
-	// Basic strategy doesn't need to process market data
+func (s *BasicStrategy) OnMarketData(ctx context.Context, data *common.MarketData) error {
+	// Basic strategy doesn't need complex market data processing
 	return nil
 }
 
-// OnOrderFill handles order fill notifications
-func (s *BasicStrategy) OnOrderFill(fill common.OrderFill) error {
+func (s *BasicStrategy) OnOrderFill(ctx context.Context, fill *common.OrderFill) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update basic metrics
-	s.metrics.TotalVolume += fill.Quantity
-	s.metrics.OrdersPlaced++
-
-	if fill.Side == "buy" {
-		s.metrics.BuyVolume += fill.Quantity
-	} else {
-		s.metrics.SellVolume += fill.Quantity
-	}
+	// Update metrics
+	s.metrics.OrdersFilled++
 
 	// Simple PnL calculation
+	pnl := decimal.Zero
 	if fill.Side == "buy" {
-		s.metrics.TotalPnL -= fill.Price * fill.Quantity
+		pnl = fill.Price.Mul(fill.Quantity).Neg()
 	} else {
-		s.metrics.TotalPnL += fill.Price * fill.Quantity
+		pnl = fill.Price.Mul(fill.Quantity)
 	}
+
+	s.metrics.TotalPnL = s.metrics.TotalPnL.Add(pnl)
+	s.metrics.DailyPnL = s.metrics.DailyPnL.Add(pnl)
+	s.metrics.LastTrade = time.Now()
+	s.metrics.LastUpdated = time.Now()
 
 	return nil
 }
 
-// OnOrderCancel handles order cancellation notifications
-func (s *BasicStrategy) OnOrderCancel(cancel common.OrderCancel) error {
+func (s *BasicStrategy) OnOrderCancel(ctx context.Context, orderID uuid.UUID, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.metrics.OrdersCancelled++
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// UpdateConfig updates strategy configuration
-func (s *BasicStrategy) UpdateConfig(config common.StrategyConfig) error {
+func (s *BasicStrategy) UpdateConfig(ctx context.Context, config common.StrategyConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if spread, ok := config.Parameters["spread"].(float64); ok {
-		s.config.Spread = spread
-	}
-	if size, ok := config.Parameters["size"].(float64); ok {
-		s.config.Size = size
-	}
-	if tickSize, ok := config.Parameters["tick_size"].(float64); ok {
-		s.config.TickSize = tickSize
+	s.config = config
+	if err := s.parseConfig(); err != nil {
+		return fmt.Errorf("failed to parse updated config: %w", err)
 	}
 
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// GetMetrics returns current strategy metrics
-func (s *BasicStrategy) GetMetrics() common.StrategyMetrics {
+func (s *BasicStrategy) GetConfig() common.StrategyConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	metrics := *s.metrics
-	metrics.Uptime = time.Since(s.metrics.StartTime)
-
-	// Calculate basic performance metrics
-	if s.metrics.OrdersPlaced > 0 {
-		metrics.SuccessRate = float64(s.metrics.OrdersPlaced-s.metrics.OrdersCancelled) / float64(s.metrics.OrdersPlaced)
-	}
-
-	return metrics
+	return s.config
 }
 
-// GetStatus returns current strategy status
+func (s *BasicStrategy) GetMetrics() *common.StrategyMetrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Create a copy of current metrics
+	metrics := *s.metrics
+	metrics.StrategyUptime = time.Since(s.startTime)
+
+	// Calculate success rate
+	if s.metrics.OrdersPlaced > 0 {
+		successfulOrders := s.metrics.OrdersPlaced - s.metrics.OrdersCancelled
+		metrics.SuccessRate = decimal.NewFromInt(successfulOrders).Div(decimal.NewFromInt(s.metrics.OrdersPlaced))
+	}
+
+	return &metrics
+}
+
 func (s *BasicStrategy) GetStatus() common.StrategyStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -206,96 +240,128 @@ func (s *BasicStrategy) GetStatus() common.StrategyStatus {
 	return s.status
 }
 
-// GetInfo returns strategy information
-func (s *BasicStrategy) GetInfo() common.StrategyInfo {
-	return common.StrategyInfo{
-		Name:        "Basic",
-		Version:     "1.0.0",
-		Description: "Simple spread-based market making strategy",
-		Author:      "Finalex Team",
-		RiskLevel:   common.RiskLow,
-		Complexity:  common.ComplexityBasic,
-		Parameters: []common.ParameterDefinition{
-			{
-				Name:        "spread",
-				Type:        "float",
-				Description: "Base spread as a fraction of mid price",
-				Default:     0.001,
-				MinValue:    0.0001,
-				MaxValue:    0.1,
-				Required:    true,
-			},
-			{
-				Name:        "size",
-				Type:        "float",
-				Description: "Order size for quotes",
-				Default:     100.0,
-				MinValue:    1.0,
-				MaxValue:    10000.0,
-				Required:    true,
-			},
-			{
-				Name:        "tick_size",
-				Type:        "float",
-				Description: "Minimum price increment",
-				Default:     0.01,
-				MinValue:    0.001,
-				MaxValue:    1.0,
-				Required:    false,
-			},
-		},
-	}
+// Metadata methods
+func (s *BasicStrategy) Name() string {
+	return "Basic Market Making"
 }
 
-// HealthCheck performs basic health validation
-func (s *BasicStrategy) HealthCheck() common.HealthStatus {
+func (s *BasicStrategy) Version() string {
+	return "1.0.0"
+}
+
+func (s *BasicStrategy) Description() string {
+	return "Simple spread-based market making strategy with fixed spreads"
+}
+
+func (s *BasicStrategy) RiskLevel() common.RiskLevel {
+	return common.RiskLow
+}
+
+func (s *BasicStrategy) HealthCheck(ctx context.Context) *common.HealthStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	health := common.HealthStatus{
-		IsHealthy: true,
-		Timestamp: time.Now(),
+	health := &common.HealthStatus{
+		IsHealthy:     true,
+		Status:        s.status,
+		Checks:        make(map[string]bool),
+		LastCheckTime: time.Now(),
 	}
 
-	// Check basic health conditions
-	if s.config.Spread <= 0 {
-		health.IsHealthy = false
-		health.Issues = append(health.Issues, "Invalid spread configuration")
-	}
+	// Check configuration validity
+	health.Checks["valid_spread"] = s.spread.GreaterThan(decimal.Zero)
+	health.Checks["valid_size"] = s.size.GreaterThan(decimal.Zero)
+	health.Checks["strategy_running"] = s.status == common.StatusRunning
 
-	if s.config.Size <= 0 {
-		health.IsHealthy = false
-		health.Issues = append(health.Issues, "Invalid size configuration")
-	}
-
-	// Check for stale metrics (no activity for 5 minutes)
-	if time.Since(s.metrics.LastUpdate) > 5*time.Minute && s.status == common.StatusRunning {
-		health.Issues = append(health.Issues, "No recent activity detected")
+	// Overall health
+	for _, check := range health.Checks {
+		if !check {
+			health.IsHealthy = false
+			health.Message = "Configuration or operational issues detected"
+			break
+		}
 	}
 
 	return health
 }
 
+func (s *BasicStrategy) Reset(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Reset metrics but keep configuration
+	s.metrics = &common.StrategyMetrics{
+		LastUpdated: time.Now(),
+	}
+	s.startTime = time.Now()
+
+	return nil
+}
+
 // Helper methods
 
-func (s *BasicStrategy) roundToTick(price float64, roundUp bool) float64 {
-	if s.config.TickSize <= 0 {
+func (s *BasicStrategy) parseConfig() error {
+	params := s.config.Parameters
+
+	if spread, ok := params["spread"]; ok {
+		if spreadFloat, ok := spread.(float64); ok {
+			s.spread = decimal.NewFromFloat(spreadFloat)
+		} else if spreadStr, ok := spread.(string); ok {
+			var err error
+			s.spread, err = decimal.NewFromString(spreadStr)
+			if err != nil {
+				return fmt.Errorf("invalid spread value: %w", err)
+			}
+		}
+	}
+
+	if size, ok := params["size"]; ok {
+		if sizeFloat, ok := size.(float64); ok {
+			s.size = decimal.NewFromFloat(sizeFloat)
+		} else if sizeStr, ok := size.(string); ok {
+			var err error
+			s.size, err = decimal.NewFromString(sizeStr)
+			if err != nil {
+				return fmt.Errorf("invalid size value: %w", err)
+			}
+		}
+	}
+
+	if tickSize, ok := params["tick_size"]; ok {
+		if tickFloat, ok := tickSize.(float64); ok {
+			s.tickSize = decimal.NewFromFloat(tickFloat)
+		} else if tickStr, ok := tickSize.(string); ok {
+			var err error
+			s.tickSize, err = decimal.NewFromString(tickStr)
+			if err != nil {
+				return fmt.Errorf("invalid tick_size value: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *BasicStrategy) roundToTick(price decimal.Decimal, roundUp bool) decimal.Decimal {
+	if s.tickSize.LessThanOrEqual(decimal.Zero) {
 		return price
 	}
 
+	ticks := price.Div(s.tickSize)
 	if roundUp {
-		return math.Ceil(price/s.config.TickSize) * s.config.TickSize
+		return ticks.Ceil().Mul(s.tickSize)
 	} else {
-		return math.Floor(price/s.config.TickSize) * s.config.TickSize
+		return ticks.Floor().Mul(s.tickSize)
 	}
 }
 
-func (s *BasicStrategy) updateMetrics(output common.QuoteOutput) {
-	s.metrics.LastUpdate = time.Now()
-	s.metrics.QuotesGenerated++
+func (s *BasicStrategy) updateQuoteMetrics(output *common.QuoteOutput) {
+	s.metrics.OrdersPlaced++
+	s.metrics.LastUpdated = time.Now()
 
-	if output.BidPrice > 0 && output.AskPrice > 0 {
-		spread := (output.AskPrice - output.BidPrice) / output.BidPrice
-		s.metrics.AvgSpread = (s.metrics.AvgSpread*float64(s.metrics.QuotesGenerated-1) + spread) / float64(s.metrics.QuotesGenerated)
+	// Calculate spread capture
+	if output.BidPrice.GreaterThan(decimal.Zero) && output.AskPrice.GreaterThan(decimal.Zero) {
+		spread := output.AskPrice.Sub(output.BidPrice).Div(output.BidPrice)
+		s.metrics.SpreadCapture = spread
 	}
 }

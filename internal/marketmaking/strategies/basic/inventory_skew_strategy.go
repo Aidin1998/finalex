@@ -3,95 +3,124 @@ package basic
 import (
 	"context"
 	"fmt"
-	"math"
-	"sync"
+
 	"time"
 
-	"github.com/Finalex/internal/marketmaking/strategies/common"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
-// InventorySkewStrategy implements inventory-aware market making
-type InventorySkewStrategy struct {
-	config    *InventorySkewConfig
-	metrics   *common.StrategyMetrics
-	status    common.StrategyStatus
-	inventory float64
-	mu        sync.RWMutex
-	stopChan  chan struct{}
-}
+// Core interface methods
 
-type InventorySkewConfig struct {
-	BaseSpread   float64 `json:"base_spread"`
-	InvFactor    float64 `json:"inv_factor"`
-	Size         float64 `json:"size"`
-	MaxSkew      float64 `json:"max_skew"`
-	MaxInventory float64 `json:"max_inventory"`
-	TickSize     float64 `json:"tick_size"`
-}
+func (s *InventorySkewStrategy) Quote(ctx context.Context, input common.QuoteInput) (*common.QuoteOutput, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-// NewInventorySkewStrategy creates a new inventory-aware market making strategy
-func NewInventorySkewStrategy() *InventorySkewStrategy {
-	return &InventorySkewStrategy{
-		config: &InventorySkewConfig{
-			BaseSpread:   0.001,
-			InvFactor:    0.001,
-			Size:         100.0,
-			MaxSkew:      0.5,
-			MaxInventory: 1000.0,
-			TickSize:     0.01,
-		},
-		metrics: &common.StrategyMetrics{
-			StartTime: time.Now(),
-		},
-		status:   common.StatusStopped,
-		stopChan: make(chan struct{}),
+	if s.status != common.StatusRunning {
+		return nil, fmt.Errorf("strategy not running")
 	}
+
+	// Calculate inventory ratio (-1 to 1)
+	inventoryRatio := decimal.Zero
+	if s.maxInventory.GreaterThan(decimal.Zero) {
+		inventoryRatio = s.currentInventory.Div(s.maxInventory)
+		// Clamp to [-1, 1]
+		if inventoryRatio.GreaterThan(decimal.NewFromInt(1)) {
+			inventoryRatio = decimal.NewFromInt(1)
+		} else if inventoryRatio.LessThan(decimal.NewFromInt(-1)) {
+			inventoryRatio = decimal.NewFromInt(-1)
+		}
+	}
+
+	// Calculate skew based on inventory
+	skew := inventoryRatio.Mul(s.inventoryFactor).Mul(s.maxSkew)
+
+	// Calculate asymmetric spreads
+	bidSpread := s.baseSpread.Add(skew) // Higher inventory -> wider bid spread
+	askSpread := s.baseSpread.Sub(skew) // Higher inventory -> tighter ask spread
+
+	// Ensure minimum spread
+	minSpread := s.baseSpread.Div(decimal.NewFromInt(2))
+	if bidSpread.LessThan(minSpread) {
+		bidSpread = minSpread
+	}
+	if askSpread.LessThan(minSpread) {
+		askSpread = minSpread
+	}
+
+	// Calculate quotes
+	bidPrice := input.MidPrice.Mul(decimal.NewFromInt(1).Sub(bidSpread))
+	askPrice := input.MidPrice.Mul(decimal.NewFromInt(1).Add(askSpread))
+
+	// Round to tick size if specified
+	if s.tickSize.GreaterThan(decimal.Zero) {
+		bidPrice = s.roundToTick(bidPrice, false)
+		askPrice = s.roundToTick(askPrice, true)
+	}
+
+	// Calculate adaptive sizes based on inventory
+	bidSize, askSize := s.calculateAdaptiveSizes(inventoryRatio)
+
+	// Calculate confidence
+	confidence := s.calculateConfidence(inventoryRatio)
+
+	output := &common.QuoteOutput{
+		BidPrice:    bidPrice,
+		AskPrice:    askPrice,
+		BidSize:     bidSize,
+		AskSize:     askSize,
+		Confidence:  confidence,
+		TTL:         time.Second * 25,
+		GeneratedAt: time.Now(),
+		Metadata: map[string]interface{}{
+			"strategy_type":     "inventory_skew",
+			"base_spread":       s.baseSpread.String(),
+			"inventory_ratio":   inventoryRatio.String(),
+			"skew":              skew.String(),
+			"current_inventory": s.currentInventory.String(),
+			"bid_spread":        bidSpread.String(),
+			"ask_spread":        askSpread.String(),
+		},
+	}
+
+	// Update metrics
+	s.updateQuoteMetrics(output, inventoryRatio)
+
+	return output, nil
 }
 
-// Initialize prepares the strategy for trading
 func (s *InventorySkewStrategy) Initialize(ctx context.Context, config common.StrategyConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Parse inventory skew strategy config
-	if baseSpread, ok := config.Parameters["base_spread"].(float64); ok {
-		s.config.BaseSpread = baseSpread
-	}
-	if invFactor, ok := config.Parameters["inv_factor"].(float64); ok {
-		s.config.InvFactor = invFactor
-	}
-	if size, ok := config.Parameters["size"].(float64); ok {
-		s.config.Size = size
-	}
-	if maxSkew, ok := config.Parameters["max_skew"].(float64); ok {
-		s.config.MaxSkew = maxSkew
-	}
-	if maxInventory, ok := config.Parameters["max_inventory"].(float64); ok {
-		s.config.MaxInventory = maxInventory
-	}
-	if tickSize, ok := config.Parameters["tick_size"].(float64); ok {
-		s.config.TickSize = tickSize
+	s.config = config
+	if err := s.parseConfig(); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	s.status = common.StatusInitialized
+	// Reset inventory
+	s.currentInventory = decimal.Zero
+
+	s.status = common.StatusStarting
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Start begins strategy execution
 func (s *InventorySkewStrategy) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.status != common.StatusInitialized && s.status != common.StatusStopped {
+	if s.status != common.StatusStarting && s.status != common.StatusStopped {
 		return fmt.Errorf("cannot start strategy in status: %s", s.status)
 	}
 
 	s.status = common.StatusRunning
-	s.metrics.StartTime = time.Now()
+	s.startTime = time.Now()
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Stop halts strategy execution
 func (s *InventorySkewStrategy) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,169 +129,92 @@ func (s *InventorySkewStrategy) Stop(ctx context.Context) error {
 		return fmt.Errorf("cannot stop strategy in status: %s", s.status)
 	}
 
-	close(s.stopChan)
 	s.status = common.StatusStopped
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// Quote generates inventory-skewed bid/ask quotes
-func (s *InventorySkewStrategy) Quote(input common.QuoteInput) (common.QuoteOutput, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.status != common.StatusRunning {
-		return common.QuoteOutput{}, fmt.Errorf("strategy not running")
-	}
-
-	// Use provided inventory or internal tracking
-	inventory := input.Inventory
-	if inventory == 0 {
-		inventory = s.inventory
-	}
-
-	// Calculate inventory skew
-	inventoryRatio := inventory / s.config.MaxInventory
-	invSkew := s.config.InvFactor * inventoryRatio
-
-	// Cap the skew to prevent extreme adjustments
-	invSkew = math.Max(-s.config.MaxSkew, math.Min(s.config.MaxSkew, invSkew))
-
-	// Apply skew to spread (positive inventory widens bid-ask, makes selling easier)
-	bidSpread := s.config.BaseSpread/2 + math.Max(0, invSkew)
-	askSpread := s.config.BaseSpread/2 + math.Max(0, -invSkew)
-
-	bid := input.MidPrice * (1 - bidSpread)
-	ask := input.MidPrice * (1 + askSpread)
-
-	// Round to tick size
-	if s.config.TickSize > 0 {
-		bid = s.roundToTick(bid, false)
-		ask = s.roundToTick(ask, true)
-	}
-
-	// Adjust size based on inventory risk
-	inventoryPenalty := math.Abs(inventoryRatio)
-	sizeMultiplier := math.Max(0.1, 1.0-inventoryPenalty*0.5)
-	adjustedSize := s.config.Size * sizeMultiplier
-
-	// Asymmetric sizing - favor trades that reduce inventory
-	bidSize := adjustedSize
-	askSize := adjustedSize
-
-	if inventory > 0 {
-		// Long inventory - favor selling (larger ask size)
-		askSize *= 1.5
-		bidSize *= 0.7
-	} else if inventory < 0 {
-		// Short inventory - favor buying (larger bid size)
-		bidSize *= 1.5
-		askSize *= 0.7
-	}
-
-	output := common.QuoteOutput{
-		BidPrice:   bid,
-		AskPrice:   ask,
-		BidSize:    bidSize,
-		AskSize:    askSize,
-		Confidence: s.calculateConfidence(inventoryRatio),
-		Timestamp:  time.Now(),
-	}
-
-	// Update metrics
-	s.updateMetrics(output, inventory)
-
-	return output, nil
-}
-
-// OnMarketData handles market data updates
-func (s *InventorySkewStrategy) OnMarketData(data common.MarketData) error {
+func (s *InventorySkewStrategy) OnMarketData(ctx context.Context, data *common.MarketData) error {
 	// Inventory skew strategy doesn't need special market data processing
 	return nil
 }
 
-// OnOrderFill handles order fill notifications and updates inventory
-func (s *InventorySkewStrategy) OnOrderFill(fill common.OrderFill) error {
+func (s *InventorySkewStrategy) OnOrderFill(ctx context.Context, fill *common.OrderFill) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update inventory tracking
+	// Update inventory
 	if fill.Side == "buy" {
-		s.inventory += fill.Quantity
-		s.metrics.BuyVolume += fill.Quantity
+		s.currentInventory = s.currentInventory.Add(fill.Quantity)
 	} else {
-		s.inventory -= fill.Quantity
-		s.metrics.SellVolume += fill.Quantity
+		s.currentInventory = s.currentInventory.Sub(fill.Quantity)
 	}
 
 	// Update metrics
-	s.metrics.TotalVolume += fill.Quantity
-	s.metrics.OrdersPlaced++
+	s.metrics.OrdersFilled++
 
 	// Calculate PnL
+	pnl := decimal.Zero
 	if fill.Side == "buy" {
-		s.metrics.TotalPnL -= fill.Price * fill.Quantity
+		pnl = fill.Price.Mul(fill.Quantity).Neg()
 	} else {
-		s.metrics.TotalPnL += fill.Price * fill.Quantity
+		pnl = fill.Price.Mul(fill.Quantity)
 	}
+
+	s.metrics.TotalPnL = s.metrics.TotalPnL.Add(pnl)
+	s.metrics.DailyPnL = s.metrics.DailyPnL.Add(pnl)
+	s.metrics.LastTrade = time.Now()
+	s.metrics.LastUpdated = time.Now()
 
 	return nil
 }
 
-// OnOrderCancel handles order cancellation notifications
-func (s *InventorySkewStrategy) OnOrderCancel(cancel common.OrderCancel) error {
+func (s *InventorySkewStrategy) OnOrderCancel(ctx context.Context, orderID uuid.UUID, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.metrics.OrdersCancelled++
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// UpdateConfig updates strategy configuration
-func (s *InventorySkewStrategy) UpdateConfig(config common.StrategyConfig) error {
+func (s *InventorySkewStrategy) UpdateConfig(ctx context.Context, config common.StrategyConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if baseSpread, ok := config.Parameters["base_spread"].(float64); ok {
-		s.config.BaseSpread = baseSpread
-	}
-	if invFactor, ok := config.Parameters["inv_factor"].(float64); ok {
-		s.config.InvFactor = invFactor
-	}
-	if size, ok := config.Parameters["size"].(float64); ok {
-		s.config.Size = size
-	}
-	if maxSkew, ok := config.Parameters["max_skew"].(float64); ok {
-		s.config.MaxSkew = maxSkew
-	}
-	if maxInventory, ok := config.Parameters["max_inventory"].(float64); ok {
-		s.config.MaxInventory = maxInventory
+	s.config = config
+	if err := s.parseConfig(); err != nil {
+		return fmt.Errorf("failed to parse updated config: %w", err)
 	}
 
+	s.metrics.LastUpdated = time.Now()
 	return nil
 }
 
-// GetMetrics returns current strategy metrics
-func (s *InventorySkewStrategy) GetMetrics() common.StrategyMetrics {
+func (s *InventorySkewStrategy) GetConfig() common.StrategyConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	metrics := *s.metrics
-	metrics.Uptime = time.Since(s.metrics.StartTime)
-	metrics.CurrentInventory = s.inventory
-
-	if s.metrics.OrdersPlaced > 0 {
-		metrics.SuccessRate = float64(s.metrics.OrdersPlaced-s.metrics.OrdersCancelled) / float64(s.metrics.OrdersPlaced)
-	}
-
-	// Calculate inventory utilization
-	if s.config.MaxInventory > 0 {
-		metrics.InventoryUtilization = math.Abs(s.inventory) / s.config.MaxInventory
-	}
-
-	return metrics
+	return s.config
 }
 
-// GetStatus returns current strategy status
+func (s *InventorySkewStrategy) GetMetrics() *common.StrategyMetrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Create a copy of current metrics
+	metrics := *s.metrics
+	metrics.StrategyUptime = time.Since(s.startTime)
+
+	// Calculate success rate
+	if s.metrics.OrdersPlaced > 0 {
+		successfulOrders := s.metrics.OrdersPlaced - s.metrics.OrdersCancelled
+		metrics.SuccessRate = decimal.NewFromInt(successfulOrders).Div(decimal.NewFromInt(s.metrics.OrdersPlaced))
+	}
+
+	return &metrics
+}
+
 func (s *InventorySkewStrategy) GetStatus() common.StrategyStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -270,141 +222,226 @@ func (s *InventorySkewStrategy) GetStatus() common.StrategyStatus {
 	return s.status
 }
 
-// GetInfo returns strategy information
-func (s *InventorySkewStrategy) GetInfo() common.StrategyInfo {
-	return common.StrategyInfo{
-		Name:        "InventorySkew",
-		Version:     "1.0.0",
-		Description: "Inventory-aware market making with asymmetric quoting",
-		Author:      "Finalex Team",
-		RiskLevel:   common.RiskMedium,
-		Complexity:  common.ComplexityIntermediate,
-		Parameters: []common.ParameterDefinition{
-			{
-				Name:        "base_spread",
-				Type:        "float",
-				Description: "Base spread as a fraction of mid price",
-				Default:     0.001,
-				MinValue:    0.0001,
-				MaxValue:    0.1,
-				Required:    true,
-			},
-			{
-				Name:        "inv_factor",
-				Type:        "float",
-				Description: "Inventory skew factor",
-				Default:     0.001,
-				MinValue:    0.0,
-				MaxValue:    0.01,
-				Required:    true,
-			},
-			{
-				Name:        "size",
-				Type:        "float",
-				Description: "Base order size for quotes",
-				Default:     100.0,
-				MinValue:    1.0,
-				MaxValue:    10000.0,
-				Required:    true,
-			},
-			{
-				Name:        "max_skew",
-				Type:        "float",
-				Description: "Maximum allowed skew",
-				Default:     0.5,
-				MinValue:    0.0,
-				MaxValue:    2.0,
-				Required:    false,
-			},
-			{
-				Name:        "max_inventory",
-				Type:        "float",
-				Description: "Maximum inventory position",
-				Default:     1000.0,
-				MinValue:    100.0,
-				MaxValue:    100000.0,
-				Required:    false,
-			},
-		},
-	}
+// Metadata methods
+func (s *InventorySkewStrategy) Name() string {
+	return "Inventory Skew Market Making"
 }
 
-// HealthCheck performs health validation
-func (s *InventorySkewStrategy) HealthCheck() common.HealthStatus {
+func (s *InventorySkewStrategy) Version() string {
+	return "1.0.0"
+}
+
+func (s *InventorySkewStrategy) Description() string {
+	return "Inventory-aware market making with position bias and adaptive spreads"
+}
+
+func (s *InventorySkewStrategy) RiskLevel() common.RiskLevel {
+	return common.RiskMedium
+}
+
+func (s *InventorySkewStrategy) HealthCheck(ctx context.Context) *common.HealthStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	health := common.HealthStatus{
-		IsHealthy: true,
-		Timestamp: time.Now(),
+	health := &common.HealthStatus{
+		IsHealthy:     true,
+		Status:        s.status,
+		Checks:        make(map[string]bool),
+		LastCheckTime: time.Now(),
 	}
 
-	// Check configuration
-	if s.config.BaseSpread <= 0 {
-		health.IsHealthy = false
-		health.Issues = append(health.Issues, "Invalid base spread configuration")
-	}
-
-	if s.config.InvFactor < 0 {
-		health.IsHealthy = false
-		health.Issues = append(health.Issues, "Invalid inventory factor")
-	}
+	// Check configuration validity
+	health.Checks["valid_base_spread"] = s.baseSpread.GreaterThan(decimal.Zero)
+	health.Checks["valid_inventory_factor"] = s.inventoryFactor.GreaterThan(decimal.Zero)
+	health.Checks["valid_max_inventory"] = s.maxInventory.GreaterThan(decimal.Zero)
+	health.Checks["valid_size"] = s.baseSize.GreaterThan(decimal.Zero)
+	health.Checks["strategy_running"] = s.status == common.StatusRunning
 
 	// Check inventory levels
-	inventoryRatio := math.Abs(s.inventory) / s.config.MaxInventory
-	if inventoryRatio > 0.9 {
-		health.Issues = append(health.Issues, fmt.Sprintf("High inventory utilization: %.1f%%", inventoryRatio*100))
-	}
+	inventoryRatio := s.currentInventory.Div(s.maxInventory).Abs()
+	health.Checks["inventory_within_limits"] = inventoryRatio.LessThanOrEqual(decimal.NewFromInt(1))
+	health.Checks["inventory_not_critical"] = inventoryRatio.LessThan(decimal.NewFromFloat(0.9))
 
-	if inventoryRatio > 1.0 {
-		health.IsHealthy = false
-		health.Issues = append(health.Issues, "Inventory limit exceeded")
+	// Overall health
+	for _, check := range health.Checks {
+		if !check {
+			health.IsHealthy = false
+			health.Message = "Configuration or inventory issues detected"
+			break
+		}
 	}
 
 	return health
 }
 
-// GetInventory returns current inventory position
-func (s *InventorySkewStrategy) GetInventory() float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.inventory
-}
-
-// SetInventory sets current inventory position (for external inventory management)
-func (s *InventorySkewStrategy) SetInventory(inventory float64) {
+func (s *InventorySkewStrategy) Reset(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.inventory = inventory
+
+	// Reset metrics but keep configuration
+	s.metrics = &common.StrategyMetrics{
+		LastUpdated: time.Now(),
+	}
+	s.startTime = time.Now()
+
+	// Reset inventory
+	s.currentInventory = decimal.Zero
+
+	return nil
 }
 
 // Helper methods
 
-func (s *InventorySkewStrategy) calculateConfidence(inventoryRatio float64) float64 {
-	// Lower confidence when inventory is high
-	confidence := 1.0 - math.Abs(inventoryRatio)*0.5
-	return math.Max(0.1, math.Min(1.0, confidence))
+func (s *InventorySkewStrategy) parseConfig() error {
+	params := s.config.Parameters
+
+	if baseSpread, ok := params["base_spread"]; ok {
+		if spreadFloat, ok := baseSpread.(float64); ok {
+			s.baseSpread = decimal.NewFromFloat(spreadFloat)
+		} else if spreadStr, ok := baseSpread.(string); ok {
+			var err error
+			s.baseSpread, err = decimal.NewFromString(spreadStr)
+			if err != nil {
+				return fmt.Errorf("invalid base_spread value: %w", err)
+			}
+		}
+	}
+
+	if inventoryFactor, ok := params["inventory_factor"]; ok {
+		if factorFloat, ok := inventoryFactor.(float64); ok {
+			s.inventoryFactor = decimal.NewFromFloat(factorFloat)
+		} else if factorStr, ok := inventoryFactor.(string); ok {
+			var err error
+			s.inventoryFactor, err = decimal.NewFromString(factorStr)
+			if err != nil {
+				return fmt.Errorf("invalid inventory_factor value: %w", err)
+			}
+		}
+	}
+
+	if maxInventory, ok := params["max_inventory"]; ok {
+		if maxFloat, ok := maxInventory.(float64); ok {
+			s.maxInventory = decimal.NewFromFloat(maxFloat)
+		} else if maxStr, ok := maxInventory.(string); ok {
+			var err error
+			s.maxInventory, err = decimal.NewFromString(maxStr)
+			if err != nil {
+				return fmt.Errorf("invalid max_inventory value: %w", err)
+			}
+		}
+	}
+
+	if baseSize, ok := params["base_size"]; ok {
+		if sizeFloat, ok := baseSize.(float64); ok {
+			s.baseSize = decimal.NewFromFloat(sizeFloat)
+		} else if sizeStr, ok := baseSize.(string); ok {
+			var err error
+			s.baseSize, err = decimal.NewFromString(sizeStr)
+			if err != nil {
+				return fmt.Errorf("invalid base_size value: %w", err)
+			}
+		}
+	}
+
+	if tickSize, ok := params["tick_size"]; ok {
+		if tickFloat, ok := tickSize.(float64); ok {
+			s.tickSize = decimal.NewFromFloat(tickFloat)
+		} else if tickStr, ok := tickSize.(string); ok {
+			var err error
+			s.tickSize, err = decimal.NewFromString(tickStr)
+			if err != nil {
+				return fmt.Errorf("invalid tick_size value: %w", err)
+			}
+		}
+	}
+
+	if maxSkew, ok := params["max_skew"]; ok {
+		if skewFloat, ok := maxSkew.(float64); ok {
+			s.maxSkew = decimal.NewFromFloat(skewFloat)
+		} else if skewStr, ok := maxSkew.(string); ok {
+			var err error
+			s.maxSkew, err = decimal.NewFromString(skewStr)
+			if err != nil {
+				return fmt.Errorf("invalid max_skew value: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
-func (s *InventorySkewStrategy) roundToTick(price float64, roundUp bool) float64 {
-	if s.config.TickSize <= 0 {
+func (s *InventorySkewStrategy) calculateAdaptiveSizes(inventoryRatio decimal.Decimal) (bidSize, askSize decimal.Decimal) {
+	// Adjust sizes based on inventory to promote inventory neutrality
+	// Higher inventory -> smaller bid size, larger ask size
+	// Lower inventory -> larger bid size, smaller ask size
+
+	inventoryAbs := inventoryRatio.Abs()
+
+	// Size adjustment factor (0.5 to 1.5)
+	adjustmentFactor := decimal.NewFromFloat(0.5).Add(inventoryAbs)
+
+	if inventoryRatio.GreaterThan(decimal.Zero) {
+		// Positive inventory - reduce bid size, increase ask size
+		bidSize = s.baseSize.Div(decimal.NewFromInt(1).Add(inventoryAbs))
+		askSize = s.baseSize.Mul(adjustmentFactor)
+	} else if inventoryRatio.LessThan(decimal.Zero) {
+		// Negative inventory - increase bid size, reduce ask size
+		bidSize = s.baseSize.Mul(adjustmentFactor)
+		askSize = s.baseSize.Div(decimal.NewFromInt(1).Add(inventoryAbs))
+	} else {
+		// Neutral inventory
+		bidSize = s.baseSize
+		askSize = s.baseSize
+	}
+
+	// Ensure minimum sizes (10% of base size)
+	minSize := s.baseSize.Mul(decimal.NewFromFloat(0.1))
+	if bidSize.LessThan(minSize) {
+		bidSize = minSize
+	}
+	if askSize.LessThan(minSize) {
+		askSize = minSize
+	}
+
+	return bidSize, askSize
+}
+
+func (s *InventorySkewStrategy) calculateConfidence(inventoryRatio decimal.Decimal) decimal.Decimal {
+	baseConfidence := decimal.NewFromFloat(0.75)
+
+	// Reduce confidence as inventory approaches limits
+	inventoryPenalty := inventoryRatio.Abs().Mul(decimal.NewFromFloat(0.3))
+	confidence := baseConfidence.Sub(inventoryPenalty)
+
+	// Floor at 0.3
+	minConfidence := decimal.NewFromFloat(0.3)
+	if confidence.LessThan(minConfidence) {
+		confidence = minConfidence
+	}
+
+	return confidence
+}
+
+func (s *InventorySkewStrategy) roundToTick(price decimal.Decimal, roundUp bool) decimal.Decimal {
+	if s.tickSize.LessThanOrEqual(decimal.Zero) {
 		return price
 	}
 
+	ticks := price.Div(s.tickSize)
 	if roundUp {
-		return math.Ceil(price/s.config.TickSize) * s.config.TickSize
+		return ticks.Ceil().Mul(s.tickSize)
 	} else {
-		return math.Floor(price/s.config.TickSize) * s.config.TickSize
+		return ticks.Floor().Mul(s.tickSize)
 	}
 }
 
-func (s *InventorySkewStrategy) updateMetrics(output common.QuoteOutput, inventory float64) {
-	s.metrics.LastUpdate = time.Now()
-	s.metrics.QuotesGenerated++
-	s.metrics.CurrentInventory = inventory
+func (s *InventorySkewStrategy) updateQuoteMetrics(output *common.QuoteOutput, inventoryRatio decimal.Decimal) {
+	s.metrics.OrdersPlaced++
+	s.metrics.LastUpdated = time.Now()
 
-	if output.BidPrice > 0 && output.AskPrice > 0 {
-		spread := (output.AskPrice - output.BidPrice) / output.BidPrice
-		s.metrics.AvgSpread = (s.metrics.AvgSpread*float64(s.metrics.QuotesGenerated-1) + spread) / float64(s.metrics.QuotesGenerated)
+	// Calculate spread capture
+	if output.BidPrice.GreaterThan(decimal.Zero) && output.AskPrice.GreaterThan(decimal.Zero) {
+		spread := output.AskPrice.Sub(output.BidPrice).Div(output.BidPrice)
+		s.metrics.SpreadCapture = spread
 	}
 }
