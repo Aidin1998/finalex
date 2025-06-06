@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/marketmaking/marketmaker"
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/adapter"
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/factory"
@@ -20,7 +19,7 @@ type MarketMakingService struct {
 	mu              sync.RWMutex
 	strategies      map[string]common.MarketMakingStrategy
 	strategyFactory *factory.StrategyFactory
-	legacyFactory   *marketmaker.StrategyFactory
+	legacyFactory   common.LegacyStrategyFactory // Use interface instead of direct marketmaker import
 	activeStrategy  string
 	isRunning       bool
 	config          ServiceConfig
@@ -58,12 +57,11 @@ type Logger interface {
 }
 
 // NewMarketMakingService creates a new market making service
-func NewMarketMakingService(config ServiceConfig, logger Logger) *MarketMakingService {
+func NewMarketMakingService(legacyFactory common.LegacyStrategyFactory, logger Logger) *MarketMakingService {
 	return &MarketMakingService{
 		strategies:      make(map[string]common.MarketMakingStrategy),
 		strategyFactory: factory.NewStrategyFactory(),
-		legacyFactory:   marketmaker.NewStrategyFactory(),
-		config:          config,
+		legacyFactory:   legacyFactory,
 		logger:          logger,
 		metrics: ServiceMetrics{
 			StartTime: time.Now(),

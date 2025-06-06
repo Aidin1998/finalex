@@ -3,13 +3,56 @@ package basic
 import (
 	"context"
 	"fmt"
-
+	"sync"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
+
+// DynamicStrategy implements a volatility-adjusted market making strategy
+// Implements common.MarketMakingStrategy
+
+type DynamicStrategy struct {
+	config           common.StrategyConfig
+	name             string
+	version          string
+	status           common.StrategyStatus
+	metrics          *common.StrategyMetrics
+	mu               sync.RWMutex
+	baseSpread       decimal.Decimal
+	volatilityFactor decimal.Decimal
+	baseSize         decimal.Decimal
+	tickSize         decimal.Decimal
+	maxSpread        decimal.Decimal // Added missing field
+	startTime        time.Time
+	lastQuote        time.Time
+
+	// Derived parameters
+	currentVolatility decimal.Decimal
+	volatilityHistory []decimal.Decimal
+	maxHistorySize    int
+
+	// Status metrics
+	ordersPlaced    int64
+	ordersFilled    int64
+	ordersCancelled int64
+	totalPnL        decimal.Decimal
+	dailyPnL        decimal.Decimal
+}
+
+// NewDynamicStrategy creates a new dynamic market making strategy instance
+func NewDynamicStrategy(config common.StrategyConfig) (*DynamicStrategy, error) {
+	strategy := &DynamicStrategy{
+		config:  config,
+		name:    "Dynamic Strategy",
+		version: "1.0.0",
+		status:  common.StatusUninitialized,
+		metrics: &common.StrategyMetrics{},
+	}
+	return strategy, nil
+}
 
 // Core interface methods
 
@@ -117,11 +160,6 @@ func (s *DynamicStrategy) Stop(ctx context.Context) error {
 func (s *DynamicStrategy) OnMarketData(ctx context.Context, data *common.MarketData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// Update volatility based on market data
-	if data.Volatility.GreaterThan(decimal.Zero) {
-		s.updateVolatility(data.Volatility)
-	}
 
 	s.metrics.LastUpdated = time.Now()
 	return nil

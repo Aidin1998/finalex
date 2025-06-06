@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/marketmaking/marketmaker"
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -14,7 +13,7 @@ import (
 
 // LegacyStrategyAdapter adapts old strategy interface to new unified interface
 type LegacyStrategyAdapter struct {
-	strategy  marketmaker.Strategy
+	strategy  common.LegacyStrategy
 	name      string
 	config    common.StrategyConfig
 	status    common.StrategyStatus
@@ -23,7 +22,7 @@ type LegacyStrategyAdapter struct {
 }
 
 // NewLegacyStrategyAdapter creates a new adapter for legacy strategies
-func NewLegacyStrategyAdapter(strategy marketmaker.Strategy, name string, config common.StrategyConfig) *LegacyStrategyAdapter {
+func NewLegacyStrategyAdapter(strategy common.LegacyStrategy, name string, config common.StrategyConfig) *LegacyStrategyAdapter {
 	return &LegacyStrategyAdapter{
 		strategy: strategy,
 		name:     name,
@@ -187,10 +186,12 @@ func (a *LegacyStrategyAdapter) RiskLevel() common.RiskLevel {
 // HealthCheck performs strategy health verification
 func (a *LegacyStrategyAdapter) HealthCheck(ctx context.Context) *common.HealthStatus {
 	return &common.HealthStatus{
-		Healthy:   a.isRunning,
-		Status:    string(a.status),
-		LastCheck: time.Now(),
-		Issues:    []string{},
+		IsHealthy:     a.isRunning,
+		Status:        a.status,
+		LastCheckTime: time.Now(),
+		Checks:        map[string]bool{"running": a.isRunning},
+		Message:       "Legacy strategy health check",
+		Metrics:       map[string]string{},
 	}
 }
 

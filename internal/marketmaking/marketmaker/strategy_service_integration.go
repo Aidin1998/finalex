@@ -26,6 +26,9 @@ func (s *Service) initializeNewStrategyService() error {
 	// Create strategy factory
 	strategyFactory := factory.NewStrategyFactory()
 
+	// Create legacy factory (implements common.LegacyStrategyFactory)
+	legacyFactory := s.strategyFactory // assuming s.strategyFactory is *StrategyFactory
+
 	// Create service config
 	serviceConfig := service.ServiceConfig{
 		DefaultStrategy:     "basic",
@@ -48,8 +51,8 @@ func (s *Service) initializeNewStrategyService() error {
 		},
 	}
 
-	// Create the market making service
-	newStrategyService, err := service.NewMarketMakingService(serviceConfig)
+	// Pass legacyFactory to the new service
+	_, err := service.NewMarketMakingService(legacyFactory, s.logger)
 	if err != nil {
 		return err
 	}

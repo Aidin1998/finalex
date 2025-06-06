@@ -20,6 +20,27 @@ type Quote struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// StrategyStatus represents the current status of a strategy
+type StrategyStatus string
+
+// Strategy status constants
+const (
+	StatusUninitialized StrategyStatus = "uninitialized"
+	StatusInitialized   StrategyStatus = "initialized"
+	StatusStarting      StrategyStatus = "starting"
+	StatusRunning       StrategyStatus = "running"
+	StatusStopping      StrategyStatus = "stopping"
+	StatusPaused        StrategyStatus = "paused"
+	StatusStopped       StrategyStatus = "stopped"
+	StatusError         StrategyStatus = "error"
+)
+
+// LegacyStrategy defines the interface used by legacy market making strategies
+// This is here to avoid circular dependencies with the marketmaker package
+type LegacyStrategy interface {
+	Quote(mid, volatility, inventory float64) (bid, ask float64, size float64)
+}
+
 // MarketMakingStrategy is the unified interface that all market making strategies must implement
 type MarketMakingStrategy interface {
 	// Core strategy methods
@@ -234,17 +255,7 @@ type HealthStatus struct {
 	LastCheckTime time.Time         `json:"last_check_time"`
 }
 
-// StrategyStatus represents the current status of a strategy
-type StrategyStatus string
-
-const (
-	StatusStopped  StrategyStatus = "stopped"
-	StatusStarting StrategyStatus = "starting"
-	StatusRunning  StrategyStatus = "running"
-	StatusStopping StrategyStatus = "stopping"
-	StatusError    StrategyStatus = "error"
-	StatusPaused   StrategyStatus = "paused"
-)
+// Strategy status constants are defined above
 
 // Strategy metadata and classification types
 type RiskLevel int
@@ -352,4 +363,19 @@ type StrategyRegistry interface {
 	List() []MarketMakingStrategy
 	ListByType(strategyType string) []MarketMakingStrategy
 	DiscoverStrategies() ([]StrategyMetadata, error)
+}
+
+// LegacyStrategyFactory provides an interface for legacy strategy creation
+// Used to break import cycles between marketmaker and strategies/service
+// Only the methods actually used by MarketMakingService are included
+
+type LegacyStrategyFactory interface {
+	CreateStrategy(name string, params map[string]interface{}) (Strategy, error)
+	GetAvailableStrategies() []string
+}
+
+// Strategy is the legacy strategy interface
+// (copied from marketmaker package for decoupling)
+type Strategy interface {
+	Quote(mid, volatility, inventory float64) (bid, ask float64, size float64)
 }

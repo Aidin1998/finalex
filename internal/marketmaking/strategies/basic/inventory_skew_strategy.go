@@ -3,13 +3,47 @@ package basic
 import (
 	"context"
 	"fmt"
-
+	"sync"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
+
+// InventorySkewStrategy implements inventory-aware market making
+// Implements common.MarketMakingStrategy
+
+type InventorySkewStrategy struct {
+	config           common.StrategyConfig
+	name             string
+	version          string
+	status           common.StrategyStatus
+	metrics          *common.StrategyMetrics
+	mu               sync.RWMutex
+	baseSpread       decimal.Decimal
+	inventoryFactor  decimal.Decimal
+	size             decimal.Decimal
+	maxInventory     decimal.Decimal
+	maxSkew          decimal.Decimal
+	tickSize         decimal.Decimal
+	startTime        time.Time
+	lastQuote        time.Time
+	currentInventory decimal.Decimal
+	baseSize         decimal.Decimal // Added missing field
+}
+
+// NewInventorySkewStrategy creates a new inventory skew strategy instance
+func NewInventorySkewStrategy(config common.StrategyConfig) (*InventorySkewStrategy, error) {
+	strategy := &InventorySkewStrategy{
+		config:  config,
+		name:    "Inventory Skew Strategy",
+		version: "1.0.0",
+		status:  common.StatusUninitialized,
+		metrics: &common.StrategyMetrics{},
+	}
+	return strategy, nil
+}
 
 // Core interface methods
 

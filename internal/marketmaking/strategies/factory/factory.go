@@ -2,7 +2,6 @@
 package factory
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -452,12 +451,7 @@ func (f *StrategyFactory) registerMicroStructureStrategy() {
 // registerCrossExchangeStrategy registers the cross-exchange arbitrage strategy
 func (f *StrategyFactory) registerCrossExchangeStrategy() {
 	f.availableStrategies["cross_exchange"] = func(config common.StrategyConfig) (common.MarketMakingStrategy, error) {
-		// Create instance and configure it
-		strategy := arbitrage.NewCrossExchangeStrategy()
-		if err := strategy.Initialize(context.Background(), config); err != nil {
-			return nil, fmt.Errorf("failed to initialize cross-exchange strategy: %w", err)
-		}
-		return strategy, nil
+		return arbitrage.NewCrossExchangeStrategy(config)
 	}
 
 	f.metadata["cross_exchange"] = common.StrategyInfo{
