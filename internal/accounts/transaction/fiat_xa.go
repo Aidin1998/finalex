@@ -7,16 +7,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
+// FiatServiceInterface defines the interface that fiat service should implement
+type FiatServiceInterface interface {
+	// Add methods here if needed - currently the XA resource doesn't actually use the fiat service
+}
+
 // FiatXAResource implements XA interface for fiat service operations
 type FiatXAResource struct {
-	fiatService fiat.FiatService
+	fiatService FiatServiceInterface
 	db          *gorm.DB
 	logger      *zap.Logger
 	xid         string
@@ -63,7 +67,7 @@ type FiatCompensationData struct {
 }
 
 // NewFiatXAResource creates a new XA resource for fiat operations
-func NewFiatXAResource(fiatService fiat.FiatService, db *gorm.DB, logger *zap.Logger, xid string) *FiatXAResource {
+func NewFiatXAResource(fiatService FiatServiceInterface, db *gorm.DB, logger *zap.Logger, xid string) *FiatXAResource {
 	return &FiatXAResource{
 		fiatService:     fiatService,
 		db:              db,

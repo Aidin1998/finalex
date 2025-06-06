@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/internal/wallet"
@@ -24,7 +23,6 @@ type DistributedTransactionOrchestrator struct {
 	logger      *zap.Logger
 	// Service dependencies
 	bookkeeperSvc    bookkeeper.BookkeeperService
-	fiatSvc          fiat.FiatService
 	tradingSvc       trading.TradingService
 	walletSvc        wallet.WalletService
 	settlementEngine *settlement.SettlementEngine
@@ -42,7 +40,6 @@ func NewDistributedTransactionOrchestrator(
 	db *gorm.DB,
 	logger *zap.Logger,
 	bookkeeperSvc bookkeeper.BookkeeperService,
-	fiatSvc fiat.FiatService,
 	tradingSvc trading.TradingService,
 	walletSvc wallet.WalletService,
 	settlementEngine *settlement.SettlementEngine,
@@ -55,7 +52,6 @@ func NewDistributedTransactionOrchestrator(
 		lockManager:      lockManager,
 		logger:           logger,
 		bookkeeperSvc:    bookkeeperSvc,
-		fiatSvc:          fiatSvc,
 		tradingSvc:       tradingSvc,
 		walletSvc:        walletSvc,
 		settlementEngine: settlementEngine,

@@ -9,10 +9,12 @@ import (
 
 	//	"github.com/Aidin1998/finalex/common/apiutil"
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/fiat"
 	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketfeeds"
 	"github.com/Aidin1998/finalex/internal/trading"
+	"github.com/Aidin1998/finalex/internal/trading/aml"
 	"github.com/Aidin1998/finalex/internal/trading/handlers"
 	"github.com/Aidin1998/finalex/internal/trading/lifecycle"
 	"github.com/Aidin1998/finalex/internal/trading/middleware"
@@ -43,8 +45,10 @@ type Server struct {
 	bookkeeperSvc  bookkeeper.BookkeeperService
 	marketfeedsSvc marketfeeds.MarketFeedService
 	tradingSvc     trading.TradingService
+	fiatSvc        *fiat.FiatService
 	wsHub          *ws.Hub
 	db             *gorm.DB
+	riskSvc        aml.RiskService
 
 	// New components
 	tradingHandler    *handlers.TradingHandler
@@ -60,6 +64,7 @@ func NewServer(
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	marketfeedsSvc marketfeeds.MarketFeedService,
 	tradingSvc trading.TradingService,
+	fiatSvc *fiat.FiatService,
 	wsHub *ws.Hub,
 	db *gorm.DB,
 ) *Server {
@@ -77,14 +82,19 @@ func NewServer(
 	tradingHandler := handlers.NewTradingHandler(tradingSvc, logger)
 	marketDataHandler := handlers.NewMarketDataHandler(tradingSvc, logger)
 
+	// Initialize risk service (using mock for now)
+	riskSvc := aml.NewMockRiskService(logger)
+
 	return &Server{
 		logger:            logger,
 		userAuthSvc:       userAuthSvc,
 		bookkeeperSvc:     bookkeeperSvc,
 		marketfeedsSvc:    marketfeedsSvc,
 		tradingSvc:        tradingSvc,
+		fiatSvc:           fiatSvc,
 		wsHub:             wsHub,
 		db:                db,
+		riskSvc:           riskSvc,
 		tradingHandler:    tradingHandler,
 		marketDataHandler: marketDataHandler,
 		rateLimiter:       rateLimiter,
@@ -1112,7 +1122,7 @@ func (s *Server) handleWebSocketMarketData(c *gin.Context) {
 // @Failure		503	{object}	map[string]interface{}				"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/config [get]
 func (s *Server) handleGetRateLimitConfig(c *gin.Context) {
-	config := s.userAuthSvc.GetRateLimitConfig()
+	config := s.userAuthSvc.TieredRateLimiter().GetConfig()
 	if config == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Rate limiting not available"})
 		return
@@ -1140,7 +1150,7 @@ func (s *Server) handleUpdateRateLimitConfig(c *gin.Context) {
 		return
 	}
 
-	s.userAuthSvc.UpdateRateLimitConfig(&config)
+	s.userAuthSvc.TieredRateLimiter().UpdateConfig(&config)
 	c.JSON(http.StatusOK, gin.H{"message": "Configuration updated successfully"})
 }
 
@@ -1167,7 +1177,7 @@ func (s *Server) handleSetEmergencyMode(c *gin.Context) {
 		return
 	}
 
-	s.userAuthSvc.SetEmergencyMode(request.Enabled)
+	s.userAuthSvc.TieredRateLimiter().SetEmergencyMode(request.Enabled)
 	c.JSON(http.StatusOK, gin.H{"message": "Emergency mode updated", "enabled": request.Enabled})
 }
 
@@ -1208,7 +1218,7 @@ func (s *Server) handleUpdateTierLimits(c *gin.Context) {
 		return
 	}
 
-	s.userAuthSvc.UpdateTierLimits(tier, limits)
+	s.userAuthSvc.TieredRateLimiter().UpdateTierLimits(tier, limits)
 	c.JSON(http.StatusOK, gin.H{"message": "Tier limits updated", "tier": tierParam})
 }
 
@@ -1241,7 +1251,7 @@ func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
 		return
 	}
 
-	s.userAuthSvc.UpdateEndpointConfig(request.Endpoint, request.Config)
+	s.userAuthSvc.TieredRateLimiter().UpdateEndpointConfig(request.Endpoint, request.Config)
 	c.JSON(http.StatusOK, gin.H{"message": "Endpoint configuration updated", "endpoint": request.Endpoint})
 }
 
@@ -1265,7 +1275,7 @@ func (s *Server) handleGetUserRateLimitStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := s.userAuthSvc.GetUserRateLimitStatus(c.Request.Context(), userID)
+	status, err := s.userAuthSvc.TieredRateLimiter().GetUserRateLimitStatus(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user status", "details": err.Error()})
 		return
@@ -1294,7 +1304,7 @@ func (s *Server) handleGetIPRateLimitStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := s.userAuthSvc.GetIPRateLimitStatus(c.Request.Context(), ip)
+	status, err := s.userAuthSvc.TieredRateLimiter().GetIPRateLimitStatus(c.Request.Context(), ip)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get IP status", "details": err.Error()})
 		return
@@ -1326,7 +1336,7 @@ func (s *Server) handleResetUserRateLimit(c *gin.Context) {
 		return
 	}
 
-	err := s.userAuthSvc.ResetUserRateLimit(c.Request.Context(), userID, rateType)
+	err := s.userAuthSvc.TieredRateLimiter().ResetUserRateLimit(c.Request.Context(), userID, rateType)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset user rate limit", "details": err.Error()})
 		return
@@ -1358,7 +1368,7 @@ func (s *Server) handleResetIPRateLimit(c *gin.Context) {
 		return
 	}
 
-	err := s.userAuthSvc.ResetIPRateLimit(c.Request.Context(), ip, endpoint)
+	err := s.userAuthSvc.TieredRateLimiter().ResetIPRateLimit(c.Request.Context(), ip, endpoint)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset IP rate limit", "details": err.Error()})
 		return
@@ -1379,7 +1389,7 @@ func (s *Server) handleResetIPRateLimit(c *gin.Context) {
 // @Failure		503	{object}	map[string]interface{}		"Rate limiting service unavailable"
 // @Router			/admin/rate-limits/cleanup [post]
 func (s *Server) handleCleanupRateLimitData(c *gin.Context) {
-	err := s.userAuthSvc.CleanupExpiredData(c.Request.Context())
+	err := s.userAuthSvc.TieredRateLimiter().CleanupExpiredData(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup rate limit data", "details": err.Error()})
 		return
@@ -1834,7 +1844,7 @@ func (s *Server) handleGenerateRiskReport(c *gin.Context) {
 		return
 	}
 
-	reportData, err := s.riskSvc.GenerateReport(c.Request.Context(), req.ReportType, req.StartTime, req.EndTime)
+	reportData, err := s.riskSvc.GenerateReport(c.Request.Context(), req.ReportType, time.Unix(req.StartTime, 0), time.Unix(req.EndTime, 0))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
