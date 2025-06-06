@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/wallet"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -17,7 +16,7 @@ import (
 type WalletXAResource struct {
 	mu              sync.RWMutex
 	db              *gorm.DB
-	walletService   *wallet.WalletService
+	walletService   interface{} // changed from *wallet.WalletService
 	logger          *zap.Logger
 	xid             string
 	state           XAResourceState
@@ -58,7 +57,7 @@ type WalletCompensationData struct {
 }
 
 // NewWalletXAResource creates a new XA resource for wallet operations
-func NewWalletXAResource(db *gorm.DB, walletService *wallet.WalletService, logger *zap.Logger) *WalletXAResource {
+func NewWalletXAResource(db *gorm.DB, walletService interface{}, logger *zap.Logger) *WalletXAResource {
 	return &WalletXAResource{
 		db:              db,
 		walletService:   walletService,

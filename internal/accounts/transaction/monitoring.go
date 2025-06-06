@@ -620,7 +620,7 @@ func (tm *TransactionMonitor) RecordTransactionEvent(ctx context.Context, txnID,
 	}
 
 	// Update metrics based on event
-	m.updateMetricsFromEvent(eventType, severity)
+	tm.updateMetricsFromEvent(eventType, severity)
 }
 
 // updateMetricsFromEvent updates metrics based on recorded events

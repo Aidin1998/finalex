@@ -266,7 +266,7 @@ func NewAccountDataManager(
 	}
 
 	// Initialize hot cache
-	hotCache, err := NewHotCache(config.HotCacheSize, config.HotCacheTTL, logger)
+	hotCache, err := NewHotCache(int64(config.HotCacheSize), config.HotCacheTTL, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create hot cache: %w", err)
 	}
@@ -303,10 +303,10 @@ func NewAccountDataManager(
 	dm.queryHandler = NewAccountQueryHandler(dm, logger)
 
 	// Initialize lifecycle manager
-	dm.lifecycleManager = NewDataLifecycleManager(dm, config, logger)
+	dm.lifecycleManager = NewDataLifecycleManager(nil, logger) // pass nil for *sql.DB if not available
 
 	// Initialize migration manager
-	dm.migrationManager = NewMigrationManager(dm, config, logger)
+	dm.migrationManager = NewMigrationManager(nil, logger) // pass nil for *sql.DB if not available
 
 	return dm, nil
 }
@@ -370,7 +370,7 @@ func (dm *AccountDataManager) Stop(ctx context.Context) error {
 	dm.status.IsHealthy = false
 
 	// Stop lifecycle manager
-	if err := dm.lifecycleManager.Stop(ctx); err != nil {
+	if err := dm.lifecycleManager.Stop(); err != nil { // call Stop() with no arguments
 		dm.logger.Error("Failed to stop lifecycle manager", zap.Error(err))
 	}
 

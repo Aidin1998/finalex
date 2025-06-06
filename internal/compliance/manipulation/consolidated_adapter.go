@@ -1,7 +1,6 @@
 package manipulation
 
 import (
-	"github.com/Aidin1998/finalex/internal/compliance/aml/detection/common"
 	"go.uber.org/zap"
 )
 

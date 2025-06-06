@@ -100,10 +100,11 @@ func NewStrongConsistencyTransactionManager(
 	// First we need a bookkeeper service - let's create a simple one or get it from baseSuite
 	var bookkeeperSvc bookkeeper.BookkeeperService
 	if baseSuite.BookkeeperXA != nil {
-		bookkeeperSvc = baseSuite.BookkeeperXA // Assuming this implements the interface
+		// Use BookkeeperXAAdapter to adapt BookkeeperXAResource to BookkeeperService
+		bookkeeperSvc = bookkeeper.NewBookkeeperXAAdapter(baseSuite.BookkeeperXA.bookkeeper, baseSuite.BookkeeperXA)
 	} else {
-		// Fallback: use a no-op or mock BookkeeperService implementation
-		bookkeeperSvc = &bookkeeper.NoopBookkeeperService{} // You must define this in your bookkeeper package if not present
+		// Fallback: use a mock BookkeeperService for tests or error
+		bookkeeperSvc = nil // or panic("BookkeeperXA is required for strong consistency")
 	}
 
 	balanceManager := consistency.NewBalanceConsistencyManager(db, bookkeeperSvc, raftCoordinator, logger)

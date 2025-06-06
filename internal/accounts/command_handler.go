@@ -262,8 +262,8 @@ func (ch *AccountCommandHandler) UpdateBalance(ctx context.Context, update *Bala
 		LockedDelta:    update.LockedDelta,
 		Type:           update.Type,
 		ReferenceID:    update.ReferenceID,
-		TraceID:        update.TraceID,
-		IdempotencyKey: update.IdempotencyKey,
+		TraceID:        "", // removed update.TraceID (not present in BalanceUpdate)
+		IdempotencyKey: "", // removed update.IdempotencyKey (not present in BalanceUpdate)
 	}
 
 	return ch.ExecuteCommand(ctx, cmd)

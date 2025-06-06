@@ -64,6 +64,9 @@ type HotCache struct {
 	// LRU tracking
 	accessOrder []string
 	accessMap   map[string]int // key -> index in accessOrder
+
+	// Counters for hits, misses, and evictions
+	hitCount, missCount, evictionCount int64
 }
 
 // HotCacheMetrics holds Prometheus metrics for hot cache
@@ -166,6 +169,7 @@ func (hc *HotCache) Get(ctx context.Context, key string) (interface{}, bool) {
 	hc.mu.RUnlock()
 
 	if !exists {
+		hc.missCount++
 		hc.metrics.CacheMisses.Inc()
 		hc.updateStats(false, false)
 		return nil, false
@@ -175,6 +179,7 @@ func (hc *HotCache) Get(ctx context.Context, key string) (interface{}, bool) {
 	if entry.TTL > 0 && time.Since(entry.CreatedAt) > entry.TTL {
 		// Entry expired, remove it
 		hc.Delete(ctx, key)
+		hc.missCount++
 		hc.metrics.CacheMisses.Inc()
 		hc.updateStats(false, false)
 		return nil, false
@@ -187,6 +192,7 @@ func (hc *HotCache) Get(ctx context.Context, key string) (interface{}, bool) {
 	hc.updateAccessOrder(key)
 	hc.mu.Unlock()
 
+	hc.hitCount++
 	hc.metrics.CacheHits.Inc()
 	hc.updateStats(true, false)
 
@@ -356,6 +362,7 @@ func (hc *HotCache) ensureCapacity(newEntrySize int64) {
 			hc.removeFromAccessOrder(lruKey)
 			hc.stats.Count--
 			hc.stats.MemoryUsage -= entry.Size
+			hc.evictionCount++
 			hc.metrics.CacheEvictions.Inc()
 			hc.updateStats(false, true)
 		}
@@ -421,15 +428,15 @@ func (hc *HotCache) updateStats(hit, eviction bool) {
 	defer hc.statsMu.Unlock()
 
 	// Update hit/miss rates
-	totalOps := float64(hc.metrics.CacheHits.Get() + hc.metrics.CacheMisses.Get())
+	totalOps := float64(hc.hitCount + hc.missCount)
 	if totalOps > 0 {
-		hc.stats.HitRate = float64(hc.metrics.CacheHits.Get()) / totalOps
-		hc.stats.MissRate = float64(hc.metrics.CacheMisses.Get()) / totalOps
+		hc.stats.HitRate = float64(hc.hitCount) / totalOps
+		hc.stats.MissRate = float64(hc.missCount) / totalOps
 	}
 
 	// Update eviction rate
 	if eviction {
-		hc.stats.EvictionRate = float64(hc.metrics.CacheEvictions.Get()) / time.Since(time.Now().Add(-time.Minute)).Seconds()
+		hc.stats.EvictionRate = float64(hc.evictionCount) / time.Since(time.Now().Add(-time.Minute)).Seconds()
 	}
 }
 
