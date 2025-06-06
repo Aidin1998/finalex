@@ -60,6 +60,26 @@ type TransactionContext struct {
 	logger  *zap.Logger
 }
 
+// AuditLogEntry represents an immutable audit log for balance changes
+// (not persisted here, but sent to an async audit log processor)
+type AuditLogEntry struct {
+	UserID     uuid.UUID
+	Currency   string
+	OldBalance decimal.Decimal
+	NewBalance decimal.Decimal
+	Delta      decimal.Decimal
+	Timestamp  int64
+	TraceID    string
+}
+
+// AuditLogQueue is a global async channel for audit entries (buffered)
+var AuditLogQueue = make(chan AuditLogEntry, 100000)
+
+// getTraceID returns a trace ID for audit logging (stub)
+func getTraceID() string {
+	return uuid.New().String()
+}
+
 // NewRepository creates a new high-performance repository
 func NewRepository(writeDB, readDB *gorm.DB, pgxPool *pgxpool.Pool, cache *CacheLayer, redsync *redsync.Redsync, logger *zap.Logger) *Repository {
 	metrics := &RepositoryMetrics{
@@ -368,6 +388,24 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 
 	// Invalidate related cache entries
 	r.cache.InvalidateAccount(ctx, update.UserID, update.Currency)
+
+	// After commit, queue async audit log (never blocks hot path)
+	go func(entry AuditLogEntry) {
+		select {
+		case AuditLogQueue <- entry:
+			// queued
+		default:
+			// audit log queue full, drop (metrics can be added)
+		}
+	}(AuditLogEntry{
+		UserID:     update.UserID,
+		Currency:   update.Currency,
+		OldBalance: account.Balance,
+		NewBalance: newBalance,
+		Delta:      update.BalanceDelta,
+		Timestamp:  time.Now().UnixNano(),
+		TraceID:    getTraceID(),
+	})
 
 	r.metrics.TransactionCount.WithLabelValues("update_balance", "success").Inc()
 	return nil

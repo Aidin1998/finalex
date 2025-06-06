@@ -214,6 +214,26 @@ type ConnectionPoolMetrics struct {
 	Timestamp         time.Time     `json:"timestamp"`
 }
 
+// MultiCurrencyAccount supports atomic, high-precision, multi-currency account management
+// All balances are decimal.Decimal and must be updated atomically outside the trading hot path
+// Use with BalanceCache or repository for zero-latency queries
+type MultiCurrencyAccount struct {
+	UserID   uuid.UUID
+	Balances map[string]decimal.Decimal // Currency -> Balance
+	Margins  map[string]decimal.Decimal // Currency -> Margin requirement
+	PNL      map[string]decimal.Decimal // Currency -> Unrealized P&L
+}
+
+// GetTotalEquity calculates total equity across all currencies using cached exchange rates
+func (mca *MultiCurrencyAccount) GetTotalEquity(getRate func(currency string) decimal.Decimal) decimal.Decimal {
+	total := decimal.Zero
+	for currency, balance := range mca.Balances {
+		rate := getRate(currency) // Must be from cache, never external call
+		total = total.Add(balance.Mul(rate))
+	}
+	return total
+}
+
 // Constants for model validation and defaults
 const (
 	// Account types

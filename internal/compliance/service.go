@@ -8,6 +8,7 @@ import (
 
 	audit "github.com/Aidin1998/finalex/internal/audit"
 	"github.com/Aidin1998/finalex/internal/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/compliance/monitoring"
 	"github.com/Aidin1998/finalex/internal/manipulation"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -20,6 +21,8 @@ type serviceImpl struct {
 	manipulationSvc *manipulation.ManipulationService
 	auditSvc        *audit.AuditService
 	mu              sync.RWMutex
+
+	complianceEngine *monitoring.ComplianceEngine
 }
 
 // NewService creates a new consolidated risk and compliance service
@@ -46,11 +49,27 @@ func NewService(
 		return nil, fmt.Errorf("audit service is required")
 	}
 
+	// --- ComplianceEngine integration ---
+	mlDetector := &monitoring.BuiltinMLAnomalyDetector{}
+	rules := []monitoring.ComplianceRule{
+		&monitoring.LargeTransactionRule{Threshold: 10000},
+		&monitoring.SuspiciousLoginRule{},
+	}
+	complianceService := monitoring.NewService(logger)
+	consistencyMonitor := monitoring.NewConsistencyMonitor(&monitoring.MonitoringConfig{}, nil, logger)
+	engine := monitoring.NewComplianceEngine(logger, mlDetector, rules, complianceService, consistencyMonitor)
+	// Wire up alert callback to complianceService alert creation
+	engine.SetAlertCallback(func(alert *monitoring.Alert) {
+		complianceService.CreateAlert(alert.Name, alert.Severity, alert.Description, alert.Data)
+	})
+	engine.Start(0)
+
 	return &serviceImpl{
-		logger:          logger,
-		amlService:      amlService,
-		manipulationSvc: manipulationSvc,
-		auditSvc:        auditSvc,
+		logger:           logger,
+		amlService:       amlService,
+		manipulationSvc:  manipulationSvc,
+		auditSvc:         auditSvc,
+		complianceEngine: engine,
 	}, nil
 }
 
@@ -82,7 +101,27 @@ func (s *serviceImpl) MonitorTransaction(ctx context.Context, userID uuid.UUID, 
 	// Log audit event
 	s.logAuditEvent(ctx, "TRANSACTION_MONITOR", userID.String(), fmt.Sprintf("Monitored transaction of type %s for %.2f", txType, amount))
 
+	// After audit logging, send to compliance engine
+	event := &monitoring.ComplianceEvent{
+		EventType: "transaction",
+		UserID:    userID.String(),
+		Timestamp: time.Now(),
+		Amount:    amount,
+		Details: map[string]interface{}{
+			"txType":  txType,
+			"details": details,
+		},
+	}
+	s.IngestComplianceEvent(event)
+
 	return result, nil
+}
+
+// IngestComplianceEvent ingests an event into the real-time compliance engine
+func (s *serviceImpl) IngestComplianceEvent(event *monitoring.ComplianceEvent) {
+	if s.complianceEngine != nil {
+		s.complianceEngine.IngestEvent(event)
+	}
 }
 
 // GetRiskProfile gets a user's risk profile

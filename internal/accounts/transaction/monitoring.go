@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/compliance/monitoring"
+	"github.com/Aidin1998/finalex/internal/compliance/risk"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -23,6 +25,8 @@ type TransactionMonitor struct {
 	mu             sync.RWMutex
 	stopChan       chan struct{}
 	running        bool
+
+	complianceSvc risk.Service // Injected compliance service for event ingestion
 }
 
 // MonitoringMetrics tracks comprehensive transaction metrics
@@ -150,7 +154,7 @@ type TransactionMonitoringEvent struct {
 }
 
 // NewTransactionMonitor creates a new transaction monitoring system
-func NewTransactionMonitor(db *gorm.DB) *TransactionMonitor {
+func NewTransactionMonitor(db *gorm.DB, complianceSvc risk.Service) *TransactionMonitor {
 	// Auto-migrate monitoring tables
 	db.AutoMigrate(&TransactionMonitoringEvent{})
 
@@ -171,6 +175,7 @@ func NewTransactionMonitor(db *gorm.DB) *TransactionMonitor {
 		subscribers:    make(map[string][]AlertSubscriber),
 		activeMonitors: make(map[string]*Monitor),
 		stopChan:       make(chan struct{}),
+		complianceSvc:  complianceSvc,
 	}
 }
 
@@ -621,6 +626,17 @@ func (tm *TransactionMonitor) RecordTransactionEvent(ctx context.Context, txnID,
 
 	// Update metrics based on event
 	tm.updateMetricsFromEvent(eventType, severity)
+
+	if tm.complianceSvc != nil {
+		event := &monitoring.ComplianceEvent{
+			EventType: "transaction",
+			UserID:    data["user_id"].(string),
+			Timestamp: time.Now(),
+			Amount:    0, // Set if available in data
+			Details:   data,
+		}
+		tm.complianceSvc.IngestComplianceEvent(event)
+	}
 }
 
 // updateMetricsFromEvent updates metrics based on recorded events
