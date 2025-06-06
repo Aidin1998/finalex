@@ -100,7 +100,78 @@ func (a *BookkeeperXAAdapter) GetXAResource() interface{} {
 	return a.xaResource
 }
 
-// Ensure BookkeeperXAAdapter implements BookkeeperService
-var _ BookkeeperService = (*BookkeeperXAAdapter)(nil)
+// BookkeeperXAAdapter implements BookkeeperXAService for XA compatibility
+// Add XAResource and XA methods
+func (a *BookkeeperXAAdapter) GetResourceName() string {
+	if xa, ok := a.xaResource.(interface{ GetResourceName() string }); ok {
+		return xa.GetResourceName()
+	}
+	return "bookkeeper-xa-adapter"
+}
+func (a *BookkeeperXAAdapter) StartXA(xid XID) error {
+	if xa, ok := a.xaResource.(interface{ StartXA(XID) error }); ok {
+		return xa.StartXA(xid)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) EndXA(xid XID, flags int) error {
+	if xa, ok := a.xaResource.(interface{ EndXA(XID, int) error }); ok {
+		return xa.EndXA(xid, flags)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) PrepareXA(xid XID) error {
+	if xa, ok := a.xaResource.(interface{ PrepareXA(XID) error }); ok {
+		return xa.PrepareXA(xid)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) CommitXA(xid XID, onePhase bool) error {
+	if xa, ok := a.xaResource.(interface{ CommitXA(XID, bool) error }); ok {
+		return xa.CommitXA(xid, onePhase)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) RollbackXA(xid XID) error {
+	if xa, ok := a.xaResource.(interface{ RollbackXA(XID) error }); ok {
+		return xa.RollbackXA(xid)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) RecoverXA() ([]XID, error) {
+	if xa, ok := a.xaResource.(interface{ RecoverXA() ([]XID, error) }); ok {
+		return xa.RecoverXA()
+	}
+	return nil, ErrXANotSupported
+}
+
+// XA-specific bookkeeper operations
+func (a *BookkeeperXAAdapter) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
+		return xa.LockFundsXA(ctx, xid, userID, currency, amount)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
+		return xa.UnlockFundsXA(ctx, xid, userID, currency, amount)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error {
+	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
+		return xa.TransferFundsXA(ctx, xid, fromUserID, toUserID, currency, amount, reference)
+	}
+	return ErrXANotSupported
+}
+func (a *BookkeeperXAAdapter) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
+		return xa.CreateTransactionXA(ctx, xid, userID, transactionType, amount, currency, reference, description)
+	}
+	return nil, ErrXANotSupported
+}
+
+// Ensure BookkeeperXAAdapter implements BookkeeperXAService
+var _ BookkeeperXAService = (*BookkeeperXAAdapter)(nil)
 
 // NOTE: BookkeeperXAAdapter does not assert BookkeeperXAService due to XID type import cycle and package boundary issues.

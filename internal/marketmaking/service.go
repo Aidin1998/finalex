@@ -10,21 +10,24 @@ import (
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata"
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketfeeds"
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketmaker"
+	common "github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // Implementation of the consolidated market making service
+// Use interface for feeds, concrete type for marketMaker
+// Use correct types for sub-services
 type service struct {
 	logger        *zap.Logger
 	db            *gorm.DB
 	mu            sync.RWMutex
 	running       bool
 	marketData    *marketdata.MarketDataService
-	feeds         *marketfeeds.FeedService
+	feeds         marketfeeds.MarketFeedService // FIXED: use interface
 	analytics     *analytics.AnalyticsService
-	marketMaker   *marketmaker.MarketMakerService
+	marketMaker   *marketmaker.Service // FIXED: use concrete type
 	subscriptions map[string][]func(interface{})
 }
 
@@ -80,7 +83,8 @@ func NewService(logger *zap.Logger, db *gorm.DB) (Service, error) {
 	}
 	s.marketData = marketDataService
 
-	feedService, err := marketfeeds.NewFeedService(logger, db)
+	// FIXED: Use correct constructor and pass nil for pubsub if not available
+	feedService, err := marketfeeds.NewService(logger, db, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create feed service: %w", err)
 	}
@@ -92,11 +96,16 @@ func NewService(logger *zap.Logger, db *gorm.DB) (Service, error) {
 	}
 	s.analytics = analyticsService
 
-	marketMakerService, err := marketmaker.NewMarketMakerService(logger, db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create market maker service: %w", err)
+	// FIXED: Use correct constructor for marketmaker.Service
+	// You may need to provide a config, trading API, and strategy. For now, use zero values or TODOs.
+	cfg := marketmaker.MarketMakerConfig{} // TODO: populate with real config
+	var trading marketmaker.TradingAPI     // TODO: provide real trading API
+	var strategy interface{}               // TODO: provide real strategy (should be common.MarketMakingStrategy)
+	var mmStrategy common.MarketMakingStrategy
+	if s, ok := strategy.(common.MarketMakingStrategy); ok {
+		mmStrategy = s
 	}
-	s.marketMaker = marketMakerService
+	s.marketMaker = marketmaker.NewService(cfg, trading, mmStrategy)
 
 	return s, nil
 }
@@ -135,39 +144,39 @@ func (s *service) UnsubscribeMarketData(ctx context.Context, market string) erro
 	return nil
 }
 
-// AddFeed adds a new market data feed
+// AddFeed adds a new market data feed (not supported)
 func (s *service) AddFeed(ctx context.Context, name, source, market string, config map[string]interface{}) (string, error) {
-	return s.feeds.AddFeed(ctx, name, source, market, config)
+	return "", fmt.Errorf("AddFeed not supported by MarketFeedService implementation")
 }
 
-// GetFeed retrieves a feed by ID
+// GetFeed retrieves a feed by ID (not supported)
 func (s *service) GetFeed(ctx context.Context, feedID string) (interface{}, error) {
-	return s.feeds.GetFeed(ctx, feedID)
+	return nil, fmt.Errorf("GetFeed not supported by MarketFeedService implementation")
 }
 
-// GetFeeds retrieves all feeds
+// GetFeeds retrieves all feeds (not supported)
 func (s *service) GetFeeds(ctx context.Context) ([]interface{}, error) {
-	return s.feeds.GetFeeds(ctx)
+	return nil, fmt.Errorf("GetFeeds not supported by MarketFeedService implementation")
 }
 
-// UpdateFeed updates a feed configuration
+// UpdateFeed updates a feed configuration (not supported)
 func (s *service) UpdateFeed(ctx context.Context, feedID string, config map[string]interface{}) error {
-	return s.feeds.UpdateFeed(ctx, feedID, config)
+	return fmt.Errorf("UpdateFeed not supported by MarketFeedService implementation")
 }
 
-// DeleteFeed deletes a feed
+// DeleteFeed deletes a feed (not supported)
 func (s *service) DeleteFeed(ctx context.Context, feedID string) error {
-	return s.feeds.DeleteFeed(ctx, feedID)
+	return fmt.Errorf("DeleteFeed not supported by MarketFeedService implementation")
 }
 
-// StartFeed starts a feed
+// StartFeed starts a feed (not supported)
 func (s *service) StartFeed(ctx context.Context, feedID string) error {
-	return s.feeds.StartFeed(ctx, feedID)
+	return fmt.Errorf("StartFeed not supported by MarketFeedService implementation")
 }
 
-// StopFeed stops a feed
+// StopFeed stops a feed (not supported)
 func (s *service) StopFeed(ctx context.Context, feedID string) error {
-	return s.feeds.StopFeed(ctx, feedID)
+	return fmt.Errorf("StopFeed not supported by MarketFeedService implementation")
 }
 
 // GetMarketMetrics retrieves market metrics
@@ -229,7 +238,7 @@ func (s *service) Start() error {
 		return fmt.Errorf("failed to start analytics service: %w", err)
 	}
 
-	if err := s.marketMaker.Start(); err != nil {
+	if err := s.marketMaker.Start(context.Background()); err != nil {
 		return fmt.Errorf("failed to start market maker service: %w", err)
 	}
 

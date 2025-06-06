@@ -23,23 +23,39 @@ const (
 	DrawdownBreach
 )
 
-// Helper functions to convert risk enums to strings
-func riskSignalTypeToString(t RiskSignalType) string {
+// Helper function to convert int to risk signal type string (for use with common.RiskSignal)
+func riskSignalTypeToString(t int) string {
 	switch t {
-	case InventoryBreach:
+	case 0:
 		return "inventory_breach"
-	case PnLBreach:
+	case 1:
 		return "pnl_breach"
-	case VaRBreach:
+	case 2:
 		return "var_breach"
-	case CorrelationBreach:
+	case 3:
 		return "correlation_breach"
-	case LiquidityBreach:
+	case 4:
 		return "liquidity_breach"
-	case VolatilitySpike:
+	case 5:
 		return "volatility_spike"
-	case DrawdownBreach:
+	case 6:
 		return "drawdown_breach"
+	default:
+		return "unknown"
+	}
+}
+
+// Helper function to convert int to risk severity string (for use with common.RiskSignal)
+func riskSeverityToString(s int) string {
+	switch s {
+	case 0:
+		return "low"
+	case 1:
+		return "medium"
+	case 2:
+		return "high"
+	case 3:
+		return "critical"
 	default:
 		return "unknown"
 	}
@@ -420,8 +436,8 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 		}
 		es.logger.LogRiskEvent(
 			ctx,
-			riskSignalTypeToString(RiskSignalType(signal.Type)),
-			riskSeverityToString(RiskSeverity(signal.Severity)),
+			riskSignalTypeToString(signal.Type),
+			riskSeverityToString(signal.Severity),
 			symbol,
 			signal.Value,
 			map[string]interface{}{
@@ -429,8 +445,8 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 			},
 		)
 		RiskEventsTotal.WithLabelValues(
-			riskSignalTypeToString(RiskSignalType(signal.Type)),
-			riskSeverityToString(RiskSeverity(signal.Severity)),
+			riskSignalTypeToString(signal.Type),
+			riskSeverityToString(signal.Severity),
 			symbol,
 		).Inc()
 	}
@@ -668,8 +684,6 @@ func (sl *StructuredLogger) WithTraceID(ctx context.Context, traceID string) con
 	return ctx
 }
 func (sl *StructuredLogger) LogPerformance(ctx context.Context, action string, metrics map[string]interface{}) {
-}
-func (sl *StructuredLogger) LogRiskEvent(ctx context.Context, eventType, severity, pair string, value float64, details map[string]interface{}) {
 }
 
 // MetricsCollector stubs for enhanced_service.go

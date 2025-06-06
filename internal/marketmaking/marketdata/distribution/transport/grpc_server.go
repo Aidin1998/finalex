@@ -1,3 +1,12 @@
+// TODO: Protobuf integration pending
+// The pb package import below is commented out because the marketdata proto definition does not exist yet.
+// Once the proto file (e.g., marketdata.proto) is defined and compiled with protoc, import the generated Go package here.
+// Expected proto location: pkg/proto/marketdata.proto
+// Expected Go package: github.com/Aidin1998/finalex/pkg/proto/marketdata (or similar)
+// Service definition should match MarketData service and messages used below.
+// Uncomment and update the import after proto generation:
+// import pb "github.com/Aidin1998/finalex/pkg/proto/marketdata"
+
 // grpc_server.go: gRPC transport for market data distribution
 package transport
 
@@ -5,7 +14,7 @@ import (
 	"net"
 	"time"
 
-	// pb "github.com/Aidin1998/finalex/api/marketdata" // TODO: Generate proto files
+	pb "github.com/Aidin1998/finalex/github.com/Aidin1998/finalex/pkg/proto/marketdata" // Generated from marketdata.proto
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/distribution"
 	"google.golang.org/grpc"
 )
@@ -38,7 +47,7 @@ func (s *GRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.MarketData_Su
 		frequency = time.Duration(req.Frequency.Seconds)*time.Second + time.Duration(req.Frequency.Nanos)*time.Nanosecond
 	}
 
-	sub := &distribution.Subscription{ClientID: clientID, Symbol: req.Symbol, PriceLevels: levels, Frequency: frequency, Compression: req.Compression}
+	sub := &distribution.Subscription{ClientID: clientID, Symbol: req.Symbol, PriceLevels: levels, Frequency: frequency, Compression: req.Compression == "true" || req.Compression == "1"} // Convert string to bool
 	s.sm.Subscribe(sub)
 	ch := make(chan interface{}, 100)
 	s.dist.RegisterClient(clientID, ch)

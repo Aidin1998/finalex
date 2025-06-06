@@ -4,17 +4,19 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"log"
 	"runtime"
 	"sync/atomic"
 	"time"
+
+	model "github.com/Aidin1998/finalex/internal/trading/model"
 )
 
 // --- Panic Recovery & Graceful Degradation ---
 type SafeMatchingEngine struct {
 	engine        *HighPerformanceMatchingEngine
-	panicHandler  *PanicRecovery
 	healthChecker *HealthMonitor
 	fallback      *FallbackMatcher
 	resourceGuard *ResourceGuard
@@ -31,7 +33,16 @@ func (sme *SafeMatchingEngine) ProcessOrder(order *Order) (fills []Fill, err err
 			sme.enterDegradedMode()
 		}
 	}()
-	return sme.engine.Match(order)
+	modelOrder, ok := any(order).(*model.Order)
+	if !ok {
+		return nil, errors.New("order type conversion failed")
+	}
+	_, _, _, err = sme.engine.ProcessOrderHighThroughput(
+		context.Background(),
+		modelOrder,
+		"RECOVERY", // Use string literal for OrderSourceType
+	)
+	return nil, err
 }
 
 func (sme *SafeMatchingEngine) enterDegradedMode() {

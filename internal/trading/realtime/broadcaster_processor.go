@@ -6,6 +6,7 @@ package realtime
 
 import (
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -156,9 +157,10 @@ func (b *UltraLowLatencyBroadcaster) processEvent(event Event, currentTime int64
 // processTrade broadcasts trade events to all market data subscribers
 func (b *UltraLowLatencyBroadcaster) processTrade(event Event) {
 	tradeMsg := (*TradeMessage)(event.Data)
-	symbol := orderbook.GetGlobalSymbolInterning().GetSymbol(tradeMsg.Symbol)
-
-	// Broadcast to public trade feed
+	// Fallback: just use the numeric symbol ID as string
+	symbol := fmt.Sprint(tradeMsg.Symbol)
+	// If you have a global symbol interning instance, use:
+	// symbol := orderbook.GlobalSymbolInterning.SymbolFromID(tradeMsg.Symbol)
 	tradeTopic := fmt.Sprintf("trades.%s", symbol)
 	b.wsHub.Broadcast(tradeTopic, tradeMsg.data)
 
@@ -171,9 +173,8 @@ func (b *UltraLowLatencyBroadcaster) processTrade(event Event) {
 // processOrderBookUpdate broadcasts order book updates to subscribers
 func (b *UltraLowLatencyBroadcaster) processOrderBookUpdate(event Event) {
 	obMsg := (*OrderBookMessage)(event.Data)
-	symbol := orderbook.GetGlobalSymbolInterning().GetSymbol(obMsg.Symbol)
-
-	// Broadcast to symbol-specific order book feed
+	symbol := fmt.Sprint(obMsg.Symbol)
+	// symbol := orderbook.GlobalSymbolInterning.SymbolFromID(obMsg.Symbol)
 	obTopic := fmt.Sprintf("orderbook.%s", symbol)
 	b.wsHub.Broadcast(obTopic, obMsg.data)
 
@@ -188,7 +189,7 @@ func (b *UltraLowLatencyBroadcaster) processOrderUpdate(event Event) {
 	orderMsg := (*OrderMessage)(event.Data)
 
 	// Convert user ID back to string for topic routing
-	userIDStr := orderbook.Uint64ToString(orderMsg.UserID)
+	userIDStr := strconv.FormatUint(orderMsg.UserID, 10)
 
 	// Broadcast to user-specific order feed
 	orderTopic := fmt.Sprintf("orders.%s", userIDStr)
@@ -202,10 +203,10 @@ func (b *UltraLowLatencyBroadcaster) processAccountUpdate(event Event) {
 	accountMsg := (*AccountMessage)(event.Data)
 
 	// Convert user ID back to string for topic routing
-	userIDStr := orderbook.Uint64ToString(accountMsg.UserID)
+	userIDStr := strconv.FormatUint(accountMsg.UserID, 10)
 
 	// Broadcast to user-specific account feed
-	accountTopic := fmt.Sprintf("account.%s", userIDStr)
+	accountTopic := fmt.Sprintf("accounts.%s", userIDStr)
 	b.wsHub.Broadcast(accountTopic, accountMsg.data)
 
 	atomic.AddUint64(&b.perfCounters.messagesSent, 1)
@@ -269,7 +270,7 @@ func (b *UltraLowLatencyBroadcaster) performanceMonitor() {
 				avgLatencyNs = float64(atomic.LoadUint64(&b.perfCounters.totalLatencyNs)) / float64(currentEventsProcessed)
 			}
 
-			queueWritePos, queueReadPos, queueAvailable, queueUsed := b.eventQueue.GetStats()
+			_, _, queueAvailable, queueUsed := b.eventQueue.GetStats()
 
 			b.logger.Info("Broadcasting performance metrics",
 				zap.Float64("events_per_sec", eventsPerSec),
@@ -327,7 +328,7 @@ func (b *UltraLowLatencyBroadcaster) GetPerformanceMetrics() map[string]interfac
 		avgLatencyNs = float64(atomic.LoadUint64(&b.perfCounters.totalLatencyNs)) / float64(eventsProcessed)
 	}
 
-	queueWritePos, queueReadPos, queueAvailable, queueUsed := b.eventQueue.GetStats()
+	_, _, queueAvailable, queueUsed := b.eventQueue.GetStats()
 
 	return map[string]interface{}{
 		"events_processed":   eventsProcessed,
@@ -337,8 +338,6 @@ func (b *UltraLowLatencyBroadcaster) GetPerformanceMetrics() map[string]interfac
 		"avg_latency_us":     avgLatencyNs / 1000,
 		"max_latency_us":     atomic.LoadUint64(&b.perfCounters.maxLatencyNs) / 1000,
 		"min_latency_us":     atomic.LoadUint64(&b.perfCounters.minLatencyNs) / 1000,
-		"queue_write_pos":    queueWritePos,
-		"queue_read_pos":     queueReadPos,
 		"queue_available":    queueAvailable,
 		"queue_used":         queueUsed,
 		"queue_overflows":    atomic.LoadUint64(&b.perfCounters.queueOverflows),

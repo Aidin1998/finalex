@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package marketdata;
+
+option go_package = "github.com/Aidin1998/finalex/pkg/proto/marketdata;marketdata";
+
+import "google/protobuf/duration.proto";
+
+// MarketData service for streaming market data updates
+service MarketData {
+  rpc Subscribe(SubscribeRequest) returns (stream Update) {}
+}
+
+// Request to subscribe to market data
+message SubscribeRequest {
+  string client_id = 1;
+  string symbol = 2;
+  repeated int32 levels = 3;
+  google.protobuf.Duration frequency = 4;
+  string compression = 5;
+}
+
+// Market data update message
+message Update {
+  string symbol = 1;
+  int32 price_level = 2;
+  double bid = 3;
+  double ask = 4;
+  int64 timestamp = 5; // Unix nanoseconds
+}

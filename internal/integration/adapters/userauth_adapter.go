@@ -6,20 +6,19 @@ import (
 	"fmt"
 
 	"github.com/Aidin1998/finalex/internal/integration/contracts"
-	"github.com/Aidin1998/finalex/internal/userauth"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // UserAuthServiceAdapter implements contracts.UserAuthServiceContract
-// by adapting the userauth module's native interface
+// by adapting the contracts.UserAuthServiceContract interface
 type UserAuthServiceAdapter struct {
-	service userauth.Service
+	service contracts.UserAuthServiceContract
 	logger  *zap.Logger
 }
 
 // NewUserAuthServiceAdapter creates a new userauth service adapter
-func NewUserAuthServiceAdapter(service userauth.Service, logger *zap.Logger) *UserAuthServiceAdapter {
+func NewUserAuthServiceAdapter(service contracts.UserAuthServiceContract, logger *zap.Logger) *UserAuthServiceAdapter {
 	return &UserAuthServiceAdapter{
 		service: service,
 		logger:  logger,

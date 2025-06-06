@@ -317,7 +317,6 @@ func (hm *HealthMonitor) runSingleHealthCheck(ctx context.Context, key string, c
 	hm.mu.Unlock()
 
 	// Update metrics
-	healthy := result.Status == HealthHealthy
 	// Comment out or stub UpdateComponentHealth
 	// if hm.metrics != nil {
 	// 	hm.metrics.UpdateComponentHealth(result.Component, result.Subsystem, healthy)
@@ -586,7 +585,7 @@ func (r *RiskManagerHealthChecker) Check(ctx context.Context) HealthCheckResult 
 	}
 
 	// Check risk levels
-	riskSignals := r.riskManager.GetRiskSignals(int(CriticalRisk))
+	riskSignals := r.riskManager.GetRiskSignals(CriticalRisk)
 	criticalRiskCount := len(riskSignals)
 
 	result.Details["critical_risk_signals"] = criticalRiskCount
@@ -595,7 +594,7 @@ func (r *RiskManagerHealthChecker) Check(ctx context.Context) HealthCheckResult 
 		result.Status = HealthUnhealthy
 		result.Message = fmt.Sprintf("%d critical risk signals active", criticalRiskCount)
 	} else {
-		highRiskSignals := r.riskManager.GetRiskSignals(int(HighRisk))
+		highRiskSignals := r.riskManager.GetRiskSignals(HighRisk)
 		if len(highRiskSignals) > 0 {
 			result.Status = HealthDegraded
 			result.Message = fmt.Sprintf("%d high risk signals active", len(highRiskSignals))

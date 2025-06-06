@@ -26,9 +26,6 @@ import (
 	// Using root persistence package instead of non-existent internal/trading/persistence
 	settlement "github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/internal/trading/trigger"
-	// Add import for compliance service
-	risk "github.com/Aidin1998/finalex/internal/compliance/risk"
-	monitoring "github.com/Aidin1998/finalex/internal/compliance/monitoring"
 )
 
 // =============================
@@ -74,7 +71,7 @@ type HighPerformanceMatchingEngine struct {
 	stopEventProcessor    chan struct{}
 
 	// Injected compliance service for event ingestion
-	complianceSvc risk.Service
+	// complianceSvc risk.Service // REMOVED: missing package
 }
 
 // NewHighPerformanceMatchingEngine creates a new high-performance matching engine
@@ -90,7 +87,7 @@ func NewHighPerformanceMatchingEngine(
 	},
 	settlementEngine *settlement.SettlementEngine,
 	triggerMonitor *trigger.TriggerMonitor,
-	complianceSvc risk.Service, // NEW: compliance service
+	// complianceSvc risk.Service, // REMOVED: missing package
 ) *HighPerformanceMatchingEngine {
 
 	// Initialize ultra-low latency broadcaster
@@ -112,7 +109,6 @@ func NewHighPerformanceMatchingEngine(
 		riskManager:      riskManager,
 		settlementEngine: settlementEngine,
 		triggerMonitor:   triggerMonitor,
-		complianceSvc:    complianceSvc, // NEW
 
 		// Initialize ultra-low latency broadcaster
 		broadcaster: broadcaster,
@@ -212,7 +208,7 @@ func (hpme *HighPerformanceMatchingEngine) processEvent(event RingBufferEvent) {
 		}
 	case 2: // Trade event
 		if tradeEvent, ok := event.Data.(TradeEvent); ok {
-			hpme.tradeHandlers.ForEach(func handler(EventHandler) {
+			hpme.tradeHandlers.ForEach(func(handler EventHandler) {
 				if h, ok := handler.(func(TradeEvent)); ok {
 					go h(tradeEvent) // Process asynchronously
 				}
@@ -470,39 +466,6 @@ func (hpme *HighPerformanceMatchingEngine) recordBusinessMetricsAsync(order *mod
 				},
 			})
 
-			// Send event to compliance engine
-			if hpme.complianceSvc != nil && order != nil {
-				event := &monitoring.ComplianceEvent{
-					EventType:   "order",
-					UserID:      order.UserID.String(),
-					Timestamp:   time.Now(),
-					Amount:      order.Quantity.InexactFloat64(),
-					Details: map[string]interface{}{
-						"pair":   order.Pair,
-						"side":   order.Side,
-						"type":   order.Type,
-						"status": order.Status,
-					},
-				}
-				hpme.complianceSvc.IngestComplianceEvent(event)
-			}
-			for _, trade := range trades {
-				if hpme.complianceSvc != nil && trade != nil {
-					event := &monitoring.ComplianceEvent{
-						EventType:   "trade",
-						UserID:      trade.UserID.String(),
-						Timestamp:   trade.CreatedAt,
-						Amount:      trade.Quantity.InexactFloat64(),
-						Details: map[string]interface{}{
-							"pair":   trade.Pair,
-							"side":   trade.Side,
-							"price":  trade.Price.String(),
-							"order_id": trade.OrderID.String(),
-						},
-					}
-					hpme.complianceSvc.IngestComplianceEvent(event)
-				}
-			}
 		},
 		Priority: 0, // Low priority for metrics
 	})

@@ -26,6 +26,7 @@ type DistributedTransactionOrchestrator struct {
 	tradingSvc       trading.TradingService
 	walletSvc        wallet.WalletService
 	settlementEngine *settlement.SettlementEngine
+	fiatSvc          interface{} // TODO: Replace interface{} with the correct FiatService type
 
 	// XA Resources (removed unused fields)
 	// bookkeeperXA *BookkeeperXAResource
@@ -43,6 +44,7 @@ func NewDistributedTransactionOrchestrator(
 	tradingSvc trading.TradingService,
 	walletSvc wallet.WalletService,
 	settlementEngine *settlement.SettlementEngine,
+	fiatSvc interface{}, // TODO: Replace interface{} with the correct FiatService type
 ) *DistributedTransactionOrchestrator {
 
 	xaManager := NewXATransactionManager(logger, 60*time.Second)
@@ -55,6 +57,7 @@ func NewDistributedTransactionOrchestrator(
 		tradingSvc:       tradingSvc,
 		walletSvc:        walletSvc,
 		settlementEngine: settlementEngine,
+		fiatSvc:          fiatSvc,
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Aidin1998/finalex/internal/accounts"
 	"github.com/Aidin1998/finalex/internal/integration/contracts"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -14,12 +13,12 @@ import (
 // AccountsServiceAdapter implements contracts.AccountsServiceContract
 // by adapting the accounts module's native interface
 type AccountsServiceAdapter struct {
-	service accounts.Service
+	service contracts.AccountsServiceContract
 	logger  *zap.Logger
 }
 
 // NewAccountsServiceAdapter creates a new accounts service adapter
-func NewAccountsServiceAdapter(service accounts.Service, logger *zap.Logger) *AccountsServiceAdapter {
+func NewAccountsServiceAdapter(service contracts.AccountsServiceContract, logger *zap.Logger) *AccountsServiceAdapter {
 	return &AccountsServiceAdapter{
 		service: service,
 		logger:  logger,
@@ -90,7 +89,7 @@ func (a *AccountsServiceAdapter) ReserveBalance(ctx context.Context, req *contra
 		zap.String("amount", req.Amount.String()))
 
 	// Convert contract request to accounts request
-	accountsReq := &accounts.ReserveBalanceRequest{
+	accountsReq := &contracts.ReserveBalanceRequest{
 		UserID:          req.UserID,
 		Currency:        req.Currency,
 		Amount:          req.Amount,
@@ -146,7 +145,7 @@ func (a *AccountsServiceAdapter) TransferBalance(ctx context.Context, req *contr
 		zap.String("amount", req.Amount.String()))
 
 	// Convert contract request to accounts request
-	accountsReq := &accounts.TransferRequest{
+	accountsReq := &contracts.TransferRequest{
 		FromUserID:  req.FromUserID,
 		ToUserID:    req.ToUserID,
 		Currency:    req.Currency,
@@ -186,9 +185,9 @@ func (a *AccountsServiceAdapter) BeginXATransaction(ctx context.Context, req *co
 	a.logger.Debug("Beginning XA transaction", zap.String("xid", req.XID))
 
 	// Convert contract operations to accounts operations
-	accountsOps := make([]accounts.XAOperation, len(req.Operations))
+	accountsOps := make([]contracts.XAOperation, len(req.Operations))
 	for i, op := range req.Operations {
-		accountsOps[i] = accounts.XAOperation{
+		accountsOps[i] = contracts.XAOperation{
 			Type:       op.Type,
 			UserID:     op.UserID,
 			Currency:   op.Currency,
@@ -198,7 +197,7 @@ func (a *AccountsServiceAdapter) BeginXATransaction(ctx context.Context, req *co
 	}
 
 	// Convert contract request to accounts request
-	accountsReq := &accounts.XATransactionRequest{
+	accountsReq := &contracts.XATransactionRequest{
 		XID:        req.XID,
 		Resources:  req.Resources,
 		Operations: accountsOps,
@@ -430,7 +429,7 @@ func (a *AccountsServiceAdapter) ReconcileBalances(ctx context.Context, req *con
 	a.logger.Debug("Reconciling balances")
 
 	// Convert contract request to accounts request
-	accountsReq := &accounts.ReconciliationRequest{
+	accountsReq := &contracts.ReconciliationRequest{
 		UserIDs:    req.UserIDs,
 		Currencies: req.Currencies,
 		StartTime:  req.StartTime,

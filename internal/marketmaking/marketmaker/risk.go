@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/yourproject/common" // Adjust the import path as necessary
+	common "github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 )
 
 // Enhanced risk management structures
@@ -79,6 +79,8 @@ type RiskManager struct {
 
 	mu sync.RWMutex
 }
+
+type RiskSeverity int
 
 const (
 	LowRisk RiskSeverity = iota
@@ -463,8 +465,8 @@ func (r *RiskManager) Breach() bool {
 func (r *RiskManager) addRiskSignal(signalType RiskSignalType, severity RiskSeverity, message, symbol string, value float64) {
 	signal := common.RiskSignal{
 		Timestamp: time.Now(),
-		Type:      signalType,
-		Severity:  severity,
+		Type:      int(signalType),
+		Severity:  int(severity),
 		Message:   message,
 		Symbol:    symbol,
 		Value:     value,
@@ -484,7 +486,7 @@ func (r *RiskManager) GetRiskSignals(severity RiskSeverity) []common.RiskSignal 
 
 	var filtered []common.RiskSignal
 	for _, signal := range r.riskSignals {
-		if signal.Severity >= severity {
+		if signal.Severity >= int(severity) {
 			filtered = append(filtered, signal)
 		}
 	}

@@ -286,33 +286,39 @@ func (fs *FiatService) validateUserEligibility(ctx context.Context, userID uuid.
 	return nil
 }
 
+// xidStringToXID converts string xid to transaction.XID struct
+func xidStringToXID(xid string) transaction.XID {
+	// For this project, xid is generated as fmt.Sprintf("fiat_deposit_%s_%s", receipt.ID.String(), traceID)
+	// We'll hash the string to get a fixed-length byte slice for GlobalTxnID, and use a static FormatID and BranchQualID
+	hash := sha256.Sum256([]byte(xid))
+	return transaction.XID{
+		FormatID:     1,
+		GlobalTxnID:  hash[:16], // first 16 bytes
+		BranchQualID: hash[16:], // last 16 bytes
+	}
+}
+
 // processDepositWithXA processes the deposit using XA transactions
 func (fs *FiatService) processDepositWithXA(ctx context.Context, tx *gorm.DB, receipt *FiatDepositReceipt, traceID string) error {
 	// Prepare XA transaction
 	xid := fmt.Sprintf("fiat_deposit_%s_%s", receipt.ID.String(), traceID)
+	txXID := xidStringToXID(xid)
 
-	if err := fs.fiatXA.Prepare(ctx, xid); err != nil {
+	// Prepare expects (ctx, xid transaction.XID) and returns (bool, error)
+	prepared, err := fs.fiatXA.Prepare(ctx, txXID)
+	if err != nil || !prepared {
 		return fmt.Errorf("XA prepare failed: %w", err)
 	}
 
-	// Execute deposit operation
-	err := fs.fiatXA.InitiateDeposit(ctx, map[string]interface{}{
-		"user_id":    receipt.UserID.String(),
-		"currency":   receipt.Currency,
-		"amount":     receipt.Amount.InexactFloat64(),
-		"provider":   receipt.ProviderID,
-		"reference":  receipt.ReferenceID,
-		"receipt_id": receipt.ID.String(),
-	})
-
+	// Execute deposit operation (InitiateDeposit expects userID, currency, amount, provider)
+	_, err = fs.fiatXA.InitiateDeposit(ctx, receipt.UserID.String(), receipt.Currency, receipt.Amount.InexactFloat64(), receipt.ProviderID)
 	if err != nil {
-		// Rollback XA
-		fs.fiatXA.Rollback(ctx, xid)
+		fs.fiatXA.Rollback(ctx, txXID)
 		return fmt.Errorf("deposit initiation failed: %w", err)
 	}
 
-	// Commit XA transaction
-	if err := fs.fiatXA.Commit(ctx, xid); err != nil {
+	// Commit expects (ctx, xid transaction.XID, onePhase bool)
+	if err := fs.fiatXA.Commit(ctx, txXID, false); err != nil {
 		return fmt.Errorf("XA commit failed: %w", err)
 	}
 

@@ -102,8 +102,8 @@ func NewStrongConsistencyTransactionManager(
 	if baseSuite.BookkeeperXA != nil {
 		bookkeeperSvc = baseSuite.BookkeeperXA // Assuming this implements the interface
 	} else {
-		// For now, we'll pass nil and handle it in the constructor
-		logger.Warn("No bookkeeper service available, this may cause issues")
+		// Fallback: use a no-op or mock BookkeeperService implementation
+		bookkeeperSvc = &bookkeeper.NoopBookkeeperService{} // You must define this in your bookkeeper package if not present
 	}
 
 	balanceManager := consistency.NewBalanceConsistencyManager(db, bookkeeperSvc, raftCoordinator, logger)

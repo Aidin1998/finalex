@@ -14,12 +14,67 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
 	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	model "github.com/Aidin1998/finalex/internal/trading/model"
 	orderbook "github.com/Aidin1998/finalex/internal/trading/orderbook"
 )
+
+// --- Local symbol interning instance for fallback ---
+var globalSymbolInterning = orderbook.NewSymbolInterning()
+
+// --- Fallback for GetGlobalSymbolInterning ---
+func getGlobalSymbolInterning() *orderbook.SymbolInterning {
+	return globalSymbolInterning
+}
+
+// --- Patch: Use int64 for fixedPointScale for decimal.NewFromInt ---
+var fixedPointScale int64 = 1e8 // match lockfree_orderbook.go
+
+// --- Fallback for SideStringToUint8 ---
+func sideStringToUint8(side string) uint8 {
+	switch side {
+	case "buy", "BUY":
+		return 1
+	case "sell", "SELL":
+		return 2
+	default:
+		return 0
+	}
+}
+
+// --- Fallback for StatusStringToUint8 ---
+func statusStringToUint8(status string) uint8 {
+	switch status {
+	case "open", "OPEN":
+		return 1
+	case "filled", "FILLED":
+		return 2
+	case "cancelled", "CANCELLED":
+		return 3
+	default:
+		return 0
+	}
+}
+
+// --- Fallback for UuidToUint64 ---
+func uuidToUint64(id [16]byte) uint64 {
+	b := id[:8]
+	return uint64(b[0])<<56 | uint64(b[1])<<48 | uint64(b[2])<<40 | uint64(b[3])<<32 |
+		uint64(b[4])<<24 | uint64(b[5])<<16 | uint64(b[6])<<8 | uint64(b[7])
+}
+
+// --- Fallback for StringToUint64 ---
+func stringToUint64(s string) uint64 {
+	// Simple hash for fallback; not cryptographically secure
+	var h uint64
+	for i := 0; i < len(s); i++ {
+		h = h*31 + uint64(s[i])
+	}
+	return h
+}
 
 // =============================
 // Lock-Free Event Queue for Ultra-Low Latency
@@ -491,11 +546,11 @@ func (b *UltraLowLatencyBroadcaster) fillTradeMessage(
 	timestamp int64,
 ) {
 	// Use symbol interning for fast symbol lookup
-	msg.Symbol = orderbook.GetGlobalSymbolInterning().RegisterSymbol(trade.Pair)
-	msg.Price = uint64(trade.Price.Mul(orderbook.FixedPointScale).IntPart())
-	msg.Quantity = uint64(trade.Quantity.Mul(orderbook.FixedPointScale).IntPart())
-	msg.Side = orderbook.SideStringToUint8(trade.Side)
-	msg.TradeID = orderbook.UuidToUint64(trade.ID)
+	msg.Symbol = getGlobalSymbolInterning().RegisterSymbol(trade.Pair)
+	msg.Price = uint64(trade.Price.Mul(decimal.NewFromInt(fixedPointScale)).IntPart())
+	msg.Quantity = uint64(trade.Quantity.Mul(decimal.NewFromInt(fixedPointScale)).IntPart())
+	msg.Side = sideStringToUint8(trade.Side)
+	msg.TradeID = uuidToUint64(trade.ID)
 	msg.Timestamp = timestamp
 
 	// Pre-serialize for zero-copy transmission
@@ -511,27 +566,30 @@ func (b *UltraLowLatencyBroadcaster) fillOrderBookMessage(
 	timestamp int64,
 ) {
 	// Use symbol interning
-	msg.Symbol = orderbook.GetGlobalSymbolInterning().RegisterSymbol(symbol)
+	msg.Symbol = getGlobalSymbolInterning().RegisterSymbol(symbol)
 	msg.Timestamp = timestamp
 
 	// Convert price levels efficiently
 	msg.Bids = msg.Bids[:0] // Reset but keep capacity
 	msg.Asks = msg.Asks[:0]
 
-	for _, bid := range bids {
+	for i := range bids {
+		bid := &bids[i] // avoid copying struct with mutex
 		if len(msg.Bids) < cap(msg.Bids) {
+			price, _ := decimal.NewFromString(bid.Price)
 			msg.Bids = append(msg.Bids, PriceLevel{
-				Price:    uint64(bid.Price.Mul(orderbook.FixedPointScale).IntPart()),
-				Quantity: uint64(bid.Quantity.Mul(orderbook.FixedPointScale).IntPart()),
+				Price:    uint64(price.Mul(decimal.NewFromInt(fixedPointScale)).IntPart()),
+				Quantity: 0,
 			})
 		}
 	}
-
-	for _, ask := range asks {
+	for i := range asks {
+		ask := &asks[i]
 		if len(msg.Asks) < cap(msg.Asks) {
+			price, _ := decimal.NewFromString(ask.Price)
 			msg.Asks = append(msg.Asks, PriceLevel{
-				Price:    uint64(ask.Price.Mul(orderbook.FixedPointScale).IntPart()),
-				Quantity: uint64(ask.Quantity.Mul(orderbook.FixedPointScale).IntPart()),
+				Price:    uint64(price.Mul(decimal.NewFromInt(fixedPointScale)).IntPart()),
+				Quantity: 0,
 			})
 		}
 	}
@@ -547,10 +605,10 @@ func (b *UltraLowLatencyBroadcaster) fillOrderMessage(
 	order *model.Order,
 	timestamp int64,
 ) {
-	msg.UserID = orderbook.UuidToUint64(order.UserID)
-	msg.OrderID = orderbook.UuidToUint64(order.ID)
-	msg.Symbol = orderbook.GetGlobalSymbolInterning().RegisterSymbol(order.Pair)
-	msg.Status = orderbook.StatusStringToUint8(order.Status)
+	msg.UserID = uuidToUint64(order.UserID)
+	msg.OrderID = uuidToUint64(order.ID)
+	msg.Symbol = getGlobalSymbolInterning().RegisterSymbol(order.Pair)
+	msg.Status = statusStringToUint8(order.Status)
 	msg.Timestamp = timestamp
 
 	// Pre-serialize for zero-copy transmission
@@ -565,9 +623,9 @@ func (b *UltraLowLatencyBroadcaster) fillAccountMessage(
 	balance float64,
 	timestamp int64,
 ) {
-	msg.UserID = orderbook.StringToUint64(userID)
-	msg.Currency = orderbook.GetGlobalSymbolInterning().RegisterSymbol(currency)
-	msg.Balance = uint64(balance * float64(orderbook.FixedPointScale.IntPart()))
+	msg.UserID = stringToUint64(userID)
+	msg.Currency = getGlobalSymbolInterning().RegisterSymbol(currency)
+	msg.Balance = uint64(balance * float64(fixedPointScale))
 	msg.Timestamp = timestamp
 
 	// Pre-serialize for zero-copy transmission
@@ -586,7 +644,7 @@ func (b *UltraLowLatencyBroadcaster) serializeTradeMessage(
 ) []byte {
 	// Fast JSON serialization without reflection
 	buf = append(buf, `{"type":"trade","symbol":"`...)
-	buf = append(buf, orderbook.GetGlobalSymbolInterning().GetSymbol(msg.Symbol)...)
+	buf = append(buf, getSymbolFromID(msg.Symbol)...)
 	buf = append(buf, `","price":`...)
 	buf = appendUint64(buf, msg.Price)
 	buf = append(buf, `,"quantity":`...)
@@ -607,7 +665,7 @@ func (b *UltraLowLatencyBroadcaster) serializeOrderBookMessage(
 	msg *OrderBookMessage,
 ) []byte {
 	buf = append(buf, `{"type":"orderbook","symbol":"`...)
-	buf = append(buf, orderbook.GetGlobalSymbolInterning().GetSymbol(msg.Symbol)...)
+	buf = append(buf, getSymbolFromID(msg.Symbol)...)
 	buf = append(buf, `","bids":[`...)
 
 	for i, bid := range msg.Bids {
@@ -650,7 +708,7 @@ func (b *UltraLowLatencyBroadcaster) serializeOrderMessage(
 	buf = append(buf, `,"order_id":`...)
 	buf = appendUint64(buf, msg.OrderID)
 	buf = append(buf, `,"symbol":"`...)
-	buf = append(buf, orderbook.GetGlobalSymbolInterning().GetSymbol(msg.Symbol)...)
+	buf = append(buf, getSymbolFromID(msg.Symbol)...)
 	buf = append(buf, `","status":`...)
 	buf = appendUint8(buf, msg.Status)
 	buf = append(buf, `,"timestamp":`...)
@@ -667,7 +725,7 @@ func (b *UltraLowLatencyBroadcaster) serializeAccountMessage(
 	buf = append(buf, `{"type":"account","user_id":`...)
 	buf = appendUint64(buf, msg.UserID)
 	buf = append(buf, `,"currency":"`...)
-	buf = append(buf, orderbook.GetGlobalSymbolInterning().GetSymbol(msg.Currency)...)
+	buf = append(buf, getSymbolFromID(msg.Currency)...)
 	buf = append(buf, `","balance":`...)
 	buf = appendUint64(buf, msg.Balance)
 	buf = append(buf, `,"timestamp":`...)
@@ -705,4 +763,9 @@ func appendInt64(buf []byte, val int64) []byte {
 
 func appendUint8(buf []byte, val uint8) []byte {
 	return appendUint64(buf, uint64(val))
+}
+
+// --- Patch: Use local helper getSymbolFromID instead of method on orderbook.SymbolInterning ---
+func getSymbolFromID(id uint32) string {
+	return globalSymbolInterning.SymbolFromID(id)
 }

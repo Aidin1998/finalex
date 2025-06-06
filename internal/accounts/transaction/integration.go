@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
-	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
-	"github.com/Aidin1998/finalex/internal/wallet"
 	"github.com/google/uuid"
 
 	"go.uber.org/zap"
@@ -28,7 +26,6 @@ type TransactionManagerSuite struct {
 	SettlementXA *SettlementXAResource
 	TradingXA    *TradingXAResource
 	FiatXA       *FiatXAResource
-	WalletXA     *WalletXAResource
 
 	logger *zap.Logger
 	db     *gorm.DB
@@ -41,8 +38,7 @@ func NewTransactionManagerSuite(
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	settlementEngine *settlement.SettlementEngine,
 	tradingPathManager *TradingPathManager, // changed from MatchingEngine
-	fiatSvc fiat.FiatService,
-	walletSvc *wallet.WalletService,
+	fiatSvc interface{}, // TODO: Replace interface{} with the correct FiatService type
 	configPath string,
 ) (*TransactionManagerSuite, error) {
 	// Initialize core components
@@ -57,15 +53,11 @@ func NewTransactionManagerSuite(
 	// config := configManager.GetConfig() // not used
 
 	// Initialize XA Resources
-	bookkeeperXA := NewBookkeeperXAResource(bookkeeperSvc, logger)
+	bookkeeperXAService := bookkeeper.NewBookkeeperXAAdapter(bookkeeperSvc, nil)
+	bookkeeperXA := NewBookkeeperXAResource(bookkeeperXAService, logger)
 	settlementXA := NewSettlementXAResource(settlementEngine, db, logger)
 	tradingXA := NewTradingXAResource(db, tradingPathManager, logger)
 	fiatXA := NewFiatXAResource(fiatSvc, db, logger, "")
-
-	var walletXA *WalletXAResource
-	if walletSvc != nil {
-		walletXA = NewWalletXAResource(db, walletSvc, logger)
-	}
 
 	// Initialize middleware
 	middleware := NewTransactionMiddleware(xaManager, lockManager, logger)
@@ -83,7 +75,6 @@ func NewTransactionManagerSuite(
 		SettlementXA:  settlementXA,
 		TradingXA:     tradingXA,
 		FiatXA:        fiatXA,
-		WalletXA:      walletXA,
 		logger:        logger,
 		db:            db,
 	}
@@ -217,15 +208,6 @@ func (tms *TransactionManagerSuite) ExecuteDistributedTransaction(
 				}
 				resources["fiat"] = tms.FiatXA
 			}
-		case "wallet":
-			if tms.WalletXA != nil {
-				if _, exists := resources["wallet"]; !exists {
-					if err := tms.XAManager.Enlist(txn, tms.WalletXA); err != nil {
-						return nil, fmt.Errorf("failed to enlist wallet: %w", err)
-					}
-					resources["wallet"] = tms.WalletXA
-				}
-			}
 		}
 	}
 
@@ -265,8 +247,6 @@ func (tms *TransactionManagerSuite) executeOperation(ctx context.Context, op Tra
 		return tms.executeTradingOperation(ctx, op)
 	case "fiat":
 		return tms.executeFiatOperation(ctx, op)
-	case "wallet":
-		return tms.executeWalletOperation(ctx, op)
 	default:
 		return fmt.Errorf("unknown service: %s", op.Service)
 	}
@@ -323,11 +303,6 @@ func (tms *TransactionManagerSuite) executeTradingOperation(ctx context.Context,
 func (tms *TransactionManagerSuite) executeFiatOperation(ctx context.Context, op TransactionOperation) error {
 	// Fiat operations would be implemented here
 	return fmt.Errorf("fiat operations not yet implemented in integration")
-}
-
-func (tms *TransactionManagerSuite) executeWalletOperation(ctx context.Context, op TransactionOperation) error {
-	// Wallet operations would be implemented here
-	return fmt.Errorf("wallet operations not yet implemented in integration")
 }
 
 // configureMiddlewareLocking sets up locking requirements for different endpoints
@@ -388,7 +363,6 @@ func GetTransactionManagerSuite(
 		settlementEngine,
 		nil, // trading engine - pass if available
 		nil, // fiat service - pass if available
-		nil, // wallet service - pass if available
 		configPath,
 	)
 }

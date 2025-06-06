@@ -616,7 +616,7 @@ func (s *EnhancedService) initializeExchangeProviders() error {
 // initializeFiatProviders initializes fiat rate providers
 func (s *EnhancedService) initializeFiatProviders() error {
 	// Initialize ExchangeRates API provider
-	if apiKey := getEnvVar("EXCHANGERATES_API_KEY"); apiKey != "" {
+	if apiKey := getEnvVar("EXCHANGERATES_API_KEY", ""); apiKey != "" {
 		provider := NewExchangeRatesAPIProvider(s.logger, apiKey)
 		s.fiatProviders[provider.GetName()] = provider
 		s.logger.Info("Initialized fiat provider", zap.String("name", provider.GetName()))
@@ -628,7 +628,7 @@ func (s *EnhancedService) initializeFiatProviders() error {
 	s.logger.Info("Initialized fiat provider", zap.String("name", provider.GetName()))
 
 	// Initialize CurrencyLayer provider
-	if apiKey := getEnvVar("CURRENCYLAYER_API_KEY"); apiKey != "" {
+	if apiKey := getEnvVar("CURRENCYLAYER_API_KEY", ""); apiKey != "" {
 		provider := NewCurrencyLayerProvider(s.logger, apiKey)
 		s.fiatProviders[provider.GetName()] = provider
 		s.logger.Info("Initialized fiat provider", zap.String("name", provider.GetName()))

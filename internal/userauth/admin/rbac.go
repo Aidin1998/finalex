@@ -92,10 +92,12 @@ func (r *RBACService) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]str
 		return nil, err
 	}
 
+	// Fix: permissions is []Permission, so extract permission string as resource.action
 	roleMap := make(map[string]bool)
 	for _, perm := range permissions {
-		if perm != "" {
-			roleMap[perm] = true
+		permStr := perm.Resource + "." + perm.Action
+		if permStr != "" {
+			roleMap[permStr] = true
 		}
 	}
 
@@ -116,7 +118,7 @@ func (r *RBACService) GetUserPermissions(ctx context.Context, userID uuid.UUID) 
 
 	permStrings := make([]string, len(permissions))
 	for i, perm := range permissions {
-		permStrings[i] = perm
+		permStrings[i] = perm.Resource + "." + perm.Action
 	}
 
 	return permStrings, nil
@@ -322,7 +324,7 @@ func (a *AdminAPI) createAPIKey(c *gin.Context) {
 	}, "Admin created API key")
 
 	c.JSON(201, gin.H{
-		"api_key": apiKey.Key, // Use the correct field for the API key string
+		"api_key": apiKey.KeyHash, // KeyHash is set to the actual key for return
 		"key_id":  apiKey.ID,
 		"message": "API key created successfully",
 	})

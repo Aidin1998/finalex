@@ -104,7 +104,18 @@ func (shm *SelfHealingManager) TriggerHealing(ctx context.Context, component str
 		event.AttemptNum = attempt
 
 		healCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := healer.Heal(healCtx)
+		// Pass a minimal HealthCheckResult as required by the interface
+		healthResult := HealthCheckResult{
+			Component:   component,
+			Subsystem:   "",
+			Status:      0, // HealthUnknown
+			Message:     reason,
+			LastChecked: time.Now(),
+			CheckCount:  0,
+			FailCount:   0,
+			Details:     nil,
+		}
+		err := healer.Heal(healCtx, healthResult)
 		cancel()
 
 		if err == nil {
@@ -203,7 +214,14 @@ func (fsh *FeedSelfHealer) Name() string {
 	return "feed_healer"
 }
 
-func (fsh *FeedSelfHealer) Heal(ctx context.Context) error {
+// Update FeedSelfHealer to match SelfHealer interface
+func (fsh *FeedSelfHealer) CanHeal(result HealthCheckResult) bool {
+	// For test/demo, always return true. In production, check result.Status, etc.
+	return true
+}
+
+// Remove old Heal(ctx context.Context) method and use the correct signature
+func (fsh *FeedSelfHealer) Heal(ctx context.Context, result HealthCheckResult) error {
 	fsh.logger.LogInfo(ctx, "attempting feed reconnection", map[string]interface{}{
 		"status": fsh.feedManager.GetConnectionStatus(),
 	})
@@ -227,6 +245,10 @@ func (fsh *FeedSelfHealer) Heal(ctx context.Context) error {
 
 	fsh.logger.LogInfo(ctx, "feed reconnection successful", nil)
 	return nil
+}
+
+func (fsh *FeedSelfHealer) HealingDescription() string {
+	return "Feed reconnection and reset"
 }
 
 // StrategySelfHealer implements self-healing for trading strategies
