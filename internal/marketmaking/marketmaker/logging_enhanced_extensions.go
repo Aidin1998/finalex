@@ -36,8 +36,8 @@ func (sl *StructuredLogger) LogPerformance(ctx context.Context, action string, m
 	sl.LogInfo(ctx, action, metrics)
 }
 
-// LogRiskEvent logs a risk-related event
-func (sl *StructuredLogger) LogRiskEvent(ctx context.Context, eventType string, message string, fields map[string]interface{}) {
+// LogRiskEventSimple provides a simplified risk logging method
+func (sl *StructuredLogger) LogRiskEventSimple(ctx context.Context, eventType string, message string, fields map[string]interface{}) {
 	// Add event type to fields
 	if fields == nil {
 		fields = make(map[string]interface{})

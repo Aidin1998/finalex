@@ -76,19 +76,18 @@ func NewEnhancedService(
 	observabilityConfig *ObservabilityConfig,
 	trading TradingAPI,
 	strategy Strategy,
-) (*EnhancedService, error) {
-	// Create base service
+) (*EnhancedService, error) { // Create base service
 	baseService := NewService(cfg, trading, strategy)
 	// Initialize enhanced components
 	logger, err := NewStructuredLogger("marketmaker", "1.0.0")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create structured logger: %w", err)
-	}
-	// Create base metrics collector
-	baseMetrics := NewMetricsCollector()
+	} // Create base metrics collector
+	metrics := NewMetricsCollector()
 
-	// Create Prometheus metrics collector for enhanced metrics
-	promMetrics := NewPrometheusMetricsCollector()
+	// Initialize Prometheus metrics for enhanced observability
+	// The Prometheus metrics are registered globally, no need to store the reference
+	_ = NewPrometheusMetricsCollector()
 
 	// Create a health check config from the observability config
 	healthCheckConfig := HealthCheckConfig{
@@ -105,7 +104,7 @@ func NewEnhancedService(
 	healthMonitor := NewHealthMonitor(
 		healthCheckConfig,
 		logger,
-		baseMetrics,
+		metrics,
 	)
 
 	emergencyController := NewEmergencyController(
@@ -124,7 +123,6 @@ func NewEnhancedService(
 	)
 
 	backtestEngine := NewBacktestEngine(logger, metrics)
-
 	// Create enhanced service
 	enhancedService := &EnhancedService{
 		Service:             baseService,
@@ -141,8 +139,8 @@ func NewEnhancedService(
 		},
 	}
 
-	// Create admin tools manager
-	enhancedService.adminToolsManager = NewAdminToolsManager(
+	// Create admin tools manager using existing implementation from admin_tools.go
+	adminToolsManager := NewAdminToolsManager(
 		baseService,
 		emergencyController,
 		selfHealingManager,
@@ -150,6 +148,7 @@ func NewEnhancedService(
 		logger,
 		metrics,
 	)
+	enhancedService.adminToolsManager = adminToolsManager
 
 	// Register health checkers
 	enhancedService.registerHealthCheckers()
@@ -213,13 +212,10 @@ func (es *EnhancedService) Stop(ctx context.Context) error {
 
 	// Stop enhanced monitoring
 	es.stopEnhancedMonitoring(ctx)
-
 	// Stop base service
-	if err := es.Service.Stop(ctx); err != nil {
-		es.logger.LogError(ctx, "error stopping base service", map[string]interface{}{
-			"error": err.Error(),
-		})
-	}
+	// Check if Service.Stop accepts context
+	es.logger.LogInfo(ctx, "stopping base service", nil)
+	es.Service.Stop() // No context parameter for base service
 
 	// Stop observability components
 	es.stopObservabilityComponents(ctx)
@@ -240,9 +236,8 @@ func (es *EnhancedService) startObservabilityComponents(ctx context.Context) err
 	if err := es.metrics.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start metrics collector: %w", err)
 	}
-
 	// Start health monitoring
-	es.healthMonitor.Start(ctx)
+	es.healthMonitor.StartMonitoring(ctx)
 
 	// Start emergency controller monitoring
 	es.emergencyController.RegisterEmergencyCallback(es.onEmergencyEvent)
@@ -378,8 +373,7 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 	// Record risk metrics
 	es.metrics.RecordRiskEvent("daily_pnl", riskStatus.DailyPnL)
 	es.metrics.RecordRiskEvent("total_exposure", riskStatus.TotalExposure)
-	es.metrics.RecordRiskEvent("risk_score", riskStatus.RiskScore)
-	// Log risk events
+	es.metrics.RecordRiskEvent("risk_score", riskStatus.RiskScore) // Log risk events
 	for _, signal := range riskStatus.RiskSignals {
 		// Extract symbol and value safely
 		symbol := "unknown"
@@ -387,10 +381,12 @@ func (es *EnhancedService) monitorRiskConditions(ctx context.Context) {
 			symbol = signal.Symbol
 		}
 
-		es.logger.LogRiskEvent(ctx, string(signal.Type), signal.Message, map[string]interface{}{
-			"severity": signal.Severity,
-			"symbol":   symbol,
-			"value":    signal.Value,
+		// Use standard LogInfo instead of custom LogRiskEvent since the signatures don't match
+		es.logger.LogInfo(ctx, fmt.Sprintf("Risk event: %s", signal.Message), map[string]interface{}{
+			"event_type": string(signal.Type),
+			"severity":   string(signal.Severity),
+			"symbol":     symbol,
+			"value":      signal.Value,
 		})
 
 		// Record risk event metric

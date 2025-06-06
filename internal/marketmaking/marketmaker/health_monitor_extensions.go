@@ -36,8 +36,8 @@ func (hm *HealthMonitor) GetAllHealthResults() map[string]*HealthCheckResult {
 	return results
 }
 
-// Start begins periodic health checking
-func (hm *HealthMonitor) Start(ctx context.Context) {
+// StartMonitoring begins periodic health checking (renamed to avoid conflict)
+func (hm *HealthMonitor) StartMonitoring(ctx context.Context) {
 	// Implementation details
 	// This would typically start a goroutine that runs periodic health checks
 }
