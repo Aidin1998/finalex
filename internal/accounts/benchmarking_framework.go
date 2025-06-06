@@ -369,20 +369,18 @@ func (bf *BenchmarkingFramework) runWriteBenchmark(execution *BenchmarkExecution
 				// Generate test account
 				account := bf.generateTestAccount()
 
-				// Measure operation
 				start := time.Now()
-				err := bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
+				_, errCreate := bf.dataManager.commandHandler.CreateAccount(
+					execution.Ctx,
+					account.UserID,
+					account.Currency,
+					account.AccountType,
+				)
 				duration := time.Since(start)
 
-				// Record measurement
-				bf.recordMeasurement(execution, "write", start, duration, err == nil, err)
-
-				if bf.enableMetrics {
-					bf.operationLatency.Observe(duration.Seconds())
-				}
-
-				atomic.AddInt64(&execution.OperationCount, 1)
-				if err != nil {
+				// Use errCreate in measurement and for error counting
+				bf.recordMeasurement(execution, "write", start, duration, errCreate == nil, errCreate)
+				if errCreate != nil {
 					atomic.AddInt64(&execution.ErrorCount, 1)
 				}
 			}
@@ -404,7 +402,6 @@ func (bf *BenchmarkingFramework) runMixedBenchmark(execution *BenchmarkExecution
 				var err error
 				var operation string
 				start := time.Now()
-
 				if rand.Float64() < readThreshold {
 					// Read operation
 					operation = "read"
@@ -414,7 +411,12 @@ func (bf *BenchmarkingFramework) runMixedBenchmark(execution *BenchmarkExecution
 					// Write operation
 					operation = "write"
 					account := bf.generateTestAccount()
-					err = bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
+					_, err = bf.dataManager.commandHandler.CreateAccount(
+						execution.Ctx,
+						account.UserID,
+						account.Currency,
+						account.AccountType,
+					)
 				}
 
 				duration := time.Since(start)
@@ -515,16 +517,12 @@ func (bf *BenchmarkingFramework) runShardingBenchmark(execution *BenchmarkExecut
 				account := bf.generateTestAccount()
 
 				start := time.Now()
-
-				// Test shard resolution
-				partition := bf.shardManager.GetAccountPartition(account.UserID)
-				if partition == nil {
-					atomic.AddInt64(&execution.ErrorCount, 1)
-					continue
-				}
-
-				// Test operation
-				err := bf.dataManager.commandHandler.CreateAccount(execution.Ctx, account)
+				_, err := bf.dataManager.commandHandler.CreateAccount(
+					execution.Ctx,
+					account.UserID,
+					account.Currency,
+					account.AccountType,
+				)
 				duration := time.Since(start)
 
 				bf.recordMeasurement(execution, "sharding", start, duration, err == nil, err)

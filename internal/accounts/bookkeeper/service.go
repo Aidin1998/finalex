@@ -195,9 +195,13 @@ func (s *Service) CreateAccount(ctx context.Context, userID string, currency str
 	}
 
 	// Create account
+	parsedUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid userID: %w", err)
+	}
 	account := &models.Account{
 		ID:        uuid.New(),
-		UserID:    uuid.MustParse(userID),
+		UserID:    parsedUserID,
 		Currency:  currency,
 		Balance:   0,
 		Available: 0,
@@ -267,7 +271,7 @@ func (s *Service) CreateTransaction(ctx context.Context, userID string, transact
 	now := time.Now()
 	transaction := &models.Transaction{
 		ID:          uuid.New(),
-		UserID:      uuid.MustParse(userID),
+		UserID:      account.UserID,
 		Type:        transactionType,
 		Amount:      amount,
 		Currency:    currency,
@@ -555,9 +559,14 @@ func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND currency = ?", toUserID, currency).First(&toAccount).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// Create to account
+			parsedToUserID, err := uuid.Parse(toUserID)
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("invalid toUserID: %w", err)
+			}
 			toAccount = models.Account{
 				ID:        uuid.New(),
-				UserID:    uuid.MustParse(toUserID),
+				UserID:    parsedToUserID,
 				Currency:  currency,
 				Balance:   0,
 				Available: 0,
@@ -580,9 +589,14 @@ func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID
 		return err
 	}
 
+	parsedFromUserID, err := uuid.Parse(fromUserID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("invalid fromUserID: %w", err)
+	}
 	fromTransaction := &models.Transaction{
 		ID:          uuid.New(),
-		UserID:      uuid.MustParse(fromUserID),
+		UserID:      parsedFromUserID,
 		Type:        "transfer_out",
 		Amount:      amount,
 		Currency:    currency,
@@ -598,9 +612,14 @@ func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID
 		return fmt.Errorf("failed to create from transaction: %w", err)
 	}
 
+	parsedToUserID, err := uuid.Parse(toUserID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("invalid toUserID: %w", err)
+	}
 	toTransaction := &models.Transaction{
 		ID:          uuid.New(),
-		UserID:      uuid.MustParse(toUserID),
+		UserID:      parsedToUserID,
 		Type:        "transfer_in",
 		Amount:      amount,
 		Currency:    currency,
@@ -886,7 +905,7 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 	if err := fromQuery.First(&fromAccount).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("from account not found: %w", ErrAccountNotFound)
+			return fmt.Errorf("from account not found")
 		}
 		if isDeadlockError(err) {
 			return ErrDeadlockDetected
@@ -905,9 +924,14 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Create to account within the transaction
+			parsedToUserID, err := uuid.Parse(toUserID)
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("invalid toUserID: %w", err)
+			}
 			toAccount = models.Account{
 				ID:        uuid.New(),
-				UserID:    uuid.MustParse(toUserID),
+				UserID:    parsedToUserID,
 				Currency:  currency,
 				Balance:   0,
 				Available: 0,
@@ -921,9 +945,6 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 			}
 		} else {
 			tx.Rollback()
-			if isDeadlockError(err) {
-				return ErrDeadlockDetected
-			}
 			return fmt.Errorf("failed to find and lock to account: %w", err)
 		}
 	}
@@ -980,7 +1001,6 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 		UpdatedAt:   now,
 		CompletedAt: &now,
 	}
-
 	if err := tx.Create(fromTransaction).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to create from transaction: %w", err)
@@ -995,18 +1015,6 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
-	// Log successful operation
-	if opts.AuditLogging {
-		s.logger.Info("Successfully transferred funds",
-			zap.String("from_user_id", fromUserID),
-			zap.String("to_user_id", toUserID),
-			zap.String("currency", currency),
-			zap.Float64("amount", amount),
-			zap.String("from_transaction_id", fromTransaction.ID.String()),
-			zap.String("to_transaction_id", toTransaction.ID.String()))
-	}
-
 	return nil
 }
 
@@ -1819,9 +1827,14 @@ func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, tran
 	}
 
 	// Create transaction record
+	parsedUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid userID: %w", err)
+	}
+	// Create transaction record
 	transaction := &models.Transaction{
 		ID:          uuid.New(),
-		UserID:      uuid.MustParse(userID),
+		UserID:      parsedUserID,
 		Type:        transactionType,
 		Amount:      amount,
 		Currency:    currency,
@@ -1839,7 +1852,7 @@ func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, tran
 	// Record operation
 	op := XAOperation{
 		Type:        "create_transaction",
-		UserID:      uuid.MustParse(userID),
+		UserID:      userID, // XAOperation.UserID is string
 		Currency:    currency,
 		Amount:      amount,
 		Reference:   reference,

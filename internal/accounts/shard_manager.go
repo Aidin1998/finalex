@@ -811,3 +811,19 @@ func (ar *AutoRebalancer) checkAndRebalance(ctx context.Context) {
 			zap.Error(err))
 	}
 }
+
+// GetMetrics returns a map of shard metrics for monitoring
+func (sm *ShardManager) GetMetrics() map[string]interface{} {
+	metrics := make(map[string]interface{})
+	maxLoadFactor := 0.0
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, shard := range sm.shards {
+		if shard.LoadFactor > maxLoadFactor {
+			maxLoadFactor = shard.LoadFactor
+		}
+	}
+	metrics["max_load_factor"] = maxLoadFactor
+	metrics["shard_count"] = sm.shardCount
+	return metrics
+}
