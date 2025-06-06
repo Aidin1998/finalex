@@ -13,7 +13,12 @@ import (
 type ComplianceService interface {
 	// Core compliance checks
 	PerformComplianceCheck(ctx context.Context, req *ComplianceRequest) (*ComplianceResult, error)
+	CheckCompliance(ctx context.Context, request *ComplianceRequest) (*ComplianceResult, error)
 	ValidateTransaction(ctx context.Context, userID uuid.UUID, txType string, amount decimal.Decimal, currency string, metadata map[string]interface{}) (*ComplianceResult, error)
+
+	// User management
+	GetUserStatus(ctx context.Context, userID uuid.UUID) (*UserComplianceStatus, error)
+	GetUserHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*ComplianceEvent, error)
 
 	// Risk assessment
 	AssessUserRisk(ctx context.Context, userID uuid.UUID) (*ComplianceResult, error)
@@ -32,6 +37,9 @@ type ComplianceService interface {
 	UpdatePolicies(ctx context.Context, updates []*PolicyUpdate) error
 	GetActivePolicies(ctx context.Context, policyType string) ([]*PolicyUpdate, error)
 
+	// External reporting
+	ProcessExternalReport(ctx context.Context, report *ExternalComplianceReport) error
+
 	// Service lifecycle
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
@@ -46,8 +54,10 @@ type AuditService interface {
 
 	// Querying
 	GetEvents(ctx context.Context, filter *AuditFilter) ([]*AuditEvent, error)
+	GetEvent(ctx context.Context, eventID uuid.UUID) (*AuditEvent, error)
 	GetEventsByUser(ctx context.Context, userID uuid.UUID, from, to time.Time) ([]*AuditEvent, error)
 	GetEventsByType(ctx context.Context, eventType string, from, to time.Time) ([]*AuditEvent, error)
+	CreateEvent(ctx context.Context, event *AuditEvent) error
 
 	// Integrity verification
 	VerifyChain(ctx context.Context, from, to time.Time) (*ChainVerification, error)
@@ -86,6 +96,34 @@ type ManipulationDetectionService interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// ManipulationService provides market manipulation detection and investigation management
+type ManipulationService interface {
+	// Detection
+	DetectManipulation(ctx context.Context, request ManipulationRequest) (*ManipulationResult, error)
+
+	// Alert management
+	GetAlerts(ctx context.Context, filter *AlertFilter) ([]*ManipulationAlert, error)
+	GetAlert(ctx context.Context, alertID uuid.UUID) (*ManipulationAlert, error)
+	UpdateAlertStatus(ctx context.Context, alertID uuid.UUID, status AlertStatus) error
+
+	// Investigation management
+	GetInvestigations(ctx context.Context, filter *InvestigationFilter) ([]*Investigation, error)
+	CreateInvestigation(ctx context.Context, request *CreateInvestigationRequest) (*Investigation, error)
+	UpdateInvestigation(ctx context.Context, investigationID uuid.UUID, updates *InvestigationUpdate) error
+
+	// Pattern analysis
+	GetPatterns(ctx context.Context, filter *PatternFilter) ([]*ManipulationPattern, error)
+
+	// Configuration
+	GetConfig(ctx context.Context) (*ManipulationConfig, error)
+	UpdateConfig(ctx context.Context, config *ManipulationConfig) error
+
+	// Service lifecycle
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	HealthCheck(ctx context.Context) error
+}
+
 // MonitoringService provides real-time compliance monitoring
 type MonitoringService interface {
 	// Event processing
@@ -100,10 +138,21 @@ type MonitoringService interface {
 	// Alerting
 	RegisterAlertHandler(handler AlertHandler) error
 	GetActiveAlerts(ctx context.Context) ([]*MonitoringAlert, error)
+	GetAlerts(ctx context.Context, filter *AlertFilter) ([]*MonitoringAlert, error)
+	GetAlert(ctx context.Context, alertID uuid.UUID) (*MonitoringAlert, error)
+	UpdateAlertStatus(ctx context.Context, alertID uuid.UUID, status string) error
+	GenerateAlert(ctx context.Context, alert *MonitoringAlert) error
 
-	// Metrics and reporting
+	// Dashboard and metrics
+	GetDashboard(ctx context.Context) (*MonitoringDashboard, error)
 	GetMetrics(ctx context.Context) (*MonitoringMetrics, error)
 	GenerateReport(ctx context.Context, reportType string, from, to time.Time) ([]byte, error)
+
+	// Policy management
+	GetPolicies(ctx context.Context) ([]*MonitoringPolicy, error)
+	CreatePolicy(ctx context.Context, policy *MonitoringPolicy) error
+	UpdatePolicy(ctx context.Context, policyID string, policy *MonitoringPolicy) error
+	DeletePolicy(ctx context.Context, policyID string) error
 
 	// Configuration
 	UpdateMonitoringRules(ctx context.Context, rules []interface{}) error
@@ -137,106 +186,6 @@ type OrchestrationService interface {
 	StartAll(ctx context.Context) error
 	StopAll(ctx context.Context) error
 	HealthCheckAll(ctx context.Context) (map[string]error, error)
-}
-
-// Supporting types and filters
-
-type AuditFilter struct {
-	UserID    *uuid.UUID `json:"user_id,omitempty"`
-	EventType string     `json:"event_type,omitempty"`
-	Category  string     `json:"category,omitempty"`
-	Severity  string     `json:"severity,omitempty"`
-	IPAddress string     `json:"ip_address,omitempty"`
-	Resource  string     `json:"resource,omitempty"`
-	Action    string     `json:"action,omitempty"`
-	From      time.Time  `json:"from"`
-	To        time.Time  `json:"to"`
-	Limit     int        `json:"limit,omitempty"`
-	Offset    int        `json:"offset,omitempty"`
-}
-
-type ChainVerification struct {
-	Valid            bool      `json:"valid"`
-	StartHash        string    `json:"start_hash"`
-	EndHash          string    `json:"end_hash"`
-	EventCount       int64     `json:"event_count"`
-	VerificationTime time.Time `json:"verification_time"`
-	Errors           []string  `json:"errors,omitempty"`
-}
-
-type AuditMetrics struct {
-	TotalEvents       int64         `json:"total_events"`
-	EventsPerSecond   float64       `json:"events_per_second"`
-	ChainIntegrity    bool          `json:"chain_integrity"`
-	StorageUsage      int64         `json:"storage_usage_bytes"`
-	ProcessingLatency time.Duration `json:"processing_latency"`
-	ErrorRate         float64       `json:"error_rate"`
-}
-
-type AlertFilter struct {
-	UserID    string    `json:"user_id,omitempty"`
-	Market    string    `json:"market,omitempty"`
-	AlertType string    `json:"alert_type,omitempty"`
-	Severity  string    `json:"severity,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	From      time.Time `json:"from"`
-	To        time.Time `json:"to"`
-	Limit     int       `json:"limit,omitempty"`
-	Offset    int       `json:"offset,omitempty"`
-}
-
-type ComplianceEvent struct {
-	EventType string                 `json:"event_type"`
-	UserID    string                 `json:"user_id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Amount    *decimal.Decimal       `json:"amount,omitempty"`
-	Currency  string                 `json:"currency,omitempty"`
-	Market    string                 `json:"market,omitempty"`
-	IPAddress string                 `json:"ip_address,omitempty"`
-	Details   map[string]interface{} `json:"details"`
-}
-
-type MonitoringStatus struct {
-	Active         bool                   `json:"active"`
-	WorkersActive  int                    `json:"workers_active"`
-	QueueDepth     int64                  `json:"queue_depth"`
-	ProcessingRate float64                `json:"processing_rate"`
-	LastEventTime  time.Time              `json:"last_event_time"`
-	ErrorCount     int64                  `json:"error_count"`
-	Configuration  map[string]interface{} `json:"configuration"`
-}
-
-type MonitoringAlert struct {
-	ID             uuid.UUID              `json:"id"`
-	Type           string                 `json:"type"`
-	Severity       string                 `json:"severity"`
-	Message        string                 `json:"message"`
-	Data           map[string]interface{} `json:"data"`
-	CreatedAt      time.Time              `json:"created_at"`
-	ResolvedAt     *time.Time             `json:"resolved_at,omitempty"`
-	AcknowledgedAt *time.Time             `json:"acknowledged_at,omitempty"`
-}
-
-type WorkflowResult struct {
-	WorkflowID  uuid.UUID              `json:"workflow_id"`
-	Status      string                 `json:"status"`
-	Result      map[string]interface{} `json:"result"`
-	Error       string                 `json:"error,omitempty"`
-	StartedAt   time.Time              `json:"started_at"`
-	CompletedAt *time.Time             `json:"completed_at,omitempty"`
-}
-
-type WorkflowStatus struct {
-	WorkflowID    uuid.UUID              `json:"workflow_id"`
-	Type          string                 `json:"type"`
-	Status        string                 `json:"status"`
-	CurrentStep   string                 `json:"current_step"`
-	Progress      float64                `json:"progress"`
-	Input         map[string]interface{} `json:"input"`
-	Output        map[string]interface{} `json:"output,omitempty"`
-	Error         string                 `json:"error,omitempty"`
-	StartedAt     time.Time              `json:"started_at"`
-	LastUpdatedAt time.Time              `json:"last_updated_at"`
 }
 
 // Handler interfaces

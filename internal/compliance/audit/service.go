@@ -528,3 +528,77 @@ func (s *Service) getStorageUsage(ctx context.Context) int64 {
 	`).Scan(&size)
 	return size
 }
+
+// CreateEvent creates and logs a new audit event
+func (s *Service) CreateEvent(ctx context.Context, event *interfaces.AuditEvent) error {
+	if event == nil {
+		return fmt.Errorf("event cannot be nil")
+	}
+
+	// Validate event
+	if err := s.validateEvent(event); err != nil {
+		return fmt.Errorf("invalid event: %w", err)
+	}
+
+	// Set defaults
+	if event.ID == uuid.Nil {
+		event.ID = uuid.New()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+
+	// Calculate hash
+	if err := s.calculateEventHash(event); err != nil {
+		return fmt.Errorf("failed to calculate event hash: %w", err)
+	}
+
+	// Store event directly to database
+	record := &AuditEventRecord{
+		ID:           event.ID,
+		Timestamp:    event.Timestamp,
+		UserID:       event.UserID,
+		EventType:    event.EventType,
+		Category:     event.Category,
+		Action:       event.Action,
+		Resource:     event.Resource,
+		Severity:     event.Severity,
+		Description:  event.Description,
+		IPAddress:    event.IPAddress,
+		UserAgent:    event.UserAgent,
+		SessionID:    event.SessionID,
+		TraceID:      event.TraceID,
+		Hash:         event.Hash,
+		Signature:    event.Signature,
+		PreviousHash: event.PreviousHash,
+		Metadata:     event.Metadata,
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	if err := s.db.WithContext(ctx).Create(record).Error; err != nil {
+		s.metrics.IncrementEventsFailed()
+		return fmt.Errorf("failed to create audit event: %w", err)
+	}
+
+	s.metrics.IncrementEventsStored()
+	return nil
+}
+
+// GetEvent retrieves a single audit event by ID
+func (s *Service) GetEvent(ctx context.Context, eventID uuid.UUID) (*interfaces.AuditEvent, error) {
+	var record AuditEventRecord
+	if err := s.db.WithContext(ctx).Where("id = ?", eventID).First(&record).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("audit event not found: %s", eventID)
+		}
+		return nil, fmt.Errorf("failed to get audit event: %w", err)
+	}
+
+	// Convert record to domain object
+	event, err := s.recordToEvent(&record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert record to event: %w", err)
+	}
+
+	return event, nil
+}

@@ -2,6 +2,7 @@
 package interfaces
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -338,16 +339,83 @@ type AlertSubscriber interface {
 	GetAlertTypes() []string
 }
 
-// MonitoringMetrics represents monitoring service metrics
+// UserComplianceStatus represents a user's compliance status
+type UserComplianceStatus struct {
+	UserID         uuid.UUID        `json:"user_id"`
+	Status         ComplianceStatus `json:"status"`
+	RiskLevel      RiskLevel        `json:"risk_level"`
+	RiskScore      decimal.Decimal  `json:"risk_score"`
+	KYCLevel       KYCLevel         `json:"kyc_level"`
+	LastAssessment time.Time        `json:"last_assessment"`
+	NextReview     *time.Time       `json:"next_review,omitempty"`
+	Restrictions   []string         `json:"restrictions,omitempty"`
+	Notes          string           `json:"notes,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
+}
+
+// PolicyUpdate represents a compliance policy update
+type PolicyUpdate struct {
+	ID          uuid.UUID              `json:"id"`
+	PolicyType  string                 `json:"policy_type"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Version     string                 `json:"version"`
+	Active      bool                   `json:"active"`
+	Rules       map[string]interface{} `json:"rules"`
+	CreatedBy   uuid.UUID              `json:"created_by"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	EffectiveAt time.Time              `json:"effective_at"`
+}
+
+// ExternalComplianceReport represents a compliance report from external sources
+type ExternalComplianceReport struct {
+	ID          uuid.UUID              `json:"id"`
+	Source      string                 `json:"source"`
+	ReportType  string                 `json:"report_type"`
+	UserID      *uuid.UUID             `json:"user_id,omitempty"`
+	Data        map[string]interface{} `json:"data"`
+	Severity    AlertSeverity          `json:"severity"`
+	ReceivedAt  time.Time              `json:"received_at"`
+	ProcessedAt *time.Time             `json:"processed_at,omitempty"`
+	ProcessedBy *uuid.UUID             `json:"processed_by,omitempty"`
+	Status      string                 `json:"status"`
+	Notes       string                 `json:"notes,omitempty"`
+}
+
+// MonitoringDashboard represents dashboard data for monitoring
+type MonitoringDashboard struct {
+	Summary      *DashboardSummary      `json:"summary"`
+	RecentAlerts []*MonitoringAlert     `json:"recent_alerts"`
+	Metrics      *MonitoringMetrics     `json:"metrics"`
+	Health       map[string]interface{} `json:"health"`
+	UpdatedAt    time.Time              `json:"updated_at"`
+}
+
+// DashboardSummary provides summary statistics for the dashboard
+type DashboardSummary struct {
+	ActiveAlerts   int                    `json:"active_alerts"`
+	CriticalAlerts int                    `json:"critical_alerts"`
+	TotalUsers     int64                  `json:"total_users"`
+	HighRiskUsers  int64                  `json:"high_risk_users"`
+	ProcessingRate float64                `json:"processing_rate"`
+	SystemHealth   string                 `json:"system_health"`
+	LastUpdate     time.Time              `json:"last_update"`
+	TrendData      map[string]interface{} `json:"trend_data"`
+}
+
+// MonitoringMetrics provides detailed metrics for monitoring
 type MonitoringMetrics struct {
-	AlertsGenerated     int64         `json:"alerts_generated"`
-	AlertsProcessed     int64         `json:"alerts_processed"`
-	PolicyUpdates       int64         `json:"policy_updates"`
-	SubscriberNotified  int64         `json:"subscriber_notified"`
-	ProcessingLatency   time.Duration `json:"processing_latency"`
-	AverageResponseTime time.Duration `json:"average_response_time"`
-	ErrorRate           float64       `json:"error_rate"`
-	LastUpdated         time.Time     `json:"last_updated"`
+	EventsProcessed     int64                  `json:"events_processed"`
+	AlertsGenerated     int64                  `json:"alerts_generated"`
+	ProcessingLatency   time.Duration          `json:"processing_latency"`
+	ThroughputPerSecond float64                `json:"throughput_per_second"`
+	ErrorRate           float64                `json:"error_rate"`
+	SystemLoad          float64                `json:"system_load"`
+	MemoryUsage         int64                  `json:"memory_usage"`
+	Details             map[string]interface{} `json:"details"`
+	Timestamp           time.Time              `json:"timestamp"`
 }
 
 // ManipulationAlert represents a market manipulation alert
@@ -510,4 +578,218 @@ func (d DetectionStatus) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// Investigation represents a compliance investigation
+type Investigation struct {
+	ID          uuid.UUID              `json:"id"`
+	Type        string                 `json:"type"`
+	Status      string                 `json:"status"`
+	Priority    string                 `json:"priority"`
+	Subject     string                 `json:"subject"`
+	Description string                 `json:"description"`
+	UserID      *uuid.UUID             `json:"user_id,omitempty"`
+	Market      string                 `json:"market,omitempty"`
+	AlertIDs    []uuid.UUID            `json:"alert_ids,omitempty"`
+	Evidence    []string               `json:"evidence,omitempty"`
+	Findings    string                 `json:"findings,omitempty"`
+	Conclusion  string                 `json:"conclusion,omitempty"`
+	AssignedTo  *uuid.UUID             `json:"assigned_to,omitempty"`
+	CreatedBy   uuid.UUID              `json:"created_by"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	DueDate     *time.Time             `json:"due_date,omitempty"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// InvestigationFilter represents filter criteria for investigations
+type InvestigationFilter struct {
+	Status     string     `json:"status,omitempty"`
+	Priority   string     `json:"priority,omitempty"`
+	Type       string     `json:"type,omitempty"`
+	UserID     *uuid.UUID `json:"user_id,omitempty"`
+	AssignedTo *uuid.UUID `json:"assigned_to,omitempty"`
+	CreatedBy  *uuid.UUID `json:"created_by,omitempty"`
+	StartTime  time.Time  `json:"start_time,omitempty"`
+	EndTime    time.Time  `json:"end_time,omitempty"`
+	Limit      int        `json:"limit,omitempty"`
+	Offset     int        `json:"offset,omitempty"`
+}
+
+// CreateInvestigationRequest represents a request to create an investigation
+type CreateInvestigationRequest struct {
+	Type        string                 `json:"type"`
+	Priority    string                 `json:"priority"`
+	Subject     string                 `json:"subject"`
+	Description string                 `json:"description"`
+	UserID      *uuid.UUID             `json:"user_id,omitempty"`
+	Market      string                 `json:"market,omitempty"`
+	AlertIDs    []uuid.UUID            `json:"alert_ids,omitempty"`
+	AssignedTo  *uuid.UUID             `json:"assigned_to,omitempty"`
+	DueDate     *time.Time             `json:"due_date,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// InvestigationUpdate represents updates to an investigation
+type InvestigationUpdate struct {
+	Status      *string                `json:"status,omitempty"`
+	Priority    *string                `json:"priority,omitempty"`
+	Subject     *string                `json:"subject,omitempty"`
+	Description *string                `json:"description,omitempty"`
+	Findings    *string                `json:"findings,omitempty"`
+	Conclusion  *string                `json:"conclusion,omitempty"`
+	AssignedTo  *uuid.UUID             `json:"assigned_to,omitempty"`
+	DueDate     *time.Time             `json:"due_date,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// PatternFilter represents filter criteria for manipulation patterns
+type PatternFilter struct {
+	Type       ManipulationAlertType `json:"type,omitempty"`
+	Market     string                `json:"market,omitempty"`
+	UserID     *uuid.UUID            `json:"user_id,omitempty"`
+	StartTime  time.Time             `json:"start_time,omitempty"`
+	EndTime    time.Time             `json:"end_time,omitempty"`
+	Confidence decimal.Decimal       `json:"confidence,omitempty"`
+	Limit      int                   `json:"limit,omitempty"`
+	Offset     int                   `json:"offset,omitempty"`
+}
+
+// ManipulationConfig represents configuration for manipulation detection
+type ManipulationConfig struct {
+	Enabled            bool                   `json:"enabled"`
+	DetectionRules     map[string]interface{} `json:"detection_rules"`
+	Thresholds         map[string]interface{} `json:"thresholds"`
+	AlertingEnabled    bool                   `json:"alerting_enabled"`
+	AutoInvestigate    bool                   `json:"auto_investigate"`
+	RealtimeDetection  bool                   `json:"realtime_detection"`
+	BatchSize          int                    `json:"batch_size"`
+	ProcessingInterval time.Duration          `json:"processing_interval"`
+	UpdatedAt          time.Time              `json:"updated_at"`
+	UpdatedBy          uuid.UUID              `json:"updated_by"`
+}
+
+// ComplianceEvent represents an event for compliance monitoring
+type ComplianceEvent struct {
+	EventType string                 `json:"event_type"`
+	UserID    string                 `json:"user_id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Amount    *decimal.Decimal       `json:"amount,omitempty"`
+	Currency  string                 `json:"currency,omitempty"`
+	Market    string                 `json:"market,omitempty"`
+	IPAddress string                 `json:"ip_address,omitempty"`
+	Details   map[string]interface{} `json:"details"`
+}
+
+// AuditFilter represents filter criteria for audit events
+type AuditFilter struct {
+	UserID    *uuid.UUID `json:"user_id,omitempty"`
+	EventType string     `json:"event_type,omitempty"`
+	Category  string     `json:"category,omitempty"`
+	Severity  string     `json:"severity,omitempty"`
+	IPAddress string     `json:"ip_address,omitempty"`
+	Resource  string     `json:"resource,omitempty"`
+	Action    string     `json:"action,omitempty"`
+	From      time.Time  `json:"from"`
+	To        time.Time  `json:"to"`
+	Limit     int        `json:"limit,omitempty"`
+	Offset    int        `json:"offset,omitempty"`
+}
+
+// ChainVerification represents blockchain verification result
+type ChainVerification struct {
+	Valid            bool      `json:"valid"`
+	StartHash        string    `json:"start_hash"`
+	EndHash          string    `json:"end_hash"`
+	EventCount       int64     `json:"event_count"`
+	VerificationTime time.Time `json:"verification_time"`
+	Errors           []string  `json:"errors,omitempty"`
+}
+
+// AuditMetrics represents audit system metrics
+type AuditMetrics struct {
+	TotalEvents       int64         `json:"total_events"`
+	EventsPerSecond   float64       `json:"events_per_second"`
+	ChainIntegrity    bool          `json:"chain_integrity"`
+	StorageUsage      int64         `json:"storage_usage_bytes"`
+	ProcessingLatency time.Duration `json:"processing_latency"`
+	ErrorRate         float64       `json:"error_rate"`
+}
+
+// MonitoringStatus represents monitoring system status
+type MonitoringStatus struct {
+	Active         bool                   `json:"active"`
+	WorkersActive  int                    `json:"workers_active"`
+	QueueDepth     int64                  `json:"queue_depth"`
+	ProcessingRate float64                `json:"processing_rate"`
+	LastEventTime  time.Time              `json:"last_event_time"`
+	ErrorCount     int64                  `json:"error_count"`
+	Configuration  map[string]interface{} `json:"configuration"`
+}
+
+// WorkflowResult represents the result of a compliance workflow
+type WorkflowResult struct {
+	WorkflowID  uuid.UUID              `json:"workflow_id"`
+	Status      string                 `json:"status"`
+	Result      map[string]interface{} `json:"result"`
+	Error       string                 `json:"error,omitempty"`
+	StartedAt   time.Time              `json:"started_at"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+}
+
+// WorkflowStatus represents the status of a compliance workflow
+type WorkflowStatus struct {
+	WorkflowID    uuid.UUID              `json:"workflow_id"`
+	Type          string                 `json:"type"`
+	Status        string                 `json:"status"`
+	CurrentStep   string                 `json:"current_step"`
+	Progress      float64                `json:"progress"`
+	Input         map[string]interface{} `json:"input"`
+	Output        map[string]interface{} `json:"output,omitempty"`
+	Error         string                 `json:"error,omitempty"`
+	StartedAt     time.Time              `json:"started_at"`
+	LastUpdatedAt time.Time              `json:"last_updated_at"`
+}
+
+// SystemHealth represents the overall health status of the compliance system
+type SystemHealth struct {
+	OverallStatus string                   `json:"overall_status"`
+	Timestamp     time.Time                `json:"timestamp"`
+	Services      map[string]ServiceHealth `json:"services"`
+	HealthScore   float64                  `json:"health_score"`
+	Metrics       []MetricSummary          `json:"metrics"`
+}
+
+// ServiceHealth represents the health status of an individual service
+type ServiceHealth struct {
+	ServiceName  string    `json:"service_name"`
+	Status       string    `json:"status"`
+	HealthScore  float64   `json:"health_score"`
+	LastCheck    time.Time `json:"last_check"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	ResponseTime float64   `json:"response_time_ms"`
+}
+
+// MetricSummary represents a summary of a metric
+type MetricSummary struct {
+	Name   string  `json:"name"`
+	Value  float64 `json:"value"`
+	Unit   string  `json:"unit"`
+	Status string  `json:"status"`
+}
+
+// ComplianceMetrics represents aggregated compliance system metrics
+type ComplianceMetrics struct {
+	AuditEvents           int64         `json:"audit_events"`
+	ComplianceChecks      int64         `json:"compliance_checks"`
+	ManipulationDetected  int64         `json:"manipulation_detected"`
+	AlertsGenerated       int64         `json:"alerts_generated"`
+	AverageProcessingTime time.Duration `json:"average_processing_time"`
+	Timestamp             time.Time     `json:"timestamp"`
+}
+
+// HealthChecker interface for health checking services
+type HealthChecker interface {
+	CheckHealth(ctx context.Context) ServiceHealth
 }

@@ -2,13 +2,17 @@ package compliance
 
 import (
 	"context"
+	"time"
 
 	"github.com/Aidin1998/finalex/internal/compliance/audit"
 	"github.com/Aidin1998/finalex/internal/compliance/compliance"
+	"github.com/Aidin1998/finalex/internal/compliance/hooks"
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
 	"github.com/Aidin1998/finalex/internal/compliance/manipulation"
 	"github.com/Aidin1998/finalex/internal/compliance/monitoring"
+	"github.com/Aidin1998/finalex/internal/compliance/observability"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -16,18 +20,29 @@ import (
 type ServiceFactory struct {
 	config *Config
 	db     *gorm.DB
+	logger *zap.Logger
 }
 
 // NewServiceFactory creates a new service factory
-func NewServiceFactory(config *Config, db *gorm.DB) *ServiceFactory {
+func NewServiceFactory(config *Config, db *gorm.DB, logger *zap.Logger) *ServiceFactory {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &ServiceFactory{
 		config: config,
 		db:     db,
+		logger: logger,
 	}
 }
 
 // CreateComplianceModule creates the complete compliance module with all services
 func (f *ServiceFactory) CreateComplianceModule(ctx context.Context) (*ComplianceModule, error) {
+	// Create observability manager first
+	observabilityMgr, err := f.createObservabilityManager()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create observability manager")
+	}
+
 	// Create audit service
 	auditSvc, err := f.createAuditService()
 	if err != nil {
@@ -52,6 +67,12 @@ func (f *ServiceFactory) CreateComplianceModule(ctx context.Context) (*Complianc
 		return nil, errors.Wrap(err, "failed to create monitoring service")
 	}
 
+	// Create hook manager (after all services are ready)
+	hookMgr, err := f.createHookManager(complianceSvc, auditSvc, monitoringSvc, manipulationSvc)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create hook manager")
+	}
+
 	// Create orchestration service
 	orchestrationSvc := NewOrchestrationService(
 		f.db,
@@ -68,28 +89,30 @@ func (f *ServiceFactory) CreateComplianceModule(ctx context.Context) (*Complianc
 		ManipulationService:  manipulationSvc,
 		MonitoringService:    monitoringSvc,
 		OrchestrationService: orchestrationSvc,
+		HookManager:          hookMgr,
+		ObservabilityManager: observabilityMgr,
 	}, nil
 }
 
 // createAuditService creates the audit service
 func (f *ServiceFactory) createAuditService() (interfaces.AuditService, error) {
-	auditSvc := audit.NewAuditService(
-		f.db,
-		f.config.Audit.Workers,
-		f.config.Audit.BatchSize,
-		f.config.Audit.FlushInterval,
-	)
-
-	// Configure encryption and compression
-	if f.config.Audit.EnableEncryption {
-		// In production, this would use proper key management
-		if err := auditSvc.SetEncryptionKey("your-32-byte-encryption-key-here"); err != nil {
-			return nil, errors.Wrap(err, "failed to set encryption key")
-		}
+	// Create audit configuration
+	auditConfig := &audit.Config{
+		BatchSize:            f.config.Audit.BatchSize,
+		BatchTimeout:         f.config.Audit.FlushInterval,
+		WorkerCount:          f.config.Audit.Workers,
+		QueueSize:            10000,
+		EnableEncryption:     f.config.Audit.EnableEncryption,
+		EnableCompression:    f.config.Audit.EnableCompression,
+		VerificationInterval: time.Hour,
+		RetentionDays:        f.config.Audit.RetentionDays,
+		EnableMetrics:        true,
 	}
 
-	auditSvc.SetCompressionEnabled(f.config.Audit.EnableCompression)
-	auditSvc.SetChainVerificationEnabled(f.config.Audit.VerifyChain)
+	auditSvc, err := audit.NewService(f.db, f.logger, auditConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create audit service")
+	}
 
 	return auditSvc, nil
 }
@@ -151,6 +174,39 @@ func (f *ServiceFactory) createMonitoringService(auditSvc interfaces.AuditServic
 	return monitoringSvc, nil
 }
 
+// createObservabilityManager creates the observability manager
+func (f *ServiceFactory) createObservabilityManager() (*observability.ObservabilityManager, error) {
+	return observability.NewObservabilityManager()
+}
+
+// createHookManager creates the hook manager (created later after all services are ready)
+func (f *ServiceFactory) createHookManager(
+	complianceService interfaces.ComplianceService,
+	auditService interfaces.AuditService,
+	monitoringService interfaces.MonitoringService,
+	manipulationService interfaces.ManipulationDetectionService,
+) (*hooks.HookManager, error) {
+	config := &hooks.HookConfig{
+		EnableRealTimeHooks: true,
+		AsyncProcessing:     true,
+		BatchSize:           100,
+		FlushInterval:       time.Second,
+		TimeoutDuration:     30 * time.Second,
+		RetryAttempts:       3,
+		EnableMetrics:       true,
+	}
+
+	// For now, we'll pass nil for risk service since it's not in the interfaces yet
+	return hooks.NewHookManager(
+		complianceService,
+		auditService,
+		monitoringService,
+		manipulationService,
+		nil, // Risk service - we'll integrate this later
+		config,
+	), nil
+}
+
 // ComplianceModule represents the complete compliance module
 type ComplianceModule struct {
 	Config               *Config
@@ -159,6 +215,8 @@ type ComplianceModule struct {
 	ManipulationService  interfaces.ManipulationDetectionService
 	MonitoringService    interfaces.MonitoringService
 	OrchestrationService *OrchestrationService
+	HookManager          *hooks.HookManager
+	ObservabilityManager *observability.ObservabilityManager
 }
 
 // Start initializes the entire compliance module
@@ -259,7 +317,7 @@ func NewDefaultComplianceModule(db *gorm.DB) (*ComplianceModule, error) {
 		return nil, errors.Wrap(err, "invalid default configuration")
 	}
 
-	factory := NewServiceFactory(config, db)
+	factory := NewServiceFactory(config, db, nil)
 	ctx := context.Background()
 
 	return factory.CreateComplianceModule(ctx)
@@ -271,7 +329,7 @@ func NewComplianceModuleWithConfig(config *Config, db *gorm.DB) (*ComplianceModu
 		return nil, errors.Wrap(err, "invalid configuration")
 	}
 
-	factory := NewServiceFactory(config, db)
+	factory := NewServiceFactory(config, db, nil)
 	ctx := context.Background()
 
 	return factory.CreateComplianceModule(ctx)
