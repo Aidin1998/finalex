@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 )
 
 // Helper functions to convert risk enums to strings
@@ -117,7 +119,7 @@ func NewEnhancedService(
 	cfg MarketMakerConfig,
 	observabilityConfig *ObservabilityConfig,
 	trading TradingAPI,
-	strategy Strategy,
+	strategy common.MarketMakingStrategy,
 ) (*EnhancedService, error) { // Create base service
 	baseService := NewService(cfg, trading, strategy)
 	// Initialize enhanced components

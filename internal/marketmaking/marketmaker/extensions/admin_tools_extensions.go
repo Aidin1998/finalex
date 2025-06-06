@@ -55,3 +55,5 @@ func (mc *MetricsCollector) GetAllMetrics() map[string]interface{} {
 		"inventory_value_usd": 10000.0,
 	}
 }
+
+// If AdminToolsManager or related types reference legacy strategy types, update to use new interfaces or stub as needed.

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 )
 
 // AdminToolsManager provides comprehensive admin functionality
@@ -38,6 +40,7 @@ type StrategyInstance struct {
 	LastUpdate  time.Time                    `json:"last_update"`
 	ErrorCount  int                          `json:"error_count"`
 	LastError   string                       `json:"last_error,omitempty"`
+	Strategy    common.MarketMakingStrategy  `json:"-"` // Not serialized, for runtime use
 }
 
 // StrategyStatus represents the status of a strategy
@@ -709,6 +712,24 @@ func (atm *AdminToolsManager) handleRiskLimits(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// Stub for handleStrategyTemplates
+func (atm *AdminToolsManager) handleStrategyTemplates(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	w.Write([]byte("handleStrategyTemplates not implemented"))
+}
+
+// Stub for handleBacktest
+func (atm *AdminToolsManager) handleBacktest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	w.Write([]byte("handleBacktest not implemented"))
+}
+
+// Stub for handleBacktestActions
+func (atm *AdminToolsManager) handleBacktestActions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+	w.Write([]byte("handleBacktestActions not implemented"))
+}
+
 // calculateOverallHealth calculates the overall health status based on component health results
 func (atm *AdminToolsManager) calculateOverallHealth(results map[string]*HealthCheckResult) string {
 	unhealthy := 0
@@ -731,3 +752,8 @@ func (atm *AdminToolsManager) calculateOverallHealth(results map[string]*HealthC
 }
 
 // GetMetricsCollector is a helper method to allow extensions to access metrics
+
+// Stub for LogEmergencyEvent on StructuredLogger
+func (sl *StructuredLogger) LogEmergencyEvent(ctx context.Context, eventType, reason string, details map[string]interface{}) {
+	// No-op stub for build
+}

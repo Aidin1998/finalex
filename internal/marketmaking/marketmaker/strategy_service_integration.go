@@ -75,7 +75,7 @@ func (s *Service) getNewStrategyService() *service.MarketMakingService {
 }
 
 // useNewStrategyForQuoting attempts to use the new strategy system for quote generation
-func (s *Service) useNewStrategyForQuoting(ctx context.Context, pair string, marketData *EnhancedMarketData) (*Quote, error) {
+func (s *Service) useNewStrategyForQuoting(ctx context.Context, pair string, marketData *EnhancedMarketData) (*common.Quote, error) {
 	newService := s.getNewStrategyService()
 	if newService == nil {
 		return nil, nil // Fall back to legacy system
@@ -108,7 +108,7 @@ func (s *Service) useNewStrategyForQuoting(ctx context.Context, pair string, mar
 	bidSizeFloat, _ := quoteOutput.BidSize.Float64()
 	askSizeFloat, _ := quoteOutput.AskSize.Float64()
 
-	quote := &Quote{
+	quote := &common.Quote{
 		BidPrice: bidPriceFloat,
 		AskPrice: askPriceFloat,
 		BidSize:  bidSizeFloat,

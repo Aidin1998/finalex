@@ -1,3 +1,6 @@
+//go:build extensions
+// +build extensions
+
 // Health monitor extensions for compatibility
 package marketmaker
 
@@ -55,6 +58,5 @@ func (hm *HealthMonitor) StopMonitoring() {
 	// Implementation details
 	// This would typically signal the health check goroutine to stop
 }
-//go:build extensions
-// +build extensions
 
+// If HealthMonitor or HealthCheckResult are legacy, ensure they match the new types or stub as needed.
