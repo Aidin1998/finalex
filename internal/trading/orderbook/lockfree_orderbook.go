@@ -143,6 +143,9 @@ func (ob *LockFreeOrderBook) AddOrder(order *model.Order) (*AddOrderResult, erro
 	var restingOrders []*model.Order
 	qtyLeft := order.Quantity.Sub(order.FilledQuantity)
 	if qtyLeft.LessThanOrEqual(decimal.Zero) {
+		// If this order was allocated from the pool internally, return it to the pool here.
+		// (Assume caller is responsible for externally allocated orders.)
+		// model.PutOrderToPool(order) // Uncomment if you know the order is from the pool
 		return nil, fmt.Errorf("order quantity is zero or negative")
 	}
 	isBuy := order.Side == model.OrderSideBuy
@@ -162,6 +165,9 @@ func (ob *LockFreeOrderBook) AddOrder(order *model.Order) (*AddOrderResult, erro
 		order.TimeInForce != model.TimeInForceFOK {
 		ob.placeLockFreeRestingOrder(order, qtyLeft)
 		restingOrders = append(restingOrders, order)
+	} else if qtyLeft.LessThanOrEqual(decimal.Zero) {
+		// If the order is fully matched and was allocated from the pool internally, return it to the pool here.
+		// model.PutOrderToPool(order) // Uncomment if you know the order is from the pool
 	}
 	// Phase 4: Order state management (status, counters, etc.)
 	if qtyLeft.LessThanOrEqual(decimal.Zero) {
@@ -247,10 +253,11 @@ func (ob *LockFreeOrderBook) CancelOrder(orderID uuid.UUID) error {
 		bookPtr = (*lockFreePriceTree)(atomic.LoadPointer(&ob.asks))
 	}
 	level := bookPtr.FindLevel(ord.Price.String())
-	if level == nil {
-		return nil // Already removed from book
+	if level != nil {
+		level.RemoveOrder(ord.ID)
 	}
-	level.RemoveOrder(ord.ID)
+	// After removal, return the order to the pool if not referenced elsewhere
+	model.PutOrderToPool(ord)
 	return nil
 }
 

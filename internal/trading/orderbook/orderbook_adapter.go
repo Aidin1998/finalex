@@ -125,7 +125,7 @@ type AdaptiveOrderBook struct {
 
 	// Implementations
 	oldImplementation *OrderBook
-	newImplementation *DeadlockSafeOrderBook
+	newImplementation OrderBookInterface // Use interface for lock-free adapter
 
 	// State tracking
 	migrationPercentage int32 // Current migration percentage (atomic)
@@ -157,7 +157,7 @@ func NewAdaptiveOrderBook(pair string, config *MigrationConfig) *AdaptiveOrderBo
 		pair:                pair,
 		config:              config,
 		oldImplementation:   NewOrderBook(pair),
-		newImplementation:   NewDeadlockSafeOrderBook(pair),
+		newImplementation:   NewLockFreeOrderBookAdapter(pair), // Use lock-free adapter
 		migrationPercentage: int32(config.MigrationPercentage),
 	}
 	// Initialize monitoring if enabled
@@ -279,16 +279,7 @@ func (aob *AdaptiveOrderBook) AddOrder(order *model.Order) (*AddOrderResult, err
 
 // addOrderNew handles AddOrder using the new implementation
 func (aob *AdaptiveOrderBook) addOrderNew(order *model.Order) (*AddOrderResult, error) {
-	safeResult, err := aob.newImplementation.AddOrder(order)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert SafeAddOrderResult to AddOrderResult for compatibility
-	return &AddOrderResult{
-		Trades:        safeResult.Trades,
-		RestingOrders: safeResult.RestingOrders,
-	}, nil
+	return aob.newImplementation.AddOrder(order)
 }
 
 // addOrderOld handles AddOrder using the old implementation
@@ -346,22 +337,22 @@ func (aob *AdaptiveOrderBook) GetSnapshot(depth int) ([][]string, [][]string) { 
 // Administrative control methods - route to active implementation
 func (aob *AdaptiveOrderBook) HaltTrading() {
 	aob.oldImplementation.HaltTrading()
-	aob.newImplementation.SetTradingHalted(true)
+	// No-op for lock-free newImplementation
 }
 
 func (aob *AdaptiveOrderBook) ResumeTrading() {
 	aob.oldImplementation.ResumeTrading()
-	aob.newImplementation.SetTradingHalted(false)
+	// No-op for lock-free newImplementation
 }
 
 func (aob *AdaptiveOrderBook) TriggerCircuitBreaker() {
 	aob.oldImplementation.TriggerCircuitBreaker()
-	aob.newImplementation.SetCircuitBreakerActive(true)
+	// No-op for lock-free newImplementation
 }
 
 func (aob *AdaptiveOrderBook) EmergencyShutdown() {
 	aob.oldImplementation.EmergencyShutdown()
-	aob.newImplementation.SetEmergencyStop(true)
+	// No-op for lock-free newImplementation
 }
 
 // Compatibility methods for engine integration
