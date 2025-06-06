@@ -383,7 +383,7 @@ func (be *BacktestEngine) runSimulation(ctx context.Context, execution *Backtest
 // executeOrder simulates order execution
 func (be *BacktestEngine) executeOrder(execution *BacktestExecution, order *models.Order, currentTime time.Time) *BacktestTrade {
 	// Get current market price (simplified - would use more sophisticated price models)
-	price := be.getMarketPrice(execution, order.Pair, order.Side)
+	price := be.getMarketPrice(execution, order.Symbol, order.Side)
 	if price == 0 {
 		return nil // No price available
 	}
@@ -403,7 +403,7 @@ func (be *BacktestEngine) executeOrder(execution *BacktestExecution, order *mode
 	// Execute the trade
 	trade := &BacktestTrade{
 		ID:         fmt.Sprintf("%s_%d", execution.Config.ID, len(execution.trades)),
-		Pair:       order.Pair,
+		Pair:       order.Symbol,
 		Side:       order.Side,
 		Size:       order.Quantity,
 		EntryPrice: executionPrice,

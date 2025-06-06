@@ -31,25 +31,25 @@ func (t TraceID) String() string {
 type contextKey string
 
 const (
-	TraceIDContextKey contextKey = "trace_id"
-	OrderIDContextKey contextKey = "order_id"
-	PairContextKey    contextKey = "pair"
+	TraceIDContextKey  contextKey = "trace_id"
+	OrderIDContextKey  contextKey = "order_id"
+	PairContextKey     contextKey = "pair"
 	StrategyContextKey contextKey = "strategy"
 )
 
 // Enhanced logger with structured fields and trace support
 type StructuredLogger struct {
-	logger   *zap.SugaredLogger
+	logger     *zap.SugaredLogger
 	baseLogger *zap.Logger
-	service  string
-	version  string
+	service    string
+	version    string
 }
 
 // NewStructuredLogger creates a new enhanced logger instance
 func NewStructuredLogger(service, version string) (*StructuredLogger, error) {
 	config := zap.NewProductionConfig()
 	config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
-	
+
 	// Configure encoder for structured JSON logging
 	config.EncoderConfig = zapcore.EncoderConfig{
 		TimeKey:        "timestamp",
@@ -117,23 +117,23 @@ func GetTraceID(ctx context.Context) TraceID {
 // GetContextFields extracts all structured fields from context
 func (sl *StructuredLogger) GetContextFields(ctx context.Context) []zap.Field {
 	var fields []zap.Field
-	
+
 	if traceID, ok := ctx.Value(TraceIDContextKey).(TraceID); ok {
 		fields = append(fields, zap.String("trace_id", traceID.String()))
 	}
-	
+
 	if orderID, ok := ctx.Value(OrderIDContextKey).(string); ok {
 		fields = append(fields, zap.String("order_id", orderID))
 	}
-	
+
 	if pair, ok := ctx.Value(PairContextKey).(string); ok {
 		fields = append(fields, zap.String("pair", pair))
 	}
-	
+
 	if strategy, ok := ctx.Value(StrategyContextKey).(string); ok {
 		fields = append(fields, zap.String("strategy", strategy))
 	}
-	
+
 	return fields
 }
 
@@ -150,7 +150,7 @@ func (sl *StructuredLogger) LogOrderPlaced(ctx context.Context, orderID, pair, s
 		zap.Float64("quantity", quantity),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Order placed successfully", fields...)
 }
 
@@ -163,7 +163,7 @@ func (sl *StructuredLogger) LogOrderCancelled(ctx context.Context, orderID, pair
 		zap.String("cancellation_reason", reason),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Order cancelled", fields...)
 }
 
@@ -178,7 +178,7 @@ func (sl *StructuredLogger) LogOrderFilled(ctx context.Context, orderID, pair st
 		zap.Float64("remaining_quantity", remainingQuantity),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Order filled", fields...)
 }
 
@@ -191,7 +191,7 @@ func (sl *StructuredLogger) LogOrderRejected(ctx context.Context, orderID, pair,
 		zap.String("rejection_reason", reason),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Error("Order rejected", fields...)
 }
 
@@ -206,7 +206,7 @@ func (sl *StructuredLogger) LogInventoryChange(ctx context.Context, pair string,
 		zap.String("reason", reason),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Inventory changed", fields...)
 }
 
@@ -220,7 +220,7 @@ func (sl *StructuredLogger) LogStrategyStarted(ctx context.Context, strategyName
 		zap.Any("parameters", params),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Strategy started", fields...)
 }
 
@@ -233,7 +233,7 @@ func (sl *StructuredLogger) LogStrategyStopped(ctx context.Context, strategyName
 		zap.String("stop_reason", reason),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Strategy stopped", fields...)
 }
 
@@ -249,7 +249,7 @@ func (sl *StructuredLogger) LogRiskEvent(ctx context.Context, eventType, severit
 		zap.Any("details", details),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	level := zap.InfoLevel
 	switch severity {
 	case "warning":
@@ -257,7 +257,7 @@ func (sl *StructuredLogger) LogRiskEvent(ctx context.Context, eventType, severit
 	case "error", "critical":
 		level = zap.ErrorLevel
 	}
-	
+
 	sl.baseLogger.Log(level, "Risk event detected", fields...)
 }
 
@@ -273,7 +273,7 @@ func (sl *StructuredLogger) LogFeedEvent(ctx context.Context, feedType, provider
 		zap.Duration("latency", latency),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Feed event", fields...)
 }
 
@@ -286,7 +286,7 @@ func (sl *StructuredLogger) LogFeedDisconnection(ctx context.Context, feedType, 
 		zap.String("disconnection_reason", reason),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Warn("Feed disconnected", fields...)
 }
 
@@ -300,7 +300,7 @@ func (sl *StructuredLogger) LogPerformanceMetric(ctx context.Context, metricName
 		zap.Any("tags", tags),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Performance metric", fields...)
 }
 
@@ -315,7 +315,7 @@ func (sl *StructuredLogger) LogSystemEvent(ctx context.Context, component, event
 		zap.Any("details", details),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	level := zap.InfoLevel
 	switch severity {
 	case "warning":
@@ -323,7 +323,7 @@ func (sl *StructuredLogger) LogSystemEvent(ctx context.Context, component, event
 	case "error", "critical":
 		level = zap.ErrorLevel
 	}
-	
+
 	sl.baseLogger.Log(level, "System event", fields...)
 }
 
@@ -337,7 +337,7 @@ func (sl *StructuredLogger) LogEmergencyStop(ctx context.Context, triggerReason,
 		zap.Any("details", details),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Error("Emergency stop triggered", fields...)
 }
 
@@ -351,7 +351,7 @@ func (sl *StructuredLogger) LogLatencyBreakdown(ctx context.Context, operation s
 		zap.Any("breakdown", breakdown),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Latency breakdown", fields...)
 }
 
@@ -367,7 +367,7 @@ func (sl *StructuredLogger) LogBatchOperation(ctx context.Context, operationType
 		zap.Int("failure_count", failureCount),
 		zap.Time("timestamp", time.Now()),
 	)
-	
+
 	sl.baseLogger.Info("Batch operation completed", fields...)
 }
 
@@ -396,7 +396,7 @@ func (sl *StructuredLogger) LogInfo(ctx context.Context, message string, fields 
 	for k, v := range fields {
 		zapFields = append(zapFields, zap.Any(k, v))
 	}
-	
+
 	sl.baseLogger.Info(message, zapFields...)
 }
 
@@ -406,7 +406,7 @@ func (sl *StructuredLogger) LogError(ctx context.Context, message string, fields
 	for k, v := range fields {
 		zapFields = append(zapFields, zap.Any(k, v))
 	}
-	
+
 	sl.baseLogger.Error(message, zapFields...)
 }
 
@@ -416,7 +416,7 @@ func (sl *StructuredLogger) LogWarn(ctx context.Context, message string, fields 
 	for k, v := range fields {
 		zapFields = append(zapFields, zap.Any(k, v))
 	}
-	
+
 	sl.baseLogger.Warn(message, zapFields...)
 }
 
@@ -426,7 +426,7 @@ func (sl *StructuredLogger) LogDebug(ctx context.Context, message string, fields
 	for k, v := range fields {
 		zapFields = append(zapFields, zap.Any(k, v))
 	}
-	
+
 	sl.baseLogger.Debug(message, zapFields...)
 }
 
@@ -440,10 +440,10 @@ func (sl *StructuredLogger) LoggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		traceID := NewTraceID()
 		ctx := WithTraceID(r.Context(), traceID)
-		
+
 		// Add trace ID to response headers for client tracking
 		w.Header().Set("X-Trace-ID", traceID.String())
-		
+
 		// Log the request
 		sl.InfoWithContext(ctx, "HTTP request received",
 			zap.String("method", r.Method),
@@ -451,7 +451,7 @@ func (sl *StructuredLogger) LoggerMiddleware(next http.Handler) http.Handler {
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("user_agent", r.UserAgent()),
 		)
-		
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

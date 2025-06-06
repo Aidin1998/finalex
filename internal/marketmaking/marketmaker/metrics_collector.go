@@ -52,10 +52,7 @@ func (mc *MetricsCollector) RecordOrderPlacement(symbol, side, orderType string,
 	defer mc.mu.Unlock()
 
 	mc.ordersPlaced++
-
-	// Update Prometheus metrics
-	OrdersPlacedTotal.WithLabelValues(symbol, side, "default", orderType).Inc()
-	OrderVolume.WithLabelValues(symbol, side, "default").Add(size)
+	// Prometheus metrics will be updated separately if needed
 }
 
 // RecordOrderExecution records an order being executed
@@ -64,10 +61,7 @@ func (mc *MetricsCollector) RecordOrderExecution(symbol, side string, price, siz
 	defer mc.mu.Unlock()
 
 	mc.ordersFilled++
-
-	// Update Prometheus metrics
-	OrdersFilledTotal.WithLabelValues(symbol, side, "default").Inc()
-	OrderFillLatency.WithLabelValues(symbol).Observe(float64(latency.Milliseconds()))
+	// Prometheus metrics will be updated separately if needed
 }
 
 // RecordOperationDuration records the duration of a market making operation
@@ -85,9 +79,7 @@ func (mc *MetricsCollector) RecordOperationDuration(operation string, duration t
 	if len(mc.operationDurations[operation]) > 1000 {
 		mc.operationDurations[operation] = mc.operationDurations[operation][1:]
 	}
-
-	// Update Prometheus metrics
-	OperationDuration.WithLabelValues(operation).Observe(float64(duration.Milliseconds()))
+	// Prometheus metrics will be updated separately if needed
 }
 
 // RecordBacktestCompletion records the completion of a backtest
@@ -102,11 +94,7 @@ func (mc *MetricsCollector) RecordBacktestCompletion(backtestID string, totalRet
 		TotalReturn: totalReturn,
 		SharpeRatio: sharpeRatio,
 	}
-
-	// Update Prometheus metrics
-	BacktestCompletions.Inc()
-	BacktestReturn.WithLabelValues(backtestID).Set(totalReturn)
-	BacktestSharpe.WithLabelValues(backtestID).Set(sharpeRatio)
+	// Prometheus metrics will be updated separately if needed
 }
 
 // GetPerformanceMetrics returns aggregated performance metrics

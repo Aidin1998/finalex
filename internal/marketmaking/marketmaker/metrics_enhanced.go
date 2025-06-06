@@ -2,8 +2,9 @@
 package marketmaker
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -57,6 +58,15 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
 		},
 		[]string{"pair", "strategy"},
+	)
+
+	OrderFillLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "pincex_mm_order_fill_latency_seconds",
+			Help:    "Latency between order placement and fill",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms to 16s
+		},
+		[]string{"pair"},
 	)
 
 	// Inventory movement metrics
@@ -228,6 +238,49 @@ var (
 		},
 		[]string{"pool_type"},
 	)
+
+	// Backtest metrics for strategy evaluation
+	BacktestCompletions = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pincex_mm_backtest_completions_total",
+			Help: "Total number of completed backtests",
+		},
+	)
+
+	BacktestReturn = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "pincex_mm_backtest_return",
+			Help: "Return percentage for backtest",
+		},
+		[]string{"backtest_id"},
+	)
+
+	BacktestSharpe = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "pincex_mm_backtest_sharpe_ratio",
+			Help: "Sharpe ratio for backtest",
+		},
+		[]string{"backtest_id"},
+	)
+
+	// Operation duration metrics
+	OperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "pincex_mm_operation_duration_ms",
+			Help:    "Duration of market making operations in milliseconds",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 10), // 1ms to ~1s
+		},
+		[]string{"operation"},
+	)
+
+	// Order volume metrics
+	OrderVolume = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "pincex_mm_order_volume",
+			Help: "Volume of orders in base currency",
+		},
+		[]string{"pair", "side", "strategy"},
+	)
 )
 
 // Register all enhanced metrics
@@ -238,107 +291,121 @@ func init() {
 		OrdersCancelledTotal,
 		OrdersFilledTotal,
 		OrdersRejectedTotal,
-		
+
 		// Latency
 		OrderPlacementLatency,
 		OrderCancellationLatency,
-		
+		OrderFillLatency,
+
 		// Inventory
 		InventoryChanges,
 		InventoryValue,
 		InventoryTurnover,
-		
+
 		// Strategy
 		StrategyPnLDaily,
 		StrategyOrderCount,
 		StrategyActiveGauge,
-		
+
 		// Risk
 		RiskEventsTotal,
 		RiskLimitBreaches,
-		
+
 		// Feed health
 		FeedLatency,
 		FeedDisconnections,
 		FeedMessageRate,
 		FeedHealthStatus,
-		
+
 		// System health
 		SystemUptime,
 		ComponentHealthStatus,
 		APICallLatency,
-		
+
 		// Emergency
 		EmergencyStops,
 		CircuitBreakerStatus,
-		
+
 		// Performance
 		BatchOperationSize,
 		CacheHitRate,
 		MemoryPoolUtilization,
+
+		// Backtest
+		BacktestCompletions,
+		BacktestReturn,
+		BacktestSharpe,
+
+		// Operations
+		OperationDuration,
+		OrderVolume,
 	)
 }
 
-// MetricsCollector provides methods to update metrics with proper labeling
-type MetricsCollector struct {
+// PrometheusMetricsCollector provides methods to update prometheus metrics with proper labeling
+type PrometheusMetricsCollector struct {
 	startTime time.Time
 }
 
-func NewMetricsCollector() *MetricsCollector {
-	return &MetricsCollector{
+func NewPrometheusMetricsCollector() *PrometheusMetricsCollector {
+	return &PrometheusMetricsCollector{
 		startTime: time.Now(),
 	}
 }
 
 // Order lifecycle metric updates
-func (m *MetricsCollector) RecordOrderPlaced(pair, side, strategy, orderType string) {
+func (m *PrometheusMetricsCollector) RecordOrderPlaced(pair, side, strategy, orderType string) {
 	OrdersPlacedTotal.WithLabelValues(pair, side, strategy, orderType).Inc()
 }
 
-func (m *MetricsCollector) RecordOrderCancelled(pair, side, strategy, reason string) {
+func (m *PrometheusMetricsCollector) RecordOrderCancelled(pair, side, strategy, reason string) {
 	OrdersCancelledTotal.WithLabelValues(pair, side, strategy, reason).Inc()
 }
 
-func (m *MetricsCollector) RecordOrderFilled(pair, side, strategy, fillType string) {
+func (m *PrometheusMetricsCollector) RecordOrderFilled(pair, side, strategy, fillType string) {
 	OrdersFilledTotal.WithLabelValues(pair, side, strategy, fillType).Inc()
 }
 
-func (m *MetricsCollector) RecordOrderRejected(pair, side, strategy, reason string) {
+func (m *PrometheusMetricsCollector) RecordOrderRejected(pair, side, strategy, reason string) {
 	OrdersRejectedTotal.WithLabelValues(pair, side, strategy, reason).Inc()
 }
 
 // Latency metric updates
-func (m *MetricsCollector) RecordOrderPlacementLatency(pair, strategy, orderType string, duration time.Duration) {
+func (m *PrometheusMetricsCollector) RecordOrderPlacementLatency(pair, strategy, orderType string, duration time.Duration) {
 	OrderPlacementLatency.WithLabelValues(pair, strategy, orderType).Observe(duration.Seconds())
 }
 
-func (m *MetricsCollector) RecordOrderCancellationLatency(pair, strategy string, duration time.Duration) {
+func (m *PrometheusMetricsCollector) RecordOrderCancellationLatency(pair, strategy string, duration time.Duration) {
 	OrderCancellationLatency.WithLabelValues(pair, strategy).Observe(duration.Seconds())
 }
 
+func (m *PrometheusMetricsCollector) RecordOrderFillLatency(pair string, duration time.Duration) {
+	OrderFillLatency.WithLabelValues(pair).Observe(duration.Seconds())
+}
+
 // Inventory metric updates
-func (m *MetricsCollector) RecordInventoryChange(pair, direction string) {
+func (m *PrometheusMetricsCollector) RecordInventoryChange(pair, direction string) {
 	InventoryChanges.WithLabelValues(pair, direction).Inc()
 }
 
-func (m *MetricsCollector) UpdateInventoryValue(pair string, value float64) {
+func (m *PrometheusMetricsCollector) UpdateInventoryValue(pair string, value float64) {
 	InventoryValue.WithLabelValues(pair).Set(value)
 }
 
-func (m *MetricsCollector) UpdateInventoryTurnover(pair string, turnover float64) {
+func (m *PrometheusMetricsCollector) UpdateInventoryTurnover(pair string, turnover float64) {
 	InventoryTurnover.WithLabelValues(pair).Set(turnover)
 }
 
 // Strategy metric updates
-func (m *MetricsCollector) UpdateStrategyPnL(pair, strategy string, pnl float64) {
+func (m *PrometheusMetricsCollector) UpdateStrategyPnL(pair, strategy string, pnl float64) {
 	StrategyPnLDaily.WithLabelValues(pair, strategy).Set(pnl)
 }
 
-func (m *MetricsCollector) RecordStrategyOrder(pair, strategy, orderType string) {
+func (m *PrometheusMetricsCollector) RecordStrategyOrder(pair, strategy, orderType string) {
 	StrategyOrderCount.WithLabelValues(pair, strategy, orderType).Inc()
 }
 
-func (m *MetricsCollector) UpdateStrategyStatus(pair, strategy string, active bool) {
+func (m *PrometheusMetricsCollector) UpdateStrategyStatus(pair, strategy string, active bool) {
 	var status float64
 	if active {
 		status = 1
@@ -347,28 +414,28 @@ func (m *MetricsCollector) UpdateStrategyStatus(pair, strategy string, active bo
 }
 
 // Risk metric updates
-func (m *MetricsCollector) RecordRiskEvent(eventType, severity, pair string) {
+func (m *PrometheusMetricsCollector) RecordRiskEvent(eventType, severity, pair string) {
 	RiskEventsTotal.WithLabelValues(eventType, severity, pair).Inc()
 }
 
-func (m *MetricsCollector) RecordRiskLimitBreach(limitType, pair string) {
+func (m *PrometheusMetricsCollector) RecordRiskLimitBreach(limitType, pair string) {
 	RiskLimitBreaches.WithLabelValues(limitType, pair).Inc()
 }
 
 // Feed health metric updates
-func (m *MetricsCollector) RecordFeedLatency(feedType, pair, provider string, duration time.Duration) {
+func (m *PrometheusMetricsCollector) RecordFeedLatency(feedType, pair, provider string, duration time.Duration) {
 	FeedLatency.WithLabelValues(feedType, pair, provider).Observe(duration.Seconds())
 }
 
-func (m *MetricsCollector) RecordFeedDisconnection(feedType, provider, reason string) {
+func (m *PrometheusMetricsCollector) RecordFeedDisconnection(feedType, provider, reason string) {
 	FeedDisconnections.WithLabelValues(feedType, provider, reason).Inc()
 }
 
-func (m *MetricsCollector) UpdateFeedMessageRate(feedType, pair, provider string, rate float64) {
+func (m *PrometheusMetricsCollector) UpdateFeedMessageRate(feedType, pair, provider string, rate float64) {
 	FeedMessageRate.WithLabelValues(feedType, pair, provider).Set(rate)
 }
 
-func (m *MetricsCollector) UpdateFeedHealthStatus(feedType, pair, provider string, healthy bool) {
+func (m *PrometheusMetricsCollector) UpdateFeedHealthStatus(feedType, pair, provider string, healthy bool) {
 	var status float64
 	if healthy {
 		status = 1
@@ -377,12 +444,12 @@ func (m *MetricsCollector) UpdateFeedHealthStatus(feedType, pair, provider strin
 }
 
 // System health metric updates
-func (m *MetricsCollector) UpdateSystemUptime(component string) {
+func (m *PrometheusMetricsCollector) UpdateSystemUptime(component string) {
 	uptime := time.Since(m.startTime).Seconds()
 	SystemUptime.WithLabelValues(component).Set(uptime)
 }
 
-func (m *MetricsCollector) UpdateComponentHealth(component, subsystem string, healthy bool) {
+func (m *PrometheusMetricsCollector) UpdateComponentHealth(component, subsystem string, healthy bool) {
 	var status float64
 	if healthy {
 		status = 1
@@ -390,16 +457,16 @@ func (m *MetricsCollector) UpdateComponentHealth(component, subsystem string, he
 	ComponentHealthStatus.WithLabelValues(component, subsystem).Set(status)
 }
 
-func (m *MetricsCollector) RecordAPICallLatency(apiType, endpoint, status string, duration time.Duration) {
+func (m *PrometheusMetricsCollector) RecordAPICallLatency(apiType, endpoint, status string, duration time.Duration) {
 	APICallLatency.WithLabelValues(apiType, endpoint, status).Observe(duration.Seconds())
 }
 
 // Emergency metric updates
-func (m *MetricsCollector) RecordEmergencyStop(triggerReason, component string) {
+func (m *PrometheusMetricsCollector) RecordEmergencyStop(triggerReason, component string) {
 	EmergencyStops.WithLabelValues(triggerReason, component).Inc()
 }
 
-func (m *MetricsCollector) UpdateCircuitBreakerStatus(breakerType, pair string, open bool) {
+func (m *PrometheusMetricsCollector) UpdateCircuitBreakerStatus(breakerType, pair string, open bool) {
 	var status float64
 	if open {
 		status = 1
@@ -408,14 +475,32 @@ func (m *MetricsCollector) UpdateCircuitBreakerStatus(breakerType, pair string, 
 }
 
 // Performance metric updates
-func (m *MetricsCollector) RecordBatchOperationSize(operationType string, size int) {
+func (m *PrometheusMetricsCollector) RecordBatchOperationSize(operationType string, size int) {
 	BatchOperationSize.WithLabelValues(operationType).Observe(float64(size))
 }
 
-func (m *MetricsCollector) UpdateCacheHitRate(cacheType string, hitRate float64) {
+func (m *PrometheusMetricsCollector) UpdateCacheHitRate(cacheType string, hitRate float64) {
 	CacheHitRate.WithLabelValues(cacheType).Set(hitRate)
 }
 
-func (m *MetricsCollector) UpdateMemoryPoolUtilization(poolType string, utilization float64) {
+func (m *PrometheusMetricsCollector) UpdateMemoryPoolUtilization(poolType string, utilization float64) {
 	MemoryPoolUtilization.WithLabelValues(poolType).Set(utilization)
+}
+
+// Backtest metric updates
+func (m *PrometheusMetricsCollector) RecordBacktestCompletion() {
+	BacktestCompletions.Inc()
+}
+
+func (m *PrometheusMetricsCollector) UpdateBacktestReturn(backtestID string, returnPct float64) {
+	BacktestReturn.WithLabelValues(backtestID).Set(returnPct)
+}
+
+func (m *PrometheusMetricsCollector) UpdateBacktestSharpe(backtestID string, sharpeRatio float64) {
+	BacktestSharpe.WithLabelValues(backtestID).Set(sharpeRatio)
+}
+
+// Operation metric updates
+func (m *PrometheusMetricsCollector) RecordOperationDuration(operation string, duration time.Duration) {
+	OperationDuration.WithLabelValues(operation).Observe(duration.Seconds() * 1000) // Convert to ms
 }
