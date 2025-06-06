@@ -317,17 +317,6 @@ type PerformanceMetrics struct {
 	SuccessRate float64
 }
 
-type RiskStatus struct {
-	CurrentInventory map[string]float64
-	DailyPnL         float64
-	VaRExposure      map[string]float64
-	RiskSignals      []RiskSignal
-	PositionLimits   map[string]float64
-	TotalExposure    float64
-	RiskScore        float64
-	LastRiskCheck    time.Time
-}
-
 // Enhanced Service with sophisticated market making capabilities
 type Service struct {
 	// Basic configuration
@@ -336,12 +325,14 @@ type Service struct {
 	trading  TradingAPI
 	strategy Strategy
 	logger   *zap.SugaredLogger // Added logger field
-
 	// Advanced components
 	riskManager      *RiskManager
 	providerRegistry *ProviderRegistry
 	reportService    *ReportService
 	alertManager     *AlertManager
+
+	// NEW: Strategy service for unified strategy management
+	strategyService interface{} // Will be set to the new MarketMakingService
 
 	// Strategy management
 	strategies     map[string]Strategy
@@ -794,11 +785,12 @@ func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *S
 		orderBook:      make(map[string]*models.OrderBookSnapshot),
 		performanceMetrics: &PerformanceMetrics{
 			LatencyMetrics: make(map[string]time.Duration),
-		},
-		riskStatus: &RiskStatus{
-			CurrentInventory: make(map[string]float64),
-			VaRExposure:      make(map[string]float64),
-			PositionLimits:   make(map[string]float64),
+		}, riskStatus: &RiskStatus{
+			DailyPnL:      0.0,
+			TotalExposure: 0.0,
+			RiskScore:     0.0,
+			RiskSignals:   make([]RiskSignal, 0),
+			IsHighRisk:    false,
 		},
 		// Initialize missing fields
 		exposures:            make(map[string]float64),
@@ -832,9 +824,15 @@ func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *S
 	service.riskManager = NewRiskManager(cfg.MaxInventory, cfg.MaxDailyDrawdown)
 	service.providerRegistry = NewProviderRegistry()
 	service.reportService = &ReportService{}
-
 	// Initialize multiple strategies for A/B testing and optimization
 	service.initializeStrategies()
+
+	// Initialize new strategy service (non-blocking, logs errors)
+	go func() {
+		if err := service.initializeNewStrategyService(); err != nil {
+			service.logger.Warnf("Failed to initialize new strategy service: %v", err)
+		}
+	}()
 
 	return service
 }
@@ -1637,11 +1635,14 @@ func (s *Service) getEnhancedMarketDataCached(pair string) *EnhancedMarketData {
 }
 
 func (s *Service) getCurrentInventory(pair string) float64 {
-	// Example inventory retrieval
+	// Get inventory from exposures map
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.riskStatus.CurrentInventory[pair]
+	if exposure, exists := s.exposures[pair]; exists {
+		return exposure
+	}
+	return 0.0
 }
 
 func (s *Service) instantiateStrategyForPair(pair string) Strategy {
