@@ -1,0 +1,349 @@
+syntax = "proto3";
+
+package compliance;
+
+option go_package = "github.com/Aidin1998/finalex/pkg/proto/compliance";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ComplianceService provides gRPC endpoints for compliance operations
+service ComplianceService {
+    // Health checks
+    rpc HealthCheck(google.protobuf.Empty) returns (HealthResponse);
+    rpc ReadinessCheck(google.protobuf.Empty) returns (ReadinessResponse);
+    
+    // Compliance checks
+    rpc PerformComplianceCheck(ComplianceCheckRequest) returns (ComplianceCheckResponse);
+    rpc GetUserComplianceStatus(UserComplianceRequest) returns (UserComplianceResponse);
+    rpc BatchComplianceCheck(BatchComplianceRequest) returns (BatchComplianceResponse);
+    
+    // Monitoring operations
+    rpc GetMonitoringOverview(google.protobuf.Empty) returns (MonitoringOverviewResponse);
+    rpc GetActiveAlerts(AlertsRequest) returns (AlertsResponse);
+    rpc AcknowledgeAlert(AcknowledgeAlertRequest) returns (google.protobuf.Empty);
+    rpc GetSystemHealth(google.protobuf.Empty) returns (SystemHealthResponse);
+    
+    // Manipulation detection
+    rpc DetectManipulation(ManipulationDetectionRequest) returns (ManipulationDetectionResponse);
+    rpc GetManipulationAlerts(ManipulationAlertsRequest) returns (ManipulationAlertsResponse);
+    rpc ResolveManipulationAlert(ResolveAlertRequest) returns (google.protobuf.Empty);
+    
+    // Investigation management
+    rpc CreateInvestigation(CreateInvestigationRequest) returns (Investigation);
+    rpc GetInvestigation(GetInvestigationRequest) returns (Investigation);
+    rpc UpdateInvestigation(UpdateInvestigationRequest) returns (Investigation);
+    rpc ListInvestigations(ListInvestigationsRequest) returns (ListInvestigationsResponse);
+    
+    // Audit logs
+    rpc GetAuditLogs(AuditLogsRequest) returns (AuditLogsResponse);
+    rpc CreateAuditEntry(CreateAuditEntryRequest) returns (google.protobuf.Empty);
+    
+    // Policy management
+    rpc GetMonitoringPolicies(google.protobuf.Empty) returns (MonitoringPoliciesResponse);
+    rpc UpdateMonitoringPolicy(UpdatePolicyRequest) returns (google.protobuf.Empty);
+}
+
+// Health and readiness responses
+message HealthResponse {
+    string status = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    map<string, string> details = 3;
+}
+
+message ReadinessResponse {
+    bool ready = 1;
+    repeated string failing_services = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// Compliance check messages
+message ComplianceCheckRequest {
+    string user_id = 1;
+    string check_type = 2;
+    map<string, string> parameters = 3;
+    string transaction_id = 4;
+}
+
+message ComplianceCheckResponse {
+    bool compliant = 1;
+    double risk_score = 2;
+    string status = 3;
+    repeated string violations = 4;
+    repeated ComplianceAction required_actions = 5;
+    map<string, string> metadata = 6;
+}
+
+message UserComplianceRequest {
+    string user_id = 1;
+}
+
+message UserComplianceResponse {
+    string user_id = 1;
+    double risk_score = 2;
+    string status = 3;
+    repeated string active_restrictions = 4;
+    google.protobuf.Timestamp last_check = 5;
+    int32 violation_count = 6;
+}
+
+message BatchComplianceRequest {
+    repeated ComplianceCheckRequest requests = 1;
+}
+
+message BatchComplianceResponse {
+    repeated ComplianceCheckResponse responses = 1;
+    int32 processed_count = 2;
+    int32 failed_count = 3;
+}
+
+// Monitoring messages
+message MonitoringOverviewResponse {
+    int32 active_alerts = 1;
+    int32 total_policies = 2;
+    int32 enabled_policies = 3;
+    double system_health_score = 4;
+    google.protobuf.Timestamp last_updated = 5;
+    repeated AlertSummary recent_alerts = 6;
+}
+
+message AlertsRequest {
+    string severity = 1;
+    string status = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message AlertsResponse {
+    repeated MonitoringAlert alerts = 1;
+    int32 total_count = 2;
+}
+
+message AcknowledgeAlertRequest {
+    string alert_id = 1;
+    string acknowledged_by = 2;
+    string notes = 3;
+}
+
+message SystemHealthResponse {
+    double health_score = 1;
+    repeated ServiceHealth services = 2;
+    repeated MetricSummary metrics = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+// Manipulation detection messages
+message ManipulationDetectionRequest {
+    string pattern_type = 1;
+    map<string, string> parameters = 2;
+    google.protobuf.Timestamp start_time = 3;
+    google.protobuf.Timestamp end_time = 4;
+}
+
+message ManipulationDetectionResponse {
+    repeated ManipulationPattern patterns = 1;
+    double confidence_score = 2;
+    string analysis_summary = 3;
+    repeated string recommended_actions = 4;
+}
+
+message ManipulationAlertsRequest {
+    string pattern_type = 1;
+    string status = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message ManipulationAlertsResponse {
+    repeated ManipulationAlert alerts = 1;
+    int32 total_count = 2;
+}
+
+message ResolveAlertRequest {
+    string alert_id = 1;
+    string resolution = 2;
+    string resolved_by = 3;
+    string notes = 4;
+}
+
+// Investigation messages
+message CreateInvestigationRequest {
+    string title = 1;
+    string description = 2;
+    string severity = 3;
+    string assigned_to = 4;
+    repeated string alert_ids = 5;
+    map<string, string> metadata = 6;
+}
+
+message GetInvestigationRequest {
+    string investigation_id = 1;
+}
+
+message UpdateInvestigationRequest {
+    string investigation_id = 1;
+    string status = 2;
+    string notes = 3;
+    string assigned_to = 4;
+    map<string, string> metadata = 5;
+}
+
+message ListInvestigationsRequest {
+    string status = 1;
+    string assigned_to = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message ListInvestigationsResponse {
+    repeated Investigation investigations = 1;
+    int32 total_count = 2;
+}
+
+// Audit messages
+message AuditLogsRequest {
+    string entity_type = 1;
+    string entity_id = 2;
+    string action = 3;
+    google.protobuf.Timestamp start_time = 4;
+    google.protobuf.Timestamp end_time = 5;
+    int32 limit = 6;
+    int32 offset = 7;
+}
+
+message AuditLogsResponse {
+    repeated AuditEntry logs = 1;
+    int32 total_count = 2;
+}
+
+message CreateAuditEntryRequest {
+    string entity_type = 1;
+    string entity_id = 2;
+    string action = 3;
+    string performed_by = 4;
+    map<string, string> details = 5;
+}
+
+// Policy messages
+message MonitoringPoliciesResponse {
+    repeated MonitoringPolicy policies = 1;
+}
+
+message UpdatePolicyRequest {
+    string policy_id = 1;
+    bool enabled = 2;
+    map<string, string> parameters = 3;
+}
+
+// Common data structures
+message MonitoringAlert {
+    string id = 1;
+    string type = 2;
+    string severity = 3;
+    string message = 4;
+    string status = 5;
+    google.protobuf.Timestamp created_at = 6;
+    google.protobuf.Timestamp updated_at = 7;
+    map<string, string> metadata = 8;
+    string acknowledged_by = 9;
+    google.protobuf.Timestamp acknowledged_at = 10;
+}
+
+message AlertSummary {
+    string type = 1;
+    int32 count = 2;
+    string severity = 3;
+}
+
+message ServiceHealth {
+    string service_name = 1;
+    string status = 2;
+    double health_score = 3;
+    google.protobuf.Timestamp last_check = 4;
+    string error_message = 5;
+}
+
+message MetricSummary {
+    string name = 1;
+    double value = 2;
+    string unit = 3;
+    string status = 4;
+}
+
+message ManipulationPattern {
+    string id = 1;
+    string type = 2;
+    double confidence = 3;
+    string description = 4;
+    repeated string evidence = 5;
+    map<string, string> parameters = 6;
+    google.protobuf.Timestamp detected_at = 7;
+}
+
+message ManipulationAlert {
+    string id = 1;
+    string pattern_type = 2;
+    double confidence = 3;
+    string status = 4;
+    string description = 5;
+    repeated string affected_users = 6;
+    repeated string affected_instruments = 7;
+    google.protobuf.Timestamp created_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
+    map<string, string> metadata = 10;
+}
+
+message Investigation {
+    string id = 1;
+    string title = 2;
+    string description = 3;
+    string status = 4;
+    string severity = 5;
+    string assigned_to = 6;
+    string created_by = 7;
+    google.protobuf.Timestamp created_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
+    repeated string alert_ids = 10;
+    repeated InvestigationNote notes = 11;
+    map<string, string> metadata = 12;
+}
+
+message InvestigationNote {
+    string id = 1;
+    string content = 2;
+    string created_by = 3;
+    google.protobuf.Timestamp created_at = 4;
+}
+
+message AuditEntry {
+    string id = 1;
+    string entity_type = 2;
+    string entity_id = 3;
+    string action = 4;
+    string performed_by = 5;
+    google.protobuf.Timestamp timestamp = 6;
+    map<string, string> details = 7;
+    string ip_address = 8;
+    string user_agent = 9;
+}
+
+message MonitoringPolicy {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    bool enabled = 4;
+    string condition = 5;
+    repeated string actions = 6;
+    map<string, string> parameters = 7;
+    google.protobuf.Timestamp created_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
+}
+
+message ComplianceAction {
+    string id = 1;
+    string type = 2;
+    string description = 3;
+    map<string, string> parameters = 4;
+    bool required = 5;
+    google.protobuf.Timestamp deadline = 6;
+}

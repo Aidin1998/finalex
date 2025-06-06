@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
@@ -15,15 +16,18 @@ import (
 
 // MonitoringService implements real-time compliance monitoring
 type MonitoringService struct {
-	db          *gorm.DB
-	auditSvc    interfaces.AuditService
-	subscribers map[string][]interfaces.AlertSubscriber
-	alertChan   chan interfaces.MonitoringAlert
-	policyCache map[string]*interfaces.MonitoringPolicy
-	metrics     *MonitoringMetrics
-	mu          sync.RWMutex
-	stopChan    chan struct{}
-	workers     int
+	db                *gorm.DB
+	auditSvc          interfaces.AuditService
+	subscribers       map[string][]interfaces.AlertSubscriber
+	alertChan         chan interfaces.MonitoringAlert
+	policyCache       map[string]*interfaces.MonitoringPolicy
+	metrics           *MonitoringMetrics
+	prometheusMetrics *PrometheusMetrics
+	alertingManager   *AlertingManager
+	logger            *zap.Logger
+	mu                sync.RWMutex
+	stopChan          chan struct{}
+	workers           int
 }
 
 // MonitoringMetrics tracks monitoring performance
@@ -37,20 +41,23 @@ type MonitoringMetrics struct {
 }
 
 // NewMonitoringService creates a new monitoring service
-func NewMonitoringService(db *gorm.DB, auditSvc interfaces.AuditService, workers int) *MonitoringService {
+func NewMonitoringService(db *gorm.DB, auditSvc interfaces.AuditService, logger *zap.Logger, workers int) *MonitoringService {
 	if workers <= 0 {
 		workers = 4
 	}
 
 	return &MonitoringService{
-		db:          db,
-		auditSvc:    auditSvc,
-		subscribers: make(map[string][]interfaces.AlertSubscriber),
-		alertChan:   make(chan interfaces.MonitoringAlert, 1000),
-		policyCache: make(map[string]*interfaces.MonitoringPolicy),
-		metrics:     &MonitoringMetrics{},
-		stopChan:    make(chan struct{}),
-		workers:     workers,
+		db:                db,
+		auditSvc:          auditSvc,
+		subscribers:       make(map[string][]interfaces.AlertSubscriber),
+		alertChan:         make(chan interfaces.MonitoringAlert, 1000),
+		policyCache:       make(map[string]*interfaces.MonitoringPolicy),
+		metrics:           &MonitoringMetrics{},
+		prometheusMetrics: NewPrometheusMetrics(),
+		alertingManager:   NewAlertingManager(logger),
+		logger:            logger,
+		stopChan:          make(chan struct{}),
+		workers:           workers,
 	}
 }
 
@@ -112,14 +119,17 @@ func (m *MonitoringService) Unsubscribe(alertType string, subscriber interfaces.
 
 // GenerateAlert creates and queues a monitoring alert
 func (m *MonitoringService) GenerateAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
-	alert.ID = uuid.New().String()
+	alert.ID = uuid.New()
 	alert.Timestamp = time.Now()
-	alert.Status = "pending"
+	alert.Status = interfaces.AlertStatusPending
 
 	// Check if alert should be generated based on policies
 	if !m.shouldGenerateAlert(alert) {
 		return nil
 	}
+
+	// Record Prometheus metrics
+	m.prometheusMetrics.RecordAlertGenerated(alert.AlertType, alert.Severity.String(), extractMarket(alert))
 
 	// Queue alert for processing
 	select {
@@ -127,6 +137,10 @@ func (m *MonitoringService) GenerateAlert(ctx context.Context, alert interfaces.
 		m.metrics.mu.Lock()
 		m.metrics.AlertsGenerated++
 		m.metrics.mu.Unlock()
+
+		// Update queue size metric
+		m.prometheusMetrics.SetQueueSize("alerts", float64(len(m.alertChan)))
+
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -189,16 +203,16 @@ func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID, stat
 	// Audit the status change
 	if m.auditSvc != nil {
 		auditEvent := interfaces.AuditEvent{
-			EventType:   "alert_status_updated",
-			UserID:      alert.UserID,
-			Action:      "update_alert_status",
-			EntityType:  "monitoring_alert",
-			EntityID:    alertID,
-			OldValue:    oldStatus,
-			NewValue:    status,
-			Metadata:    map[string]interface{}{"alert_type": alert.AlertType},
-			Timestamp:   time.Now(),
-			Severity:    "info",
+			EventType:  "alert_status_updated",
+			UserID:     alert.UserID,
+			Action:     "update_alert_status",
+			EntityType: "monitoring_alert",
+			EntityID:   alertID,
+			OldValue:   oldStatus,
+			NewValue:   status,
+			Metadata:   map[string]interface{}{"alert_type": alert.AlertType},
+			Timestamp:  time.Now(),
+			Severity:   "info",
 		}
 		m.auditSvc.LogEvent(ctx, auditEvent)
 	}
@@ -209,17 +223,17 @@ func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID, stat
 // UpdatePolicy updates or creates a monitoring policy
 func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy interfaces.MonitoringPolicy) error {
 	policyModel := &MonitoringPolicyModel{
-		ID:          policy.ID,
-		Name:        policy.Name,
-		AlertType:   policy.AlertType,
-		Enabled:     policy.Enabled,
-		Threshold:   policy.Threshold,
-		TimeWindow:  policy.TimeWindow,
-		Action:      policy.Action,
-		Conditions:  policy.Conditions,
-		Recipients:  policy.Recipients,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:         policy.ID,
+		Name:       policy.Name,
+		AlertType:  policy.AlertType,
+		Enabled:    policy.Enabled,
+		Threshold:  policy.Threshold,
+		TimeWindow: policy.TimeWindow,
+		Action:     policy.Action,
+		Conditions: policy.Conditions,
+		Recipients: policy.Recipients,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 
 	if policy.ID == "" {
@@ -242,14 +256,14 @@ func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy interfaces.
 	// Audit the policy update
 	if m.auditSvc != nil {
 		auditEvent := interfaces.AuditEvent{
-			EventType:   "monitoring_policy_updated",
-			Action:      "update_policy",
-			EntityType:  "monitoring_policy",
-			EntityID:    policyModel.ID,
-			NewValue:    fmt.Sprintf("%+v", policy),
-			Metadata:    map[string]interface{}{"policy_name": policy.Name},
-			Timestamp:   time.Now(),
-			Severity:    "info",
+			EventType:  "monitoring_policy_updated",
+			Action:     "update_policy",
+			EntityType: "monitoring_policy",
+			EntityID:   policyModel.ID,
+			NewValue:   fmt.Sprintf("%+v", policy),
+			Metadata:   map[string]interface{}{"policy_name": policy.Name},
+			Timestamp:  time.Now(),
+			Severity:   "info",
 		}
 		m.auditSvc.LogEvent(ctx, auditEvent)
 	}
@@ -272,7 +286,7 @@ func (m *MonitoringService) GetPolicy(ctx context.Context, policyID string) (*in
 	}
 
 	policy := policyModel.ToInterface()
-	
+
 	// Update cache
 	m.mu.Lock()
 	m.policyCache[policyID] = &policy
@@ -281,174 +295,100 @@ func (m *MonitoringService) GetPolicy(ctx context.Context, policyID string) (*in
 	return &policy, nil
 }
 
-// GetMetrics returns current monitoring metrics
+// GetMetrics returns current monitoring metrics including Prometheus metrics
 func (m *MonitoringService) GetMetrics() interfaces.MonitoringMetrics {
 	m.metrics.mu.RLock()
 	defer m.metrics.mu.RUnlock()
 
 	return interfaces.MonitoringMetrics{
-		AlertsGenerated:    m.metrics.AlertsGenerated,
-		AlertsProcessed:    m.metrics.AlertsProcessed,
-		PolicyUpdates:      m.metrics.PolicyUpdates,
-		SubscriberNotified: m.metrics.SubscriberNotified,
-		ProcessingLatency:  m.metrics.ProcessingLatency,
+		AlertsGenerated:     m.metrics.AlertsGenerated,
+		AlertsProcessed:     m.metrics.AlertsProcessed,
+		PolicyUpdates:       m.metrics.PolicyUpdates,
+		SubscriberNotified:  m.metrics.SubscriberNotified,
+		ProcessingLatency:   m.metrics.ProcessingLatency,
+		AverageResponseTime: m.metrics.ProcessingLatency,
+		ErrorRate:           m.calculateErrorRate(),
+		LastUpdated:         time.Now(),
 	}
 }
 
-// alertProcessor processes alerts from the queue
-func (m *MonitoringService) alertProcessor(ctx context.Context) {
-	for {
-		select {
-		case alert := <-m.alertChan:
-			start := time.Now()
-			if err := m.processAlert(ctx, alert); err != nil {
-				// Log error but continue processing
-				continue
-			}
-			
-			m.metrics.mu.Lock()
-			m.metrics.AlertsProcessed++
-			m.metrics.ProcessingLatency = time.Since(start)
-			m.metrics.mu.Unlock()
-
-		case <-ctx.Done():
-			return
-		case <-m.stopChan:
-			return
-		}
-	}
+// GetPrometheusMetrics returns the Prometheus metrics instance
+func (m *MonitoringService) GetPrometheusMetrics() *PrometheusMetrics {
+	return m.prometheusMetrics
 }
 
-// processAlert handles individual alert processing
-func (m *MonitoringService) processAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
-	// Save alert to database
-	alertModel := &MonitoringAlertModel{
-		ID:          alert.ID,
-		UserID:      alert.UserID,
-		AlertType:   alert.AlertType,
-		Severity:    alert.Severity,
-		Message:     alert.Message,
-		Data:        alert.Data,
-		Status:      alert.Status,
-		Timestamp:   alert.Timestamp,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	if err := m.db.WithContext(ctx).Create(alertModel).Error; err != nil {
-		return errors.Wrap(err, "failed to save alert")
-	}
-
-	// Notify subscribers
-	m.mu.RLock()
-	subscribers := m.subscribers[alert.AlertType]
-	m.mu.RUnlock()
-
-	for _, subscriber := range subscribers {
-		go func(sub interfaces.AlertSubscriber) {
-			if err := sub.OnAlert(ctx, alert); err == nil {
-				m.metrics.mu.Lock()
-				m.metrics.SubscriberNotified++
-				m.metrics.mu.Unlock()
-			}
-		}(subscriber)
-	}
-
-	// Audit the alert
-	if m.auditSvc != nil {
-		auditEvent := interfaces.AuditEvent{
-			EventType:   "monitoring_alert_generated",
-			UserID:      alert.UserID,
-			Action:      "generate_alert",
-			EntityType:  "monitoring_alert",
-			EntityID:    alert.ID,
-			NewValue:    alert.Message,
-			Metadata:    map[string]interface{}{"alert_type": alert.AlertType, "severity": alert.Severity},
-			Timestamp:   time.Now(),
-			Severity:    alert.Severity,
-		}
-		m.auditSvc.LogEvent(ctx, auditEvent)
-	}
-
-	return nil
-}
-
-// shouldGenerateAlert checks if alert should be generated based on policies
-func (m *MonitoringService) shouldGenerateAlert(alert interfaces.MonitoringAlert) bool {
+// GetHealthStatus returns the health status of the monitoring service
+func (m *MonitoringService) GetHealthStatus() map[string]interface{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for _, policy := range m.policyCache {
-		if policy.AlertType == alert.AlertType && policy.Enabled {
-			// Check conditions and thresholds
-			if m.evaluateConditions(alert, policy) {
-				return true
-			}
-		}
+	status := map[string]interface{}{
+		"service":          "healthy",
+		"database":         "healthy",
+		"alert_channels":   m.alertingManager.GetEnabledChannels(),
+		"queue_size":       len(m.alertChan),
+		"active_policies":  len(m.policyCache),
+		"subscribers":      len(m.subscribers),
+		"workers":          m.workers,
+		"uptime":           time.Since(time.Now()), // This would be tracked from service start
+		"last_policy_sync": time.Now(),             // This would be tracked
 	}
 
-	return true // Default to generating alert if no specific policy
+	// Check database health
+	if err := m.db.Exec("SELECT 1").Error; err != nil {
+		status["database"] = "unhealthy"
+		status["service"] = "degraded"
+	}
+
+	// Update Prometheus health metrics
+	healthy := status["service"] == "healthy"
+	m.prometheusMetrics.SetServiceHealth("monitoring", "core", healthy)
+	m.prometheusMetrics.SetServiceHealth("monitoring", "database", status["database"] == "healthy")
+	m.prometheusMetrics.SetQueueSize("alerts", float64(len(m.alertChan)))
+
+	return status
 }
 
-// evaluateConditions checks if alert meets policy conditions
-func (m *MonitoringService) evaluateConditions(alert interfaces.MonitoringAlert, policy *interfaces.MonitoringPolicy) bool {
-	// Implement policy condition evaluation logic
-	// This would check thresholds, time windows, etc.
-	return true
+// calculateErrorRate calculates the current error rate
+func (m *MonitoringService) calculateErrorRate() float64 {
+	// Implementation would track successful vs failed operations
+	// For now, return 0 as placeholder
+	return 0.0
 }
 
-// loadPolicies loads monitoring policies from database into cache
-func (m *MonitoringService) loadPolicies(ctx context.Context) error {
-	var policies []MonitoringPolicyModel
-	if err := m.db.WithContext(ctx).Find(&policies).Error; err != nil {
-		return errors.Wrap(err, "failed to load policies")
+// extractMarket extracts market information from alert details
+func extractMarket(alert interfaces.MonitoringAlert) string {
+	if market, ok := alert.Details["market"].(string); ok {
+		return market
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.policyCache = make(map[string]*interfaces.MonitoringPolicy)
-	for _, policy := range policies {
-		interfacePolicy := policy.ToInterface()
-		m.policyCache[policy.ID] = &interfacePolicy
-	}
-
-	return nil
+	return "unknown"
 }
 
-// policyUpdateChecker periodically checks for policy updates
-func (m *MonitoringService) policyUpdateChecker(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
+// AlertChannelConfig holds configuration for alert channels
+type AlertChannelConfig struct {
+	Webhook struct {
+		Enabled bool              `json:"enabled"`
+		URL     string            `json:"url"`
+		Method  string            `json:"method"`
+		Headers map[string]string `json:"headers"`
+		Timeout time.Duration     `json:"timeout"`
+	} `json:"webhook"`
 
-	for {
-		select {
-		case <-ticker.C:
-			if err := m.loadPolicies(ctx); err != nil {
-				// Log error but continue
-				continue
-			}
-		case <-ctx.Done():
-			return
-		case <-m.stopChan:
-			return
-		}
-	}
-}
+	Email struct {
+		Enabled   bool     `json:"enabled"`
+		SMTPHost  string   `json:"smtp_host"`
+		SMTPPort  int      `json:"smtp_port"`
+		Username  string   `json:"username"`
+		Password  string   `json:"password"`
+		FromEmail string   `json:"from_email"`
+		ToEmails  []string `json:"to_emails"`
+	} `json:"email"`
 
-// metricsCollector periodically updates metrics
-func (m *MonitoringService) metricsCollector(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			// Collect additional metrics if needed
-		case <-ctx.Done():
-			return
-		case <-m.stopChan:
-			return
-		}
-	}
+	Slack struct {
+		Enabled    bool   `json:"enabled"`
+		WebhookURL string `json:"webhook_url"`
+		Channel    string `json:"channel"`
+		Username   string `json:"username"`
+		IconEmoji  string `json:"icon_emoji"`
+	} `json:"slack"`
 }

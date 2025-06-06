@@ -2,7 +2,6 @@ package manipulation
 
 import (
 	"context"
-
 	"fmt"
 	"net/http"
 	"strconv"
@@ -33,8 +32,8 @@ type ManipulationService struct {
 	config ManipulationServiceConfig
 	// Integration points
 	tradingEngine *engine.MatchingEngine
-	database      *database.OptimizedDatabase
-	riskService   aml.RiskService
+	database      *database.DatabaseConnection
+	riskService   aml.AMLService
 
 	// Service state
 	started   bool
@@ -157,8 +156,8 @@ type APIResponse struct {
 // NewManipulationService creates a new manipulation service
 func NewManipulationService(
 	logger *zap.SugaredLogger,
-	database *database.OptimizedDatabase,
-	riskService aml.RiskService,
+	database *database.DatabaseConnection,
+	riskService aml.AMLService,
 	tradingEngine *engine.MatchingEngine,
 	config ManipulationServiceConfig,
 ) *ManipulationService {
