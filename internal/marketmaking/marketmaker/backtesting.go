@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/factory"
 	"github.com/Aidin1998/finalex/pkg/models"
 )
 
@@ -18,7 +20,7 @@ import (
 type BacktestEngine struct {
 	logger          *StructuredLogger
 	metrics         *MetricsCollector
-	strategyFactory *StrategyFactory
+	strategyFactory *factory.StrategyFactory
 	mu              sync.RWMutex
 	activeTests     map[string]*BacktestExecution
 	completedTests  map[string]*BacktestResult
@@ -54,7 +56,7 @@ type BacktestExecution struct {
 	// Internal execution state
 	virtualPortfolio *VirtualPortfolio
 	marketData       *BacktestMarketData
-	strategy         BacktestStrategy
+	strategy         common.MarketMakingStrategy
 	trades           []*BacktestTrade
 }
 
@@ -182,21 +184,12 @@ type PriceBar struct {
 	Volume float64   `json:"volume"`
 }
 
-// BacktestStrategy interface for strategy implementations
-type BacktestStrategy interface {
-	Initialize(config map[string]interface{}) error
-	OnMarketData(ctx context.Context, data *BacktestMarketData) ([]*models.Order, error)
-	OnOrderFill(ctx context.Context, trade *BacktestTrade) error
-	GetMetrics() map[string]float64
-	Name() string
-}
-
 // NewBacktestEngine creates a new backtesting engine
 func NewBacktestEngine(logger *StructuredLogger, metrics *MetricsCollector) *BacktestEngine {
 	return &BacktestEngine{
 		logger:          logger,
 		metrics:         metrics,
-		strategyFactory: NewStrategyFactory(),
+		strategyFactory: factory.NewStrategyFactory(),
 		activeTests:     make(map[string]*BacktestExecution),
 		completedTests:  make(map[string]*BacktestResult),
 	}
@@ -673,19 +666,14 @@ func (be *BacktestEngine) calculateTradingStats(result *BacktestResult, trades [
 	}
 }
 
-func (be *BacktestEngine) createStrategy(strategyType string) (BacktestStrategy, error) {
+func (be *BacktestEngine) createStrategy(strategyType string) (common.MarketMakingStrategy, error) {
 	// Use strategy factory to create strategy
 	strategy, err := be.strategyFactory.CreateStrategy(strategyType, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create strategy %s: %w", strategyType, err)
 	}
 
-	// Wrap the strategy in a BacktestStrategy adapter
-	adapter := &StrategyAdapter{
-		strategy: strategy,
-		metrics:  make(map[string]float64),
-	}
-	return adapter, nil
+	return strategy, nil
 }
 
 func (be *BacktestEngine) validateConfig(config *BacktestConfig) error {

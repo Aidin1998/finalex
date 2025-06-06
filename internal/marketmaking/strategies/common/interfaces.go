@@ -255,6 +255,16 @@ type HealthStatus struct {
 	LastCheckTime time.Time         `json:"last_check_time"`
 }
 
+// RiskStatus represents the risk state of the market maker or strategy
+// Used by service.go and other modules
+
+type RiskStatus struct {
+	DailyPnL      float64
+	TotalExposure float64
+	RiskScore     float64
+	RiskSignals   []string
+}
+
 // Strategy status constants are defined above
 
 // Strategy metadata and classification types

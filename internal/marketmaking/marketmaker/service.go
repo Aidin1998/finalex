@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -126,7 +127,7 @@ type TradingAPI interface {
 	GetAccountBalance() (float64, error)
 	GetOpenOrders(pair string) ([]*models.Order, error)
 	GetRecentTrades(pair string, limit int) ([]*models.Trade, error)
-	GetMarketData(pair string) (*MarketData, error)
+	GetMarketData(pair string) (*common.MarketData, error)
 	BatchCancelOrders(orderIDs []string) error
 	GetPositionRisk(pair string) (*PositionRisk, error)
 }
@@ -186,8 +187,8 @@ type EnhancedMarketData struct {
 
 type L2OrderBook struct {
 	Pair      string
-	Bids      []PriceLevel
-	Asks      []PriceLevel
+	Bids      []common.PriceLevel
+	Asks      []common.PriceLevel
 	Timestamp time.Time
 }
 
@@ -223,7 +224,7 @@ func NewObjectPool() *ObjectPool {
 		},
 		pricePool: sync.Pool{
 			New: func() interface{} {
-				return make([]PriceLevel, 0, 50)
+				return make([]common.PriceLevel, 0, 50)
 			},
 		},
 		marketDataPool: sync.Pool{
@@ -245,12 +246,12 @@ func (p *ObjectPool) PutOrder(order *models.Order) {
 	p.orderPool.Put(order)
 }
 
-func (p *ObjectPool) GetPriceLevels() []PriceLevel {
-	levels := p.pricePool.Get().([]PriceLevel)
+func (p *ObjectPool) GetPriceLevels() []common.PriceLevel {
+	levels := p.pricePool.Get().([]common.PriceLevel)
 	return levels[:0] // Reset slice but keep capacity
 }
 
-func (p *ObjectPool) PutPriceLevels(levels []PriceLevel) {
+func (p *ObjectPool) PutPriceLevels(levels []common.PriceLevel) {
 	p.pricePool.Put(levels)
 }
 
@@ -323,7 +324,7 @@ type Service struct {
 	cfg      MarketMakerConfig
 	quit     chan struct{}
 	trading  TradingAPI
-	strategy Strategy
+	strategy common.MarketMakingStrategy
 	logger   *zap.SugaredLogger // Added logger field
 	// Advanced components
 	riskManager      *RiskManager
@@ -335,19 +336,19 @@ type Service struct {
 	strategyService interface{} // Will be set to the new MarketMakingService
 
 	// Strategy management
-	strategies     map[string]Strategy
+	strategies     map[string]common.MarketMakingStrategy
 	activeStrategy string
 	strategyPerf   map[string]*PerformanceMetrics
 
 	// Market data and context
-	marketContext  *MarketContext
+	marketContext  *common.MarketContext
 	priceHistory   map[string][]float64
 	volatilityData map[string][]float64
 	orderBook      map[string]*models.OrderBookSnapshot
 
 	// Performance tracking
 	performanceMetrics *PerformanceMetrics
-	riskStatus         *RiskStatus
+	riskStatus         *common.RiskStatus
 	startTime          time.Time
 
 	// Missing fields added
@@ -382,9 +383,9 @@ type Service struct {
 	performanceOptimizer *PerformanceOptimizer
 
 	// In Service struct, add per-pair strategy and order tracking
-	pairStrategies map[string]Strategy                 // strategy instance per pair
-	openOrders     map[string]map[string]*models.Order // pair -> orderID -> order
-	ledger         *Ledger                             // dedicated ledger for MM activity
+	pairStrategies map[string]common.MarketMakingStrategy // strategy instance per pair
+	openOrders     map[string]map[string]*models.Order    // pair -> orderID -> order
+	ledger         *Ledger                                // dedicated ledger for MM activity
 }
 
 // BatchProcessor handles batch operations for better performance
@@ -766,7 +767,7 @@ func (ac *AdaptiveConfig) AdaptFrequency(currentLatency time.Duration) time.Dura
 	return ac.currentFrequency
 }
 
-func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *Service {
+func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy common.MarketMakingStrategy) *Service {
 	// Initialize logger - use zap for structured logging
 	logger, _ := zap.NewProduction()
 	sugarLogger := logger.Sugar()
@@ -777,15 +778,15 @@ func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *S
 		trading:        trading,
 		strategy:       strategy,
 		logger:         sugarLogger,
-		strategies:     make(map[string]Strategy),
+		strategies:     make(map[string]common.MarketMakingStrategy),
 		strategyPerf:   make(map[string]*PerformanceMetrics),
-		marketContext:  &MarketContext{},
+		marketContext:  &common.MarketContext{},
 		priceHistory:   make(map[string][]float64),
 		volatilityData: make(map[string][]float64),
 		orderBook:      make(map[string]*models.OrderBookSnapshot),
 		performanceMetrics: &PerformanceMetrics{
 			LatencyMetrics: make(map[string]time.Duration),
-		}, riskStatus: &RiskStatus{
+		}, riskStatus: &common.RiskStatus{
 			DailyPnL:      0.0,
 			TotalExposure: 0.0,
 			RiskScore:     0.0,
@@ -814,7 +815,7 @@ func NewService(cfg MarketMakerConfig, trading TradingAPI, strategy Strategy) *S
 		performanceOptimizer: &PerformanceOptimizer{},
 
 		// In NewService, initialize new fields
-		pairStrategies: make(map[string]Strategy),
+		pairStrategies: make(map[string]common.MarketMakingStrategy),
 		openOrders:     make(map[string]map[string]*models.Order),
 		ledger:         NewLedger(),
 		alertManager:   NewAlertManager(),
@@ -951,7 +952,7 @@ func (s *Service) GetPerformanceMetrics() *PerformanceMetrics {
 	return &metrics
 }
 
-func (s *Service) GetRiskStatus() *RiskStatus {
+func (s *Service) GetRiskStatus() *common.RiskStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1645,7 +1646,7 @@ func (s *Service) getCurrentInventory(pair string) float64 {
 	return 0.0
 }
 
-func (s *Service) instantiateStrategyForPair(pair string) Strategy {
+func (s *Service) instantiateStrategyForPair(pair string) common.MarketMakingStrategy {
 	// Example strategy instantiation logic
 	s.strategyMu.RLock()
 	defer s.strategyMu.RUnlock()

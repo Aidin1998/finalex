@@ -1,0 +1,6 @@
+The following files are deprecated and will be removed as part of the marketmaking module cleanup:
+- strategy_factory.go
+- strategy.go
+- strategy_adapter.go
+
+All strategy logic should use the new strategies/ folder and interfaces.
