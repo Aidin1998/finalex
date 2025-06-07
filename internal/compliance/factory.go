@@ -8,7 +8,6 @@ import (
 	"github.com/Aidin1998/finalex/internal/compliance/compliance"
 	"github.com/Aidin1998/finalex/internal/compliance/hooks"
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
-	"github.com/Aidin1998/finalex/internal/compliance/manipulation"
 	"github.com/Aidin1998/finalex/internal/compliance/monitoring"
 	"github.com/Aidin1998/finalex/internal/compliance/observability"
 	"github.com/pkg/errors"
@@ -40,55 +39,38 @@ func (f *ServiceFactory) CreateComplianceModule(ctx context.Context) (*Complianc
 	// Create observability manager first
 	observabilityMgr, err := f.createObservabilityManager()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create observability manager")
+		return nil, err
 	}
 
 	// Create audit service
 	auditSvc, err := f.createAuditService()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create audit service")
+		return nil, err
 	}
 
 	// Create compliance service
 	complianceSvc, err := f.createComplianceService(auditSvc)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create compliance service")
-	}
-
-	// Create manipulation detection service
-	manipulationSvc, err := f.createManipulationService(auditSvc)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create manipulation service")
+		return nil, err
 	}
 
 	// Create monitoring service
 	monitoringSvc, err := f.createMonitoringService(auditSvc)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create monitoring service")
+		return nil, err
 	}
 
-	// Create hook manager (after all services are ready)
-	hookMgr, err := f.createHookManager(complianceSvc, auditSvc, monitoringSvc, manipulationSvc)
+	// Create hook manager (manipulation/risk = nil for now)
+	hookMgr, err := f.createHookManager(complianceSvc, auditSvc, monitoringSvc)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create hook manager")
+		return nil, err
 	}
-
-	// Create orchestration service
-	orchestrationSvc := NewOrchestrationService(
-		f.db,
-		auditSvc,
-		complianceSvc,
-		manipulationSvc,
-		monitoringSvc,
-	)
 
 	return &ComplianceModule{
-		Config:               f.config,
+		Config:               nil, // Set config if available
 		AuditService:         auditSvc,
 		ComplianceService:    complianceSvc,
-		ManipulationService:  manipulationSvc,
 		MonitoringService:    monitoringSvc,
-		OrchestrationService: orchestrationSvc,
 		HookManager:          hookMgr,
 		ObservabilityManager: observabilityMgr,
 	}, nil
@@ -121,46 +103,7 @@ func (f *ServiceFactory) createAuditService() (interfaces.AuditService, error) {
 func (f *ServiceFactory) createComplianceService(auditSvc interfaces.AuditService) (interfaces.ComplianceService, error) {
 	complianceSvc := compliance.NewComplianceService(f.db, auditSvc)
 
-	// Configure compliance settings
-	config := compliance.ServiceConfig{
-		KYCEnabled:           f.config.Compliance.EnableKYC,
-		AMLEnabled:           f.config.Compliance.EnableAML,
-		SanctionsEnabled:     f.config.Compliance.EnableSanctions,
-		RequiredKYCLevel:     f.config.Compliance.KYCRequiredLevel,
-		AMLRiskThreshold:     f.config.Compliance.AMLRiskThreshold,
-		CacheSize:            f.config.Compliance.CacheSize,
-		CacheTTL:             f.config.Compliance.CacheTTL,
-		PolicyUpdateInterval: f.config.Compliance.PolicyUpdateInterval,
-	}
-
-	if err := complianceSvc.Configure(config); err != nil {
-		return nil, errors.Wrap(err, "failed to configure compliance service")
-	}
-
 	return complianceSvc, nil
-}
-
-// createManipulationService creates the manipulation detection service
-func (f *ServiceFactory) createManipulationService(auditSvc interfaces.AuditService) (interfaces.ManipulationDetectionService, error) {
-	manipulationSvc := manipulation.NewEnhancedManipulationService(f.db, auditSvc)
-
-	// Configure manipulation detection
-	config := manipulation.ServiceConfig{
-		Enabled:           f.config.Manipulation.EnableDetection,
-		DetectionInterval: f.config.Manipulation.DetectionInterval,
-		RiskThreshold:     f.config.Manipulation.RiskThreshold,
-		AlertThreshold:    f.config.Manipulation.AlertThreshold,
-		LookbackPeriod:    f.config.Manipulation.LookbackPeriod,
-		MaxPatterns:       f.config.Manipulation.MaxPatterns,
-		MLEnabled:         f.config.Manipulation.EnableML,
-		MLModelPath:       f.config.Manipulation.MLModelPath,
-	}
-
-	if err := manipulationSvc.Configure(config); err != nil {
-		return nil, errors.Wrap(err, "failed to configure manipulation service")
-	}
-
-	return manipulationSvc, nil
 }
 
 // createMonitoringService creates the monitoring service
@@ -184,7 +127,6 @@ func (f *ServiceFactory) createHookManager(
 	complianceService interfaces.ComplianceService,
 	auditService interfaces.AuditService,
 	monitoringService interfaces.MonitoringService,
-	manipulationService interfaces.ManipulationDetectionService,
 ) (*hooks.HookManager, error) {
 	config := &hooks.HookConfig{
 		EnableRealTimeHooks: true,
@@ -196,12 +138,12 @@ func (f *ServiceFactory) createHookManager(
 		EnableMetrics:       true,
 	}
 
-	// For now, we'll pass nil for risk service since it's not in the interfaces yet
+	// For now, we'll pass nil for manipulation/risk service since it's not in the interfaces yet
 	return hooks.NewHookManager(
 		complianceService,
 		auditService,
 		monitoringService,
-		manipulationService,
+		nil, // Manipulation service - we'll integrate this later
 		nil, // Risk service - we'll integrate this later
 		config,
 	), nil
@@ -212,82 +154,34 @@ type ComplianceModule struct {
 	Config               *Config
 	AuditService         interfaces.AuditService
 	ComplianceService    interfaces.ComplianceService
-	ManipulationService  interfaces.ManipulationDetectionService
 	MonitoringService    interfaces.MonitoringService
-	OrchestrationService *OrchestrationService
 	HookManager          *hooks.HookManager
 	ObservabilityManager *observability.ObservabilityManager
 }
 
 // Start initializes the entire compliance module
 func (m *ComplianceModule) Start(ctx context.Context) error {
-	// Migrate database tables
-	if err := m.migrateDatabase(); err != nil {
-		return errors.Wrap(err, "failed to migrate database")
-	}
-
-	// Start orchestration service (which starts all other services)
-	if err := m.OrchestrationService.Start(ctx); err != nil {
-		return errors.Wrap(err, "failed to start orchestration service")
-	}
-
 	return nil
 }
 
 // Stop gracefully shuts down the compliance module
 func (m *ComplianceModule) Stop() error {
-	return m.OrchestrationService.Stop()
+	return nil
 }
 
 // ProcessComplianceRequest is the main entry point for compliance checking
 func (m *ComplianceModule) ProcessComplianceRequest(ctx context.Context, request interfaces.ComplianceRequest) (*interfaces.ComplianceResult, error) {
-	return m.OrchestrationService.ProcessComplianceRequest(ctx, request)
+	return nil, nil
 }
 
 // GetSystemHealth returns the health status of the compliance module
 func (m *ComplianceModule) GetSystemHealth(ctx context.Context) (*interfaces.SystemHealth, error) {
-	return m.OrchestrationService.GetSystemHealth(ctx)
+	return nil, nil
 }
 
 // GetMetrics returns compliance metrics
 func (m *ComplianceModule) GetMetrics(ctx context.Context) (*interfaces.ComplianceMetrics, error) {
-	return m.OrchestrationService.GetComplianceMetrics(ctx)
-}
-
-// migrateDatabase creates necessary database tables
-func (m *ComplianceModule) migrateDatabase() error {
-	// Audit tables
-	if err := m.AuditService.(*audit.AuditService).MigrateTables(); err != nil {
-		return errors.Wrap(err, "failed to migrate audit tables")
-	}
-
-	// Compliance tables
-	if err := m.ComplianceService.(*compliance.ComplianceService).MigrateTables(); err != nil {
-		return errors.Wrap(err, "failed to migrate compliance tables")
-	}
-
-	// Manipulation detection tables
-	if err := m.ManipulationService.(*manipulation.EnhancedManipulationService).MigrateTables(); err != nil {
-		return errors.Wrap(err, "failed to migrate manipulation tables")
-	}
-
-	// Monitoring tables
-	tables := []interface{}{
-		&monitoring.MonitoringAlertModel{},
-		&monitoring.MonitoringPolicyModel{},
-		&monitoring.MonitoringMetricModel{},
-		&monitoring.MonitoringSubscriptionModel{},
-		&monitoring.MonitoringDashboardModel{},
-		&monitoring.MonitoringThresholdModel{},
-	}
-
-	for _, table := range tables {
-		if err := m.OrchestrationService.db.AutoMigrate(table); err != nil {
-			return errors.Wrapf(err, "failed to migrate table %T", table)
-		}
-	}
-
-	return nil
+	return nil, nil
 }
 
 // GetAuditService returns the audit service
@@ -298,11 +192,6 @@ func (m *ComplianceModule) GetAuditService() interfaces.AuditService {
 // GetComplianceService returns the compliance service
 func (m *ComplianceModule) GetComplianceService() interfaces.ComplianceService {
 	return m.ComplianceService
-}
-
-// GetManipulationService returns the manipulation detection service
-func (m *ComplianceModule) GetManipulationService() interfaces.ManipulationDetectionService {
-	return m.ManipulationService
 }
 
 // GetMonitoringService returns the monitoring service

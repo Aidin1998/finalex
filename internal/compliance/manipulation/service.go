@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/database"
-	aml "github.com/Aidin1998/finalex/internal/risk/compliance/aml"
 	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/gin-gonic/gin"
 
@@ -33,7 +32,6 @@ type ManipulationService struct {
 	// Integration points
 	tradingEngine *engine.MatchingEngine
 	database      *database.DatabaseConnection
-	riskService   aml.AMLService
 
 	// Service state
 	started   bool
@@ -157,12 +155,11 @@ type APIResponse struct {
 func NewManipulationService(
 	logger *zap.SugaredLogger,
 	database *database.DatabaseConnection,
-	riskService aml.AMLService,
 	tradingEngine *engine.MatchingEngine,
 	config ManipulationServiceConfig,
 ) *ManipulationService {
 	// Create detector
-	detector := NewManipulationDetector(logger, riskService, config.DetectionConfig, tradingEngine)
+	detector := NewManipulationDetector(logger, config.DetectionConfig, tradingEngine)
 
 	// Create alerting service
 	alertingService := NewAlertingService(logger, config.AlertingConfig)
@@ -171,7 +168,7 @@ func NewManipulationService(
 	investigationService := NewInvestigationService(logger, database)
 
 	// Create compliance service
-	complianceService := NewComplianceReportingService(logger, riskService)
+	complianceService := NewComplianceReportingService(logger)
 
 	return &ManipulationService{
 		logger:               logger,
@@ -182,7 +179,6 @@ func NewManipulationService(
 		config:               config,
 		tradingEngine:        tradingEngine,
 		database:             database,
-		riskService:          riskService,
 		metrics:              ServiceMetrics{},
 	}
 }
@@ -281,7 +277,7 @@ func (ms *ManipulationService) setupIntegrations(ctx context.Context) error {
 		// If not, ensure ProcessOrder is called from the trading engine (see engine.go)
 	}
 
-	if ms.config.IntegrationConfig.RiskServiceIntegration && ms.riskService != nil {
+	if ms.config.IntegrationConfig.RiskServiceIntegration {
 		ms.logger.Info("Setting up risk service integration")
 	}
 

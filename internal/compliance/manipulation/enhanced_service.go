@@ -172,8 +172,6 @@ type EscalationRule struct {
 type InvestigationEngine struct {
 	behaviorProfiler *UserBehaviorProfiler
 	visualAnalyzer   *VisualPatternAnalyzer
-	networkAnalyzer  *NetworkAnalyzer
-	temporalAnalyzer *TemporalAnalyzer
 	investigations   map[string]*Investigation
 	mu               sync.RWMutex
 }
@@ -191,7 +189,6 @@ type Investigation struct {
 	Findings        []Finding                     `json:"findings"`
 	BehaviorProfile *UserBehaviorProfile          `json:"behavior_profile"`
 	VisualAnalysis  *VisualAnalysisResult         `json:"visual_analysis"`
-	NetworkAnalysis *NetworkAnalysisResult        `json:"network_analysis"`
 	Conclusion      string                        `json:"conclusion"`
 	Recommendations []string                      `json:"recommendations"`
 	CreatedAt       time.Time                     `json:"created_at"`
