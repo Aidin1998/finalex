@@ -81,12 +81,12 @@ type TxStatus string
 const (
 	TxStatusInitiated  TxStatus = "initiated"
 	TxStatusPending    TxStatus = "pending"
-	TxStatusConfirming TxStatus = "confirming"
+	TxStatusProcessing TxStatus = "processing"
 	TxStatusConfirmed  TxStatus = "confirmed"
 	TxStatusCompleted  TxStatus = "completed"
-	TxStatusRejected   TxStatus = "rejected"
 	TxStatusFailed     TxStatus = "failed"
 	TxStatusCancelled  TxStatus = "cancelled"
+	TxStatusRejected   TxStatus = "rejected"
 )
 
 // WithdrawalPriority represents withdrawal priority levels
@@ -103,10 +103,13 @@ const (
 
 // DepositRequest represents a deposit request
 type DepositRequest struct {
-	UserID          uuid.UUID `json:"user_id" validate:"required"`
-	Asset           string    `json:"asset" validate:"required"`
-	Network         string    `json:"network" validate:"required"`
-	GenerateAddress bool      `json:"generate_address"`
+	UserID          uuid.UUID              `json:"user_id" validate:"required"`
+	Asset           string                 `json:"asset" validate:"required"`
+	Amount          decimal.Decimal        `json:"amount" validate:"required,gt=0"`
+	ToAddress       string                 `json:"to_address" validate:"required"`
+	Network         string                 `json:"network" validate:"required"`
+	GenerateAddress bool                   `json:"generate_address"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // WithdrawalRequest represents a withdrawal request
@@ -124,20 +127,35 @@ type WithdrawalRequest struct {
 
 // DepositResponse represents a deposit response
 type DepositResponse struct {
+	ID            uuid.UUID       `json:"id"`
 	TransactionID uuid.UUID       `json:"transaction_id"`
+	Status        TxStatus        `json:"status"`
 	Address       *DepositAddress `json:"address,omitempty"`
-	QRCode        string          `json:"qr_code,omitempty"`
+	Amount        decimal.Decimal `json:"amount"`
+	Asset         string          `json:"asset"`
 	Network       string          `json:"network"`
+	QRCode        string          `json:"qr_code,omitempty"`
 	MinDeposit    decimal.Decimal `json:"min_deposit"`
 	RequiredConf  int             `json:"required_confirmations"`
+	EstimatedTime time.Duration   `json:"estimated_time,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // WithdrawalResponse represents a withdrawal response
 type WithdrawalResponse struct {
-	TransactionID uuid.UUID       `json:"transaction_id"`
-	Status        TxStatus        `json:"status"`
-	EstimatedFee  decimal.Decimal `json:"estimated_fee"`
-	ProcessingETA time.Duration   `json:"processing_eta"`
+	ID               uuid.UUID       `json:"id"`
+	TransactionID    uuid.UUID       `json:"transaction_id"`
+	Status           TxStatus        `json:"status"`
+	Amount           decimal.Decimal `json:"amount"`
+	Fee              decimal.Decimal `json:"fee"`
+	Asset            string          `json:"asset"`
+	ToAddress        string          `json:"to_address"`
+	Network          string          `json:"network"`
+	EstimatedFee     decimal.Decimal `json:"estimated_fee"`
+	ProcessingETA    time.Duration   `json:"processing_eta"`
+	EstimatedTime    time.Duration   `json:"estimated_time,omitempty"`
+	RequiresApproval bool            `json:"requires_approval"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 // TransactionStatus represents transaction status details
@@ -166,6 +184,72 @@ type AssetBalance struct {
 	Available decimal.Decimal `json:"available"`
 	Locked    decimal.Decimal `json:"locked"`
 	Total     decimal.Decimal `json:"total"`
+}
+
+// Event types for the wallet system
+type DepositInitiatedEvent struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	ToAddress     string          `json:"to_address"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type DepositConfirmedEvent struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	TxHash        string          `json:"tx_hash"`
+	Confirmations int             `json:"confirmations"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type WithdrawalInitiatedEvent struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	ToAddress     string          `json:"to_address"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type WithdrawalProcessingEvent struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	TransactionID uuid.UUID `json:"transaction_id"`
+	Status        string    `json:"status"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+type WithdrawalCompletedEvent struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	TxHash        string          `json:"tx_hash"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type WithdrawalCancelledEvent struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	TransactionID uuid.UUID `json:"transaction_id"`
+	Reason        string    `json:"reason"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+type WithdrawalFailedEvent struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	TransactionID uuid.UUID `json:"transaction_id"`
+	Error         string    `json:"error"`
+	Timestamp     time.Time `json:"timestamp"`
 }
 
 // Fireblocks integration types
@@ -215,6 +299,104 @@ type FireblocksNetworkInfo struct {
 	NumOfConfirmations    int    `json:"numOfConfirmations"`
 }
 
+// Fireblocks webhook data structure
+type FireblocksWebhookData struct {
+	Type        string                `json:"type"`
+	TenantID    string                `json:"tenantId"`
+	Timestamp   int64                 `json:"timestamp"`
+	Data        FireblocksTxData      `json:"data"`
+	TxHash      string                `json:"txHash,omitempty"`
+	NetworkFee  decimal.Decimal       `json:"networkFee,omitempty"`
+	Status      string                `json:"status"`
+	SubStatus   string                `json:"subStatus,omitempty"`
+	Amount      decimal.Decimal       `json:"amount"`
+	AssetID     string                `json:"assetId"`
+	Source      FireblocksSource      `json:"source"`
+	Destination FireblocksDestination `json:"destination"`
+	ID          string                `json:"id"`
+	CreatedAt   int64                 `json:"createdAt"`
+	LastUpdated int64                 `json:"lastUpdated"`
+}
+
+type FireblocksTxData struct {
+	ID              string                `json:"id"`
+	Status          string                `json:"status"`
+	SubStatus       string                `json:"subStatus,omitempty"`
+	TxHash          string                `json:"txHash,omitempty"`
+	Amount          decimal.Decimal       `json:"amount"`
+	AmountUSD       decimal.Decimal       `json:"amountUSD,omitempty"`
+	NetAmount       decimal.Decimal       `json:"netAmount,omitempty"`
+	AssetID         string                `json:"assetId"`
+	Source          FireblocksSource      `json:"source"`
+	Destination     FireblocksDestination `json:"destination"`
+	NetworkFee      decimal.Decimal       `json:"networkFee,omitempty"`
+	NetworkRecord   FBNetworkRecord       `json:"networkRecord,omitempty"`
+	CreatedAt       int64                 `json:"createdAt"`
+	LastUpdated     int64                 `json:"lastUpdated"`
+	CreatedBy       string                `json:"createdBy,omitempty"`
+	SignedBy        []string              `json:"signedBy,omitempty"`
+	RejectedBy      string                `json:"rejectedBy,omitempty"`
+	Note            string                `json:"note,omitempty"`
+	ExchangeTxID    string                `json:"exchangeTxId,omitempty"`
+	RequestedAmount decimal.Decimal       `json:"requestedAmount,omitempty"`
+	ReplaceTxByHash string                `json:"replaceTxByHash,omitempty"`
+	Index           int                   `json:"index,omitempty"`
+}
+
+type FBNetworkRecord struct {
+	Source      NetworkRecordEntry `json:"source,omitempty"`
+	Destination NetworkRecordEntry `json:"destination,omitempty"`
+}
+
+type NetworkRecordEntry struct {
+	Address string `json:"address,omitempty"`
+	Tag     string `json:"tag,omitempty"`
+}
+
+// Fireblocks transaction request types
+type FireblocksTransactionRequest struct {
+	AssetID               string                 `json:"assetId"`
+	Source                FireblocksSource       `json:"source"`
+	Destination           FireblocksDestination  `json:"destination"`
+	Amount                decimal.Decimal        `json:"amount"`
+	Fee                   decimal.Decimal        `json:"fee,omitempty"`
+	GasPrice              decimal.Decimal        `json:"gasPrice,omitempty"`
+	GasLimit              string                 `json:"gasLimit,omitempty"`
+	MaxFee                decimal.Decimal        `json:"maxFee,omitempty"`
+	PriorityFee           decimal.Decimal        `json:"priorityFee,omitempty"`
+	FailOnLowFee          bool                   `json:"failOnLowFee,omitempty"`
+	MaxConsecutiveRetries int                    `json:"maxConsecutiveRetries,omitempty"`
+	ReplaceTxByHash       string                 `json:"replaceTxByHash,omitempty"`
+	Note                  string                 `json:"note,omitempty"`
+	AutoStaking           bool                   `json:"autoStaking,omitempty"`
+	NetworkStaking        decimal.Decimal        `json:"networkStaking,omitempty"`
+	CpuStaking            decimal.Decimal        `json:"cpuStaking,omitempty"`
+	Operation             string                 `json:"operation,omitempty"`
+	CustomerRefID         string                 `json:"customerRefId,omitempty"`
+	ExtraParameters       map[string]interface{} `json:"extraParameters,omitempty"`
+	ExternalTxID          string                 `json:"externalTxId,omitempty"`
+	TreatAsGrossAmount    bool                   `json:"treatAsGrossAmount,omitempty"`
+	ForceSweep            bool                   `json:"forceSweep,omitempty"`
+	FeeLevel              string                 `json:"feeLevel,omitempty"`
+}
+
+type FireblocksSource struct {
+	Type    string `json:"type"` // VAULT_ACCOUNT, EXCHANGE_ACCOUNT, etc.
+	ID      string `json:"id"`   // Account ID
+	Name    string `json:"name,omitempty"`
+	SubType string `json:"subType,omitempty"`
+}
+
+type FireblocksDestination struct {
+	Type        string `json:"type"`         // VAULT_ACCOUNT, EXTERNAL_WALLET, etc.
+	ID          string `json:"id,omitempty"` // Account ID for internal transfers
+	Name        string `json:"name,omitempty"`
+	SubType     string `json:"subType,omitempty"`
+	Address     string `json:"address,omitempty"` // For external destinations
+	Tag         string `json:"tag,omitempty"`     // For memo/tag chains
+	DisplayName string `json:"displayName,omitempty"`
+}
+
 // Event types for integration
 
 // WalletEvent represents a wallet event
@@ -260,11 +442,13 @@ type AddressValidationRequest struct {
 	Address string `json:"address" validate:"required"`
 	Asset   string `json:"asset" validate:"required"`
 	Network string `json:"network" validate:"required"`
+	Tag     string `json:"tag,omitempty"`
 }
 
 // AddressValidationResult represents address validation result
 type AddressValidationResult struct {
 	Valid   bool   `json:"valid"`
+	IsValid bool   `json:"is_valid"`
 	Reason  string `json:"reason,omitempty"`
 	Format  string `json:"format,omitempty"`
 	Network string `json:"network,omitempty"`
