@@ -408,7 +408,7 @@ func (wr *WalletRepository) GetTransactionStats(ctx context.Context, userID uuid
 		From:     from,
 		To:       to,
 		ByAsset:  make(map[string]*interfaces.AssetStats),
-		ByStatus: make(map[string]int),
+		ByStatus: make(map[interfaces.TxStatus]int64),
 	}
 
 	// Get transaction counts by status
@@ -425,10 +425,9 @@ func (wr *WalletRepository) GetTransactionStats(ctx context.Context, userID uuid
 	if err != nil {
 		return nil, err
 	}
-
 	for _, sc := range statusCounts {
-		stats.ByStatus[sc.Status] = sc.Count
-		stats.TotalTransactions += sc.Count
+		stats.ByStatus[interfaces.TxStatus(sc.Status)] = int64(sc.Count)
+		stats.TotalTransactions += int64(sc.Count)
 	}
 
 	// Get asset statistics
@@ -454,12 +453,11 @@ func (wr *WalletRepository) GetTransactionStats(ctx context.Context, userID uuid
 				Asset: as.Asset,
 			}
 		}
-
 		if as.Direction == string(interfaces.DirectionDeposit) {
-			stats.ByAsset[as.Asset].DepositCount = as.Count
+			stats.ByAsset[as.Asset].DepositCount = int64(as.Count)
 			stats.ByAsset[as.Asset].DepositAmount = as.TotalAmount
 		} else {
-			stats.ByAsset[as.Asset].WithdrawalCount = as.Count
+			stats.ByAsset[as.Asset].WithdrawalCount = int64(as.Count)
 			stats.ByAsset[as.Asset].WithdrawalAmount = as.TotalAmount
 		}
 	}

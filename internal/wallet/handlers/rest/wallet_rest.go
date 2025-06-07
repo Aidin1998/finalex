@@ -4,7 +4,6 @@ package rest
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -77,7 +76,6 @@ func (h *WalletHandler) RequestDeposit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
 		return
 	}
-
 	depositReq := interfaces.DepositRequest{
 		UserID:          uid,
 		Asset:           req.Asset,
@@ -85,7 +83,7 @@ func (h *WalletHandler) RequestDeposit(c *gin.Context) {
 		GenerateAddress: req.GenerateAddress,
 	}
 
-	response, err := h.walletService.RequestDeposit(c.Request.Context(), depositReq)
+	response, err := h.walletService.RequestDeposit(c.Request.Context(), &depositReq)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -149,7 +147,7 @@ func (h *WalletHandler) RequestWithdrawal(c *gin.Context) {
 		Note:           req.Note,
 	}
 
-	response, err := h.walletService.RequestWithdrawal(c.Request.Context(), withdrawalReq)
+	response, err := h.walletService.RequestWithdrawal(c.Request.Context(), &withdrawalReq)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -242,20 +240,26 @@ func (h *WalletHandler) GetBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
 		return
 	}
-
 	// Parse asset filter
-	var assets []string
-	if asset := c.Query("asset"); asset != "" {
-		assets = strings.Split(asset, ",")
-	}
+	asset := c.Query("asset")
 
-	balance, err := h.walletService.GetBalance(c.Request.Context(), uid, assets)
-	if err != nil {
-		h.handleError(c, err)
-		return
+	if asset != "" {
+		// Get balance for specific asset
+		balance, err := h.walletService.GetBalance(c.Request.Context(), uid, asset)
+		if err != nil {
+			h.handleError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, balance)
+	} else {
+		// Get all balances
+		balances, err := h.walletService.GetBalances(c.Request.Context(), uid)
+		if err != nil {
+			h.handleError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, balances)
 	}
-
-	c.JSON(http.StatusOK, balance)
 }
 
 // GetDepositAddress returns or creates a deposit address
@@ -307,14 +311,13 @@ func (h *WalletHandler) ValidateAddress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	validationReq := interfaces.AddressValidationRequest{
 		Address: req.Address,
 		Asset:   req.Asset,
 		Network: req.Network,
 	}
 
-	result, err := h.walletService.ValidateAddress(c.Request.Context(), validationReq)
+	result, err := h.walletService.ValidateAddress(c.Request.Context(), &validationReq)
 	if err != nil {
 		h.handleError(c, err)
 		return

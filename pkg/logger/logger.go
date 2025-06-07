@@ -7,6 +7,9 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Logger is an alias for zap.Logger for consistency
+type Logger = *zap.Logger
+
 // NewLogger creates a new logger
 func NewLogger(level string) (*zap.Logger, error) {
 	// Parse log level

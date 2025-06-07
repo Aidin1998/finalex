@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"your-project/internal/wallet/config"
-	"your-project/internal/wallet/interfaces"
-	"your-project/internal/wallet/state"
-	"your-project/pkg/logger"
+	"github.com/Aidin1998/finalex/internal/wallet/config"
+	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
+	"github.com/Aidin1998/finalex/internal/wallet/state"
+	"github.com/Aidin1998/finalex/pkg/logger"
 )
 
 // ConfirmationWorker monitors transaction confirmations
