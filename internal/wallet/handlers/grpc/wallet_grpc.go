@@ -8,13 +8,12 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
+	pb "github.com/Aidin1998/finalex/proto/wallet"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	"your-project/internal/wallet/interfaces"
-	pb "your-project/proto/wallet"
 )
 
 // WalletHandler implements the gRPC wallet service

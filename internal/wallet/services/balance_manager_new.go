@@ -239,6 +239,35 @@ func (bm *BalanceManager) CalculateBalance(ctx context.Context, userID uuid.UUID
 	return bm.GetBalance(ctx, userID, asset)
 }
 
+// GetBalanceHistory retrieves balance change history
+func (bm *BalanceManager) GetBalanceHistory(ctx context.Context, userID uuid.UUID, asset string, limit, offset int) ([]*interfaces.BalanceHistoryEntry, error) {
+	// Get transactions as a proxy for balance history
+	transactions, err := bm.repository.GetUserTransactions(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction history: %w", err)
+	}
+
+	// Filter by asset and convert to balance history
+	history := make([]*interfaces.BalanceHistoryEntry, 0)
+	for _, tx := range transactions {
+		if tx.Asset == asset {
+			entry := &interfaces.BalanceHistoryEntry{
+				ID:            tx.ID,
+				UserID:        tx.UserID,
+				Asset:         tx.Asset,
+				Amount:        tx.Amount,
+				BalanceBefore: decimal.Zero, // Would need separate tracking
+				BalanceAfter:  decimal.Zero, // Would need separate tracking
+				TxType:        string(tx.Direction),
+				Timestamp:     tx.CreatedAt,
+			}
+			history = append(history, entry)
+		}
+	}
+
+	return history, nil
+}
+
 // Private helper methods
 
 func (bm *BalanceManager) createZeroBalance(ctx context.Context, userID uuid.UUID, asset string) (*interfaces.AssetBalance, error) {

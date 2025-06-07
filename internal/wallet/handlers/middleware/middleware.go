@@ -6,16 +6,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/userauth"
+	"github.com/Aidin1998/finalex/internal/userauth/auth"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
-
-	"your-project/internal/auth"
-	"your-project/pkg/logger"
 )
 
 // AuthMiddleware provides JWT authentication for wallet endpoints
-func AuthMiddleware(authService auth.Service) gin.HandlerFunc {
+func AuthMiddleware(userAuthService *userauth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -33,22 +33,14 @@ func AuthMiddleware(authService auth.Service) gin.HandlerFunc {
 		}
 
 		token := parts[1]
-		claims, err := authService.ValidateToken(token)
+		claims, err := userAuthService.AuthService().ValidateToken(c.Request.Context(), token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			c.Abort()
 			return
 		}
-
-		// Set user ID in context
-		userID, err := uuid.Parse(claims.UserID)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID in token"})
-			c.Abort()
-			return
-		}
-
-		c.Set("user_id", userID)
+		// Set user ID and claims in context
+		c.Set("user_id", claims.UserID)
 		c.Set("user_claims", claims)
 		c.Next()
 	}
@@ -117,15 +109,15 @@ func (m *UserRateLimitMiddleware) Middleware() gin.HandlerFunc {
 }
 
 // LoggingMiddleware logs wallet API requests
-func LoggingMiddleware(log logger.Logger) gin.HandlerFunc {
+func LoggingMiddleware(log *zap.Logger) gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
 		log.Info("wallet_api_request",
-			"method", param.Method,
-			"path", param.Path,
-			"status", param.StatusCode,
-			"latency", param.Latency,
-			"client_ip", param.ClientIP,
-			"user_agent", param.Request.UserAgent(),
+			zap.String("method", param.Method),
+			zap.String("path", param.Path),
+			zap.Int("status", param.StatusCode),
+			zap.Duration("latency", param.Latency),
+			zap.String("client_ip", param.ClientIP),
+			zap.String("user_agent", param.Request.UserAgent()),
 		)
 		return ""
 	})
@@ -163,7 +155,7 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 }
 
 // TwoFactorMiddleware validates 2FA for sensitive operations
-func TwoFactorMiddleware(authService auth.Service) gin.HandlerFunc {
+func TwoFactorMiddleware(userAuthService *userauth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Only apply to withdrawal endpoints
 		if !strings.Contains(c.Request.URL.Path, "withdrawal") {
@@ -199,8 +191,9 @@ func TwoFactorMiddleware(authService auth.Service) gin.HandlerFunc {
 			return
 		}
 
-		// Validate 2FA token
-		if err := authService.ValidateTwoFactor(uid, twoFactorToken); err != nil {
+		// Validate 2FA token using TwoFAService
+		valid, err := userAuthService.TwoFAService().VerifyTOTP(c.Request.Context(), uid, twoFactorToken)
+		if err != nil || !valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid two-factor token"})
 			c.Abort()
 			return
@@ -220,8 +213,8 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		userClaims, ok := claims.(*auth.Claims)
-		if !ok || !userClaims.IsAdmin {
+		userClaims, ok := claims.(*auth.TokenClaims)
+		if !ok || userClaims.Role != "admin" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "admin access required"})
 			c.Abort()
 			return

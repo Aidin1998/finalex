@@ -415,6 +415,110 @@ type WalletEvent struct {
 // Custom JSONB type for metadata
 type JSONB map[string]interface{}
 
+// Additional missing types for services
+
+// AddressGenerationRequest represents request to generate address
+type AddressGenerationRequest struct {
+	UserID  uuid.UUID `json:"user_id" validate:"required"`
+	Asset   string    `json:"asset" validate:"required"`
+	Network string    `json:"network" validate:"required"`
+	Tag     string    `json:"tag,omitempty"`
+}
+
+// AddressStatistics represents address statistics
+type AddressStatistics struct {
+	TotalAddresses  int            `json:"total_addresses"`
+	ActiveAddresses int            `json:"active_addresses"`
+	ByAsset         map[string]int `json:"by_asset"`
+	ByNetwork       map[string]int `json:"by_network"`
+	LastGenerated   *time.Time     `json:"last_generated,omitempty"`
+	OldestAddress   *time.Time     `json:"oldest_address,omitempty"`
+}
+
+// BalanceHistoryEntry represents balance history entry
+type BalanceHistoryEntry struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	BalanceBefore decimal.Decimal `json:"balance_before"`
+	BalanceAfter  decimal.Decimal `json:"balance_after"`
+	TxType        string          `json:"tx_type"`
+	TxRef         string          `json:"tx_ref"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+// Fireblocks specific request types
+type FireblocksAddressRequest struct {
+	VaultAccountID string `json:"vaultAccountId"`
+	AssetID        string `json:"assetId"`
+	Description    string `json:"description,omitempty"`
+	CustomerRefID  string `json:"customerRefId,omitempty"`
+}
+
+type FireblocksAddress struct {
+	AssetID       string `json:"assetId"`
+	Address       string `json:"address"`
+	Tag           string `json:"tag,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Type          string `json:"type"`
+	CustomerRefID string `json:"customerRefId,omitempty"`
+}
+
+type FireblocksAddressValidationRequest struct {
+	AssetID string `json:"assetId"`
+	Address string `json:"address"`
+}
+
+type FireblocksAddressValidationResult struct {
+	IsValid bool   `json:"isValid"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+type FireblocksVault struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Assets []struct {
+		ID      string `json:"id"`
+		Balance string `json:"balance"`
+	} `json:"assets"`
+}
+
+type FireblocksBalance struct {
+	Available string `json:"available"`
+	Pending   string `json:"pending"`
+	Frozen    string `json:"frozen"`
+	Locked    string `json:"locked"`
+	Total     string `json:"total"`
+}
+
+type FireblocksTransaction struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	TxHash    string `json:"txHash"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type FireblocksTransactionFilters struct {
+	Status  string `json:"status,omitempty"`
+	AssetID string `json:"assetId,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Before  string `json:"before,omitempty"`
+	After   string `json:"after,omitempty"`
+}
+
+type FireblocksAsset struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type FireblocksNetworkFee struct {
+	Low    decimal.Decimal `json:"low"`
+	Medium decimal.Decimal `json:"medium"`
+	High   decimal.Decimal `json:"high"`
+}
+
 // Compliance integration
 
 // ComplianceCheckRequest represents compliance check request

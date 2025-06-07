@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"your-project/internal/wallet/interfaces"
+	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
 )
 
 // WalletHandler handles REST API requests for wallet operations
