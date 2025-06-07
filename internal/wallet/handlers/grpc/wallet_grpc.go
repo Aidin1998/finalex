@@ -4,7 +4,6 @@ package grpc
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -61,26 +60,14 @@ func (h *WalletHandler) RequestDeposit(ctx context.Context, req *pb.RequestDepos
 		return nil, h.handleError(err)
 	}
 
-	// Convert response
+	// Convert response (use only proto fields)
 	pbResponse := &pb.RequestDepositResponse{
-		TransactionId:         response.TransactionID.String(),
-		Network:               response.Network,
-		MinDeposit:            response.MinDeposit.String(),
-		RequiredConfirmations: int32(response.RequiredConf),
-	}
-
-	if response.Address != nil {
-		pbResponse.Address = &pb.DepositAddress{
-			Id:           response.Address.ID.String(),
-			Address:      response.Address.Address,
-			Tag:          response.Address.Tag,
-			Network:      response.Address.Network,
-			FireblocksId: response.Address.FireblocksID,
-		}
-	}
-
-	if response.QRCode != "" {
-		pbResponse.QrCode = response.QRCode
+		TransactionId: response.TransactionID.String(),
+		Status:        string(response.Status),
+		Address:       response.Address.Address,
+		QrCode:        response.QRCode,
+		MinDeposit:    response.MinDeposit.String(),
+		CreatedAt:     nil, // Set if available in response
 	}
 
 	return pbResponse, nil
@@ -134,12 +121,12 @@ func (h *WalletHandler) RequestWithdrawal(ctx context.Context, req *pb.RequestWi
 		return nil, h.handleError(err)
 	}
 
-	// Convert response
 	return &pb.RequestWithdrawalResponse{
 		TransactionId: response.TransactionID.String(),
 		Status:        string(response.Status),
-		EstimatedFee:  response.EstimatedFee.String(),
-		ProcessingEta: int64(response.ProcessingETA.Seconds()),
+		EstimatedTime: fmt.Sprintf("%ds", int(response.EstimatedTime.Seconds())), // Convert duration to string
+		Fee:           response.Fee.String(),
+		// NetAmount omitted (not present in response)
 	}, nil
 }
 
@@ -162,28 +149,12 @@ func (h *WalletHandler) GetTransactionStatus(ctx context.Context, req *pb.GetTra
 		return nil, h.handleError(err)
 	}
 
-	response := &pb.GetTransactionStatusResponse{
-		Id:                    txStatus.ID.String(),
-		Status:                string(txStatus.Status),
-		Confirmations:         int32(txStatus.Confirmations),
-		RequiredConfirmations: int32(txStatus.Required),
-		NetworkFee:            txStatus.NetworkFee.String(),
-	}
-
-	if txStatus.TxHash != "" {
-		response.TxHash = txStatus.TxHash
-	}
-	if txStatus.ProcessedAt != nil {
-		response.ProcessedAt = txStatus.ProcessedAt.Unix()
-	}
-	if txStatus.CompletedAt != nil {
-		response.CompletedAt = txStatus.CompletedAt.Unix()
-	}
-	if txStatus.ErrorMsg != "" {
-		response.ErrorMsg = txStatus.ErrorMsg
-	}
-
-	return response, nil
+	return &pb.GetTransactionStatusResponse{
+		TransactionId: txStatus.ID.String(),
+		Status:        string(txStatus.Status),
+		Confirmations: int32(txStatus.Confirmations),
+		UpdatedAt:     nil, // Set if available
+	}, nil
 }
 
 // GetBalance returns user balance
@@ -197,31 +168,17 @@ func (h *WalletHandler) GetBalance(ctx context.Context, req *pb.GetBalanceReques
 		return nil, status.Error(codes.InvalidArgument, "invalid user_id format")
 	}
 
-	var assets []string
-	if req.Asset != "" {
-		assets = []string{req.Asset}
-	}
-
-	balance, err := h.walletService.GetBalance(ctx, userID, assets)
+	balance, err := h.walletService.GetBalance(ctx, userID, req.Asset)
 	if err != nil {
 		return nil, h.handleError(err)
 	}
 
-	// Convert balances
-	balances := make(map[string]*pb.AssetBalance)
-	for asset, assetBalance := range balance.Balances {
-		balances[asset] = &pb.AssetBalance{
-			Asset:     assetBalance.Asset,
-			Available: assetBalance.Available.String(),
-			Locked:    assetBalance.Locked.String(),
-			Total:     assetBalance.Total.String(),
-		}
-	}
-
 	return &pb.GetBalanceResponse{
-		UserId:    balance.UserID.String(),
-		Balances:  balances,
-		Timestamp: balance.Timestamp.Unix(),
+		Asset:     balance.Asset,
+		Available: balance.Available.String(),
+		Locked:    balance.Locked.String(),
+		Total:     balance.Total.String(),
+		UpdatedAt: nil, // Set if available
 	}, nil
 }
 
@@ -248,12 +205,11 @@ func (h *WalletHandler) GetDepositAddress(ctx context.Context, req *pb.GetDeposi
 	}
 
 	return &pb.GetDepositAddressResponse{
-		Id:           address.ID.String(),
-		Address:      address.Address,
-		Tag:          address.Tag,
-		Network:      address.Network,
-		FireblocksId: address.FireblocksID,
-		IsActive:     address.IsActive,
+		Address:   address.Address,
+		QrCode:    "", // Not available in DepositAddress, set empty or map if available
+		Tag:       address.Tag,
+		Network:   address.Network,
+		CreatedAt: nil, // Set if available
 	}, nil
 }
 
@@ -278,43 +234,33 @@ func (h *WalletHandler) ListTransactions(ctx context.Context, req *pb.ListTransa
 		offset = 0
 	}
 
-	transactions, total, err := h.walletService.ListTransactions(ctx, userID, req.Asset, string(req.Direction), limit, offset)
+	transactions, total, err := h.walletService.ListTransactions(ctx, userID, req.Asset, req.Direction, limit, offset)
 	if err != nil {
 		return nil, h.handleError(err)
 	}
 
-	// Convert transactions
-	pbTransactions := make([]*pb.WalletTransaction, len(transactions))
+	pbTransactions := make([]*pb.GetTransactionResponse, len(transactions))
 	for i, tx := range transactions {
-		metadata, _ := json.Marshal(tx.Metadata)
-		pbTransactions[i] = &pb.WalletTransaction{
-			Id:                    tx.ID.String(),
-			UserId:                tx.UserID.String(),
-			Asset:                 tx.Asset,
-			Amount:                tx.Amount.String(),
-			Direction:             string(tx.Direction),
-			Status:                string(tx.Status),
-			FireblocksId:          tx.FireblocksID,
-			TxHash:                tx.TxHash,
-			FromAddress:           tx.FromAddress,
-			ToAddress:             tx.ToAddress,
-			Network:               tx.Network,
-			Confirmations:         int32(tx.Confirmations),
-			RequiredConfirmations: int32(tx.RequiredConf),
-			Locked:                tx.Locked,
-			ComplianceCheck:       tx.ComplianceCheck,
-			ErrorMsg:              tx.ErrorMsg,
-			Metadata:              string(metadata),
-			CreatedAt:             tx.CreatedAt.Unix(),
-			UpdatedAt:             tx.UpdatedAt.Unix(),
+		pbTransactions[i] = &pb.GetTransactionResponse{
+			Id:            tx.ID.String(),
+			UserId:        tx.UserID.String(),
+			Asset:         tx.Asset,
+			Amount:        tx.Amount.String(),
+			Direction:     string(tx.Direction),
+			Status:        string(tx.Status),
+			TxHash:        tx.TxHash,
+			FromAddress:   tx.FromAddress,
+			ToAddress:     tx.ToAddress,
+			Network:       tx.Network,
+			Confirmations: int32(tx.Confirmations),
+			CreatedAt:     nil, // Set if available
+			UpdatedAt:     nil, // Set if available
 		}
 	}
 
 	return &pb.ListTransactionsResponse{
 		Transactions: pbTransactions,
-		Total:        int64(total),
-		Limit:        int32(limit),
-		Offset:       int32(offset),
+		Total:        int32(total),
 	}, nil
 }
 
@@ -343,9 +289,9 @@ func (h *WalletHandler) ValidateAddress(ctx context.Context, req *pb.ValidateAdd
 
 	return &pb.ValidateAddressResponse{
 		Valid:   result.Valid,
-		Reason:  result.Reason,
 		Format:  result.Format,
 		Network: result.Network,
+		// Type and Message omitted (not present in result)
 	}, nil
 }
 

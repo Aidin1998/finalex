@@ -36,3 +36,7 @@ func (f *FireblocksClientImpl) GenerateDepositAddress(ctx context.Context, asset
 func (f *FireblocksClientImpl) GetAddresses(ctx context.Context, asset, network string) ([]*interfaces.FireblocksAddress, error) {
 	return nil, nil
 }
+
+func (f *FireblocksClientImpl) GetAssetBalance(ctx context.Context, asset, network string) (*interfaces.FireblocksAssetBalance, error) {
+	return nil, nil
+}

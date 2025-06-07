@@ -9,7 +9,6 @@ import (
 	"github.com/Aidin1998/finalex/internal/accounts"
 	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/internal/marketmaking"
-	"github.com/Aidin1998/finalex/internal/risk"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/userauth"
 	"github.com/Aidin1998/finalex/internal/wallet"
@@ -28,7 +27,6 @@ type Service struct {
 	fiatSvc         fiat.Service
 	walletSvc       wallet.Service
 	marketMakingSvc marketmaking.Service
-	riskSvc         risk.Service
 	handlers        map[string]map[string]http.HandlerFunc
 }
 
@@ -52,7 +50,6 @@ func NewService(
 	fiatSvc fiat.Service,
 	walletSvc wallet.Service,
 	marketMakingSvc marketmaking.Service,
-	riskSvc risk.Service,
 ) (*Service, error) {
 	router := gin.Default()
 
@@ -65,7 +62,6 @@ func NewService(
 		fiatSvc:         fiatSvc,
 		walletSvc:       walletSvc,
 		marketMakingSvc: marketMakingSvc,
-		riskSvc:         riskSvc,
 		handlers:        make(map[string]map[string]http.HandlerFunc),
 	}
 

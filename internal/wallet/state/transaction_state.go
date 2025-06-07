@@ -306,3 +306,30 @@ func (sm *TransactionStateMachine) GetValidTransitions(from interfaces.TxStatus)
 
 	return validTransitions[from]
 }
+
+// GetCurrentState returns the current state of a transaction
+func (sm *TransactionStateMachine) GetCurrentState(ctx context.Context, txID uuid.UUID) (interfaces.TxStatus, error) {
+	tx, err := sm.repository.GetTransaction(ctx, txID)
+	if err != nil {
+		return "", err
+	}
+	return tx.Status, nil
+}
+
+// CanTransitionTo checks if a transaction can transition to a new state
+func (sm *TransactionStateMachine) CanTransitionTo(ctx context.Context, txID uuid.UUID, newState interfaces.TxStatus) (bool, error) {
+	tx, err := sm.repository.GetTransaction(ctx, txID)
+	if err != nil {
+		return false, err
+	}
+	return sm.IsValidTransition(tx.Status, newState), nil
+}
+
+// GetAllowedTransitions returns allowed transitions from the current state
+func (sm *TransactionStateMachine) GetAllowedTransitions(ctx context.Context, txID uuid.UUID) ([]interfaces.TxStatus, error) {
+	tx, err := sm.repository.GetTransaction(ctx, txID)
+	if err != nil {
+		return nil, err
+	}
+	return sm.GetValidTransitions(tx.Status), nil
+}

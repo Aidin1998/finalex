@@ -2,6 +2,7 @@
 package interfaces
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -371,6 +372,22 @@ type ComplianceCheckResult struct {
 	Reason   string   `json:"reason,omitempty"`
 	Flags    []string `json:"flags,omitempty"`
 	Score    int      `json:"score"`
+}
+
+// ComplianceService defines compliance checks for deposits/withdrawals
+// This is a stub for wallet module to allow compilation.
+type ComplianceService interface {
+	CheckWithdrawal(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error
+	CheckDeposit(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error
+}
+
+// FireblocksAssetBalance is a stub for Fireblocks asset balance
+// This is a stub for wallet module to allow compilation.
+type FireblocksAssetBalance struct {
+	Asset     string          `json:"asset"`
+	Available decimal.Decimal `json:"available"`
+	Locked    decimal.Decimal `json:"locked"`
+	Total     decimal.Decimal `json:"total"`
 }
 
 // Additional Fireblocks types for interfaces

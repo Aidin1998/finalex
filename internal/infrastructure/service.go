@@ -12,7 +12,6 @@ import (
 	"github.com/Aidin1998/finalex/internal/infrastructure/server"
 	"github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"github.com/Aidin1998/finalex/internal/marketmaking"
-	"github.com/Aidin1998/finalex/internal/risk"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/userauth"
 	"github.com/Aidin1998/finalex/internal/wallet"
@@ -29,7 +28,6 @@ type serviceImpl struct {
 	fiatSvc         fiat.Service
 	walletSvc       wallet.Service
 	marketMakingSvc marketmaking.Service
-	riskSvc         risk.Service
 	serverSvc       *server.Service
 	wsService       *ws.Service
 	wsServer        *http.Server
@@ -46,7 +44,6 @@ func NewService(
 	fiatSvc fiat.Service,
 	walletSvc wallet.Service,
 	marketMakingSvc marketmaking.Service,
-	riskSvc risk.Service,
 ) (Service, error) {
 	svc := &serviceImpl{
 		logger:          logger,
@@ -56,7 +53,6 @@ func NewService(
 		fiatSvc:         fiatSvc,
 		walletSvc:       walletSvc,
 		marketMakingSvc: marketMakingSvc,
-		riskSvc:         riskSvc,
 		config:          make(map[string]interface{}),
 		handlers:        make(map[string]map[string]http.HandlerFunc),
 	}
@@ -90,7 +86,6 @@ func (s *serviceImpl) StartServer(ctx context.Context, port string) error {
 		s.fiatSvc,
 		s.walletSvc,
 		s.marketMakingSvc,
-		s.riskSvc,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create server service: %w", err)

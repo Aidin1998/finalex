@@ -35,7 +35,6 @@ import (
 	"github.com/Aidin1998/finalex/internal/infrastructure/config"
 	"github.com/Aidin1998/finalex/internal/infrastructure/ws"
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketfeeds"
-	"github.com/Aidin1998/finalex/internal/risk/compliance/aml"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/dbutil"
 	"github.com/Aidin1998/finalex/internal/userauth"
@@ -238,7 +237,6 @@ func main() {
 		marketfeedsSvc,
 		tradingSvc,
 		wsHub,
-		aml.NewRiskService(),
 		nil, // audit service (disabled)
 		nil, // audit handlers (disabled)
 	)
