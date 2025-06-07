@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/compliance/risk"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -18,7 +18,7 @@ import (
 type ComplianceReportingService struct {
 	mu          sync.RWMutex
 	logger      *zap.SugaredLogger
-	riskService aml.RiskService
+	riskService risk.RiskService
 
 	// Report generators
 	sarGenerator    *SARGenerator
@@ -368,7 +368,7 @@ type TableData struct {
 // NewComplianceReportingService creates a new compliance reporting service
 func NewComplianceReportingService(
 	logger *zap.SugaredLogger,
-	riskService aml.RiskService,
+	riskService risk.RiskService,
 ) *ComplianceReportingService {
 	return &ComplianceReportingService{
 		logger:          logger,

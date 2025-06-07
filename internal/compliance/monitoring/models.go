@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/google/uuid"
 )
 
 // MonitoringAlertModel represents monitoring alerts in the database
@@ -27,14 +28,52 @@ func (MonitoringAlertModel) TableName() string {
 
 // ToInterface converts the model to interface type
 func (m *MonitoringAlertModel) ToInterface() interfaces.MonitoringAlert {
+	// Parse ID as UUID, use empty UUID if parsing fails
+	id, err := uuid.Parse(m.ID)
+	if err != nil {
+		id = uuid.Nil
+	}
+
+	// Convert string severity to AlertSeverity enum
+	var severity interfaces.AlertSeverity
+	switch m.Severity {
+	case "low":
+		severity = interfaces.AlertSeverityLow
+	case "medium":
+		severity = interfaces.AlertSeverityMedium
+	case "high":
+		severity = interfaces.AlertSeverityHigh
+	case "critical":
+		severity = interfaces.AlertSeverityCritical
+	default:
+		severity = interfaces.AlertSeverityLow
+	}
+
+	// Convert string status to AlertStatus enum
+	var status interfaces.AlertStatus
+	switch m.Status {
+	case "pending":
+		status = interfaces.AlertStatusPending
+	case "acknowledged":
+		status = interfaces.AlertStatusAcknowledged
+	case "investigating":
+		status = interfaces.AlertStatusInvestigating
+	case "resolved":
+		status = interfaces.AlertStatusResolved
+	case "dismissed":
+		status = interfaces.AlertStatusDismissed
+	default:
+		status = interfaces.AlertStatusPending
+	}
+
 	return interfaces.MonitoringAlert{
-		ID:        m.ID,
+		ID:        id,
 		UserID:    m.UserID,
 		AlertType: m.AlertType,
-		Severity:  m.Severity,
+		Severity:  severity,
 		Message:   m.Message,
-		Data:      m.Data,
-		Status:    m.Status,
+		Details:   m.Data, // Use Details instead of Data
+		Status:    status,
 		Timestamp: m.Timestamp,
 	}
 }
@@ -61,16 +100,55 @@ func (MonitoringPolicyModel) TableName() string {
 
 // ToInterface converts the model to interface type
 func (m *MonitoringPolicyModel) ToInterface() interfaces.MonitoringPolicy {
+	// Parse ID as UUID, use empty UUID if parsing fails
+	id, err := uuid.Parse(m.ID)
+	if err != nil {
+		id = uuid.Nil
+	}
+
+	// Convert conditions map to PolicyCondition slice
+	var conditions []interfaces.PolicyCondition
+	if m.Conditions != nil {
+		// This is a simplified conversion - in practice you'd need more sophisticated logic
+		for field, value := range m.Conditions {
+			conditions = append(conditions, interfaces.PolicyCondition{
+				Field:    field,
+				Operator: "equals", // Default operator
+				Value:    value,
+				Type:     "string", // Default type
+			})
+		}
+	}
+	// Convert to PolicyAction slice - simplified for now
+	var actions []interfaces.PolicyAction
+	if m.Action != "" {
+		actions = append(actions, interfaces.PolicyAction{
+			Type:       m.Action,
+			Parameters: make(map[string]interface{}),
+		})
+	}
+
+	// Convert legacy fields to thresholds map
+	thresholds := make(map[string]interface{})
+	if m.Threshold > 0 {
+		thresholds["threshold"] = m.Threshold
+	}
+	if m.TimeWindow > 0 {
+		thresholds["time_window"] = m.TimeWindow.String()
+	}
+
 	return interfaces.MonitoringPolicy{
-		ID:         m.ID,
-		Name:       m.Name,
-		AlertType:  m.AlertType,
-		Enabled:    m.Enabled,
-		Threshold:  m.Threshold,
-		TimeWindow: m.TimeWindow,
-		Action:     m.Action,
-		Conditions: m.Conditions,
-		Recipients: m.Recipients,
+		ID:          m.ID,
+		Name:        m.Name,
+		Description: "", // Not available in model
+		AlertType:   m.AlertType,
+		Enabled:     m.Enabled,
+		Conditions:  conditions,
+		Actions:     actions,
+		Thresholds:  thresholds,
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
+		CreatedBy:   id, // Using policy ID as created by for now
 	}
 }
 

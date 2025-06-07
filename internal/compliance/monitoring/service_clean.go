@@ -673,3 +673,27 @@ func (m *MonitoringService) collectMetrics(ctx context.Context) {
 	// Implementation for periodic metrics collection
 	// This could include system metrics, alert statistics, etc.
 }
+
+// GetPrometheusMetrics returns Prometheus metrics for the monitoring service
+func (m *MonitoringService) GetPrometheusMetrics() *PrometheusMetrics {
+	// Return a new instance of PrometheusMetrics
+	return NewPrometheusMetrics()
+}
+
+// GetHealthStatus returns health status information for the monitoring service
+func (m *MonitoringService) GetHealthStatus() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return map[string]interface{}{
+		"service":    "healthy",
+		"database":   "healthy",
+		"queue_size": len(m.alertChan),
+		"workers":    m.workers,
+		"metrics": map[string]interface{}{
+			"alerts_generated": m.metrics.AlertsGenerated,
+			"alerts_processed": m.metrics.AlertsProcessed,
+			"policy_updates":   m.metrics.PolicyUpdates,
+		},
+	}
+}

@@ -175,20 +175,21 @@ func (ec *EmailChannel) SendAlert(ctx context.Context, alert interfaces.Monitori
 		return nil
 	}
 
-	body := fmt.Sprintf(`
-Compliance Alert
-
-Alert ID: %s
-User ID: %s
-Type: %s
-Severity: %s
-Status: %s
-Message: %s
-Timestamp: %s
-
-Details: %+v
-`, alert.ID, alert.UserID, alert.AlertType, alert.Severity.String(),
-		alert.Status.String(), alert.Message, alert.Timestamp.Format(time.RFC3339), alert.Details)
+	// For production, implement actual SMTP sending with the formatted body
+	// body := fmt.Sprintf(`
+	// Compliance Alert
+	//
+	// Alert ID: %s
+	// User ID: %s
+	// Type: %s
+	// Severity: %s
+	// Status: %s
+	// Message: %s
+	// Timestamp: %s
+	//
+	// Details: %+v
+	// `, alert.ID, alert.UserID, alert.AlertType, alert.Severity.String(),
+	// 	alert.Status.String(), alert.Message, alert.Timestamp.Format(time.RFC3339), alert.Details)
 
 	// For production, implement actual SMTP sending
 	// This is a placeholder implementation

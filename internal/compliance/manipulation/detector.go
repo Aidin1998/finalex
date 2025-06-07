@@ -11,7 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
-	"github.com/Aidin1998/finalex/internal/compliance/aml"
+	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/Aidin1998/finalex/internal/compliance/risk"
 	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/Aidin1998/finalex/internal/trading/model"
 )
@@ -44,21 +45,23 @@ type Evidence struct {
 }
 
 // ManipulationAlert represents an alert for detected manipulation
+// Add PatternIface for interfaces.ManipulationPattern
 type ManipulationAlert struct {
-	ID              string              `json:"id"`
-	UserID          string              `json:"user_id"`
-	Market          string              `json:"market"`
-	Pattern         ManipulationPattern `json:"pattern"`
-	RiskScore       decimal.Decimal     `json:"risk_score"`
-	ActionRequired  string              `json:"action_required"` // "suspend", "investigate", "monitor"
-	Status          string              `json:"status"`          // "open", "investigating", "resolved"
-	CreatedAt       time.Time           `json:"created_at"`
-	UpdatedAt       time.Time           `json:"updated_at"`
-	InvestigatorID  string              `json:"investigator_id"`
-	ResolutionNotes string              `json:"resolution_notes"`
-	AutoSuspended   bool                `json:"auto_suspended"`
-	RelatedOrderIDs []string            `json:"related_order_ids"`
-	RelatedTradeIDs []string            `json:"related_trade_ids"`
+	ID              string                         `json:"id"`
+	UserID          string                         `json:"user_id"`
+	Market          string                         `json:"market"`
+	Pattern         ManipulationPattern            `json:"pattern"`       // legacy/local
+	PatternIface    interfaces.ManipulationPattern `json:"pattern_iface"` // canonical
+	RiskScore       decimal.Decimal                `json:"risk_score"`
+	ActionRequired  string                         `json:"action_required"` // "suspend", "investigate", "monitor"
+	Status          string                         `json:"status"`          // "open", "investigating", "resolved"
+	CreatedAt       time.Time                      `json:"created_at"`
+	UpdatedAt       time.Time                      `json:"updated_at"`
+	InvestigatorID  string                         `json:"investigator_id"`
+	ResolutionNotes string                         `json:"resolution_notes"`
+	AutoSuspended   bool                           `json:"auto_suspended"`
+	RelatedOrderIDs []string                       `json:"related_order_ids"`
+	RelatedTradeIDs []string                       `json:"related_trade_ids"`
 }
 
 // TradingActivity represents user trading activity for analysis
@@ -98,7 +101,7 @@ type DetectedPattern struct {
 type ManipulationDetector struct {
 	mu          sync.RWMutex
 	logger      *zap.SugaredLogger
-	riskService aml.RiskService
+	riskService risk.RiskService
 
 	// Detection configuration
 	config DetectionConfig
@@ -201,7 +204,7 @@ type OrderBookDepth struct {
 }
 
 // NewManipulationDetector creates a new manipulation detection engine
-func NewManipulationDetector(logger *zap.SugaredLogger, riskService aml.RiskService, config DetectionConfig, tradingEngine TradingEngine) *ManipulationDetector {
+func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskService, config DetectionConfig, tradingEngine TradingEngine) *ManipulationDetector {
 	md := &ManipulationDetector{
 		logger:         logger,
 		riskService:    riskService,
@@ -407,16 +410,95 @@ func (md *ManipulationDetector) analyzeTrade(trade *model.Trade) {
 	md.updateMarketMetrics(market, trade)
 }
 
+// Conversion helpers
+func toInterfacesTradingActivity(activity *TradingActivity) *interfaces.TradingActivity {
+	userUUID, _ := uuid.Parse(activity.UserID)
+	orders := make([]interfaces.Order, len(activity.Orders))
+	for i, o := range activity.Orders {
+		orders[i] = interfaces.Order{
+			ID:        o.ID.String(),
+			UserID:    o.UserID,
+			Market:    o.Pair,
+			Side:      o.Side,
+			Type:      o.Type,
+			Quantity:  o.Quantity,
+			Price:     o.Price,
+			Status:    o.Status,
+			CreatedAt: o.CreatedAt,
+			UpdatedAt: o.UpdatedAt,
+			// ExecutedAt and CancelledAt are not present in model.Order, so leave nil
+		}
+	}
+	trades := make([]interfaces.Trade, len(activity.Trades))
+	for i, t := range activity.Trades {
+		trades[i] = interfaces.Trade{
+			ID:        t.ID.String(),
+			Market:    t.Pair,
+			BuyerID:   t.UserID,        // Approximate: model.Trade does not distinguish buyer/seller
+			SellerID:  t.CounterUserID, // Approximate
+			Quantity:  t.Quantity,
+			Price:     t.Price,
+			Timestamp: t.CreatedAt,
+			OrderIDs:  []string{t.OrderID.String(), t.CounterOrderID.String()},
+		}
+	}
+	return &interfaces.TradingActivity{
+		UserID:     userUUID,
+		Market:     activity.Market,
+		Orders:     orders,
+		Trades:     trades,
+		TimeWindow: activity.TimeWindow,
+	}
+}
+
+func toInterfacesPattern(p ManipulationPattern) interfaces.ManipulationPattern {
+	// Map string type to ManipulationAlertType
+	var alertType interfaces.ManipulationAlertType
+	switch p.Type {
+	case "wash_trading":
+		alertType = interfaces.ManipulationAlertWashTrading
+	case "spoofing":
+		alertType = interfaces.ManipulationAlertSpoofing
+	case "layering":
+		alertType = interfaces.ManipulationAlertLayering
+	case "pump_dump":
+		alertType = interfaces.ManipulationAlertPumpAndDump
+	default:
+		alertType = interfaces.ManipulationAlertType(0)
+	}
+	// Convert Evidence to []PatternEvidence (best effort)
+	var evidence []interfaces.PatternEvidence
+	for _, e := range p.Evidence {
+		evidence = append(evidence, interfaces.PatternEvidence{
+			Type:        e.Type,
+			Description: e.Description,
+			Value:       e.Data,
+			Timestamp:   e.Timestamp,
+			Metadata:    nil,
+		})
+	}
+	return interfaces.ManipulationPattern{
+		Type:        alertType,
+		Confidence:  p.Confidence,
+		Description: p.Description,
+		Evidence:    evidence,
+		TimeWindow:  0, // Not tracked in local type
+		DetectedAt:  p.DetectedAt,
+		Metadata:    p.Metadata,
+	}
+}
+
 // performPatternDetection runs all pattern detection algorithms
 func (md *ManipulationDetector) performPatternDetection(activity *TradingActivity) {
 	// Calculate activity metrics
 	activity.Metrics = md.calculateActivityMetrics(activity)
 
-	var detectedPatterns []ManipulationPattern
+	var detectedPatterns []interfaces.ManipulationPattern
 
 	// Use consolidated wash trading detector if available
 	if md.consolidatedAdapter != nil {
-		if washPattern := md.consolidatedAdapter.DetectWashTrading(activity); washPattern != nil {
+		convertedActivity := toInterfacesTradingActivity(activity)
+		if washPattern := md.consolidatedAdapter.DetectWashTrading(convertedActivity); washPattern != nil {
 			detectedPatterns = append(detectedPatterns, *washPattern)
 			md.logger.Infow("Consolidated wash trading pattern detected",
 				"user_id", activity.UserID,
@@ -425,21 +507,21 @@ func (md *ManipulationDetector) performPatternDetection(activity *TradingActivit
 	} else {
 		// Fallback to legacy wash trading detector
 		if washPattern := md.washTradingDetector.Detect(activity); washPattern != nil {
-			detectedPatterns = append(detectedPatterns, *washPattern)
+			detectedPatterns = append(detectedPatterns, toInterfacesPattern(*washPattern))
 		}
 	}
 
 	// Continue using existing detectors for other patterns (for now)
 	if spoofPattern := md.spoofingDetector.Detect(activity); spoofPattern != nil {
-		detectedPatterns = append(detectedPatterns, *spoofPattern)
+		detectedPatterns = append(detectedPatterns, toInterfacesPattern(*spoofPattern))
 	}
 
 	if pumpDumpPattern := md.pumpDumpDetector.Detect(activity); pumpDumpPattern != nil {
-		detectedPatterns = append(detectedPatterns, *pumpDumpPattern)
+		detectedPatterns = append(detectedPatterns, toInterfacesPattern(*pumpDumpPattern))
 	}
 
 	if layeringPattern := md.layeringDetector.Detect(activity); layeringPattern != nil {
-		detectedPatterns = append(detectedPatterns, *layeringPattern)
+		detectedPatterns = append(detectedPatterns, toInterfacesPattern(*layeringPattern))
 	}
 
 	// Process detected patterns
@@ -485,13 +567,13 @@ func (md *ManipulationDetector) calculateActivityMetrics(activity *TradingActivi
 	return metrics
 }
 
-// handleDetectedPattern processes a detected manipulation pattern
-func (md *ManipulationDetector) handleDetectedPattern(activity *TradingActivity, pattern ManipulationPattern) {
+// Update handleDetectedPattern to accept interfaces.ManipulationPattern
+func (md *ManipulationDetector) handleDetectedPattern(activity *TradingActivity, pattern interfaces.ManipulationPattern) {
 	alert := ManipulationAlert{
 		ID:              fmt.Sprintf("alert_%d", time.Now().UnixNano()),
 		UserID:          activity.UserID,
 		Market:          activity.Market,
-		Pattern:         pattern,
+		PatternIface:    pattern,
 		RiskScore:       pattern.Confidence,
 		Status:          "open",
 		CreatedAt:       time.Now(),
@@ -500,7 +582,7 @@ func (md *ManipulationDetector) handleDetectedPattern(activity *TradingActivity,
 		RelatedTradeIDs: md.extractTradeIDs(activity.Trades),
 	}
 
-	// Determine action required based on risk score and pattern severity
+	// Determine action required based on risk score and pattern type
 	alert.ActionRequired = md.determineAction(pattern)
 
 	// Auto-suspend if enabled and threshold exceeded
@@ -517,9 +599,8 @@ func (md *ManipulationDetector) handleDetectedPattern(activity *TradingActivity,
 	md.logger.Warnw("Manipulation pattern detected",
 		"user_id", activity.UserID,
 		"market", activity.Market,
-		"pattern_type", pattern.Type,
+		"pattern_type", pattern.Type.String(),
 		"confidence", pattern.Confidence,
-		"severity", pattern.Severity,
 		"auto_suspended", alert.AutoSuspended)
 
 	// Send real-time alert if enabled
@@ -528,28 +609,25 @@ func (md *ManipulationDetector) handleDetectedPattern(activity *TradingActivity,
 	}
 }
 
-// determineAction determines the required action based on pattern severity
-func (md *ManipulationDetector) determineAction(pattern ManipulationPattern) string {
+// Update determineAction to use interfaces.ManipulationPattern
+func (md *ManipulationDetector) determineAction(pattern interfaces.ManipulationPattern) string {
 	confidence := pattern.Confidence.InexactFloat64()
-
-	switch pattern.Severity {
-	case "critical":
+	switch pattern.Type {
+	case interfaces.ManipulationAlertWashTrading, interfaces.ManipulationAlertPumpAndDump:
 		if confidence >= 90 {
 			return "suspend"
 		}
 		return "investigate"
-	case "high":
+	case interfaces.ManipulationAlertSpoofing, interfaces.ManipulationAlertLayering:
 		if confidence >= 80 {
 			return "investigate"
 		}
 		return "monitor"
-	case "medium":
+	default:
 		if confidence >= 70 {
 			return "monitor"
 		}
 		return "review"
-	default:
-		return "monitor"
 	}
 }
 

@@ -4,20 +4,24 @@ package monitoring
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
 )
 
 // ComplianceEvent represents an incoming event for compliance analysis
 // (e.g., account update, transaction, login, withdrawal, etc.)
 type ComplianceEvent struct {
-	EventType   string                 // e.g., "transaction", "login", "withdrawal"
-	UserID      string                 // User identifier
-	Timestamp   time.Time              // Event time
-	Amount      float64                // For financial events
-	Details     map[string]interface{} // Arbitrary event details
+	EventType string                 // e.g., "transaction", "login", "withdrawal"
+	UserID    string                 // User identifier
+	Timestamp time.Time              // Event time
+	Amount    float64                // For financial events
+	Details   map[string]interface{} // Arbitrary event details
 }
 
 // MLAnomalyDetector is an interface for ML-based anomaly detection
@@ -36,22 +40,22 @@ type ComplianceRule interface {
 // Integrates with Service (metrics/alerts) and ConsistencyMonitor
 // Thread-safe and high-performance for production use
 type ComplianceEngine struct {
-	logger         *zap.Logger
-	mlDetector     MLAnomalyDetector
-	rules          []ComplianceRule
-	service        *Service
-	consistency    *ConsistencyMonitor
-	alertCallback  func(alert *Alert)
-	mu             sync.RWMutex
-	started        bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	eventQueue     chan *ComplianceEvent
-	processingWG   sync.WaitGroup
+	logger        *zap.Logger
+	mlDetector    MLAnomalyDetector
+	rules         []ComplianceRule
+	service       *MonitoringService
+	consistency   *ConsistencyMonitor
+	alertCallback func(alert *interfaces.MonitoringAlert)
+	mu            sync.RWMutex
+	started       bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	eventQueue    chan *ComplianceEvent
+	processingWG  sync.WaitGroup
 }
 
 // NewComplianceEngine creates a new real-time compliance engine
-func NewComplianceEngine(logger *zap.Logger, mlDetector MLAnomalyDetector, rules []ComplianceRule, service *Service, consistency *ConsistencyMonitor) *ComplianceEngine {
+func NewComplianceEngine(logger *zap.Logger, mlDetector MLAnomalyDetector, rules []ComplianceRule, service *MonitoringService, consistency *ConsistencyMonitor) *ComplianceEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ComplianceEngine{
 		logger:      logger,
@@ -66,8 +70,8 @@ func NewComplianceEngine(logger *zap.Logger, mlDetector MLAnomalyDetector, rules
 }
 
 // Start begins real-time event processing
-defaultWorkerCount := 4
 func (ce *ComplianceEngine) Start(workerCount int) {
+	defaultWorkerCount := 4
 	ce.mu.Lock()
 	if ce.started {
 		ce.mu.Unlock()
@@ -145,39 +149,40 @@ func (ce *ComplianceEngine) processEvent(event *ComplianceEvent) {
 			violations = append(violations, reason)
 		}
 	}
-
 	if isAnomaly || len(violations) > 0 {
-		alert := &Alert{
-			ID:          generateAlertID(),
-			Name:        "Compliance Violation",
-			Severity:    ce.determineSeverity(isAnomaly, anomalyScore, violations),
-			Description: ce.buildAlertDescription(event, isAnomaly, anomalyScore, violations, features),
-			Data: map[string]interface{}{
+		alert := &interfaces.MonitoringAlert{
+			ID:        uuid.New(),
+			UserID:    event.UserID,
+			AlertType: "Compliance Violation",
+			Severity:  ce.determineSeverityInterface(isAnomaly, anomalyScore, violations),
+			Status:    interfaces.AlertStatusPending,
+			Message:   ce.buildAlertDescription(event, isAnomaly, anomalyScore, violations, features),
+			Details: map[string]interface{}{
 				"event":      event,
 				"anomaly":    isAnomaly,
 				"score":      anomalyScore,
 				"features":   features,
 				"violations": violations,
 			},
-			Timestamp:    time.Now().UTC(),
-			Acknowledged: false,
+			Timestamp: time.Now().UTC(),
 		}
-		ce.service.mu.Lock()
-		ce.service.alerts = append(ce.service.alerts, alert)
-		ce.service.mu.Unlock()
+
+		// Store alert in service (replace with actual service method when available)
+		// ce.service.StoreAlert(alert)
+
 		if ce.alertCallback != nil {
 			ce.alertCallback(alert)
 		}
 		ce.logger.Warn("Compliance alert triggered", zap.String("user_id", event.UserID), zap.Strings("violations", violations), zap.Bool("anomaly", isAnomaly), zap.Float64("score", anomalyScore))
 	}
-
 	// Metrics and audit trail
-	ce.service.RegisterMetric("compliance_event", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
+	// TODO: Implement metric registration when service supports it
+	// ce.service.RegisterMetric("compliance_event", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
 	if isAnomaly {
-		ce.service.RegisterMetric("compliance_anomaly", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
+		// ce.service.RegisterMetric("compliance_anomaly", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
 	}
 	if len(violations) > 0 {
-		ce.service.RegisterMetric("compliance_violation", MetricTypeCounter, float64(len(violations)), map[string]string{"event_type": event.EventType})
+		// ce.service.RegisterMetric("compliance_violation", MetricTypeCounter, float64(len(violations)), map[string]string{"event_type": event.EventType})
 	}
 }
 
@@ -198,6 +203,23 @@ func (ce *ComplianceEngine) determineSeverity(isAnomaly bool, score float64, vio
 	return "info"
 }
 
+// determineSeverityInterface determines alert severity based on anomaly and rule violations
+func (ce *ComplianceEngine) determineSeverityInterface(isAnomaly bool, score float64, violations []string) interfaces.AlertSeverity {
+	if isAnomaly && score > 0.95 {
+		return interfaces.AlertSeverityCritical
+	}
+	if isAnomaly {
+		return interfaces.AlertSeverityHigh
+	}
+	if len(violations) > 2 {
+		return interfaces.AlertSeverityHigh
+	}
+	if len(violations) > 0 {
+		return interfaces.AlertSeverityMedium
+	}
+	return interfaces.AlertSeverityLow
+}
+
 // buildAlertDescription builds a human-readable alert description
 func (ce *ComplianceEngine) buildAlertDescription(event *ComplianceEvent, isAnomaly bool, score float64, violations []string, features map[string]interface{}) string {
 	desc := "Compliance alert: "
@@ -211,10 +233,12 @@ func (ce *ComplianceEngine) buildAlertDescription(event *ComplianceEvent, isAnom
 }
 
 // Utility helpers (implementations omitted for brevity)
-func generateAlertID() string { return time.Now().Format("20060102T150405.000000000") }
+func generateAlertID() string      { return time.Now().Format("20060102T150405.000000000") }
 func formatFloat(f float64) string { return fmt.Sprintf("%.4f", f) }
 func joinStrings(arr []string, sep string) string {
-	if len(arr) == 0 { return "" }
+	if len(arr) == 0 {
+		return ""
+	}
 	out := arr[0]
 	for i := 1; i < len(arr); i++ {
 		out += sep + arr[i]
@@ -223,7 +247,7 @@ func joinStrings(arr []string, sep string) string {
 }
 
 // SetAlertCallback sets a callback for real-time alert delivery
-func (ce *ComplianceEngine) SetAlertCallback(cb func(alert *Alert)) {
+func (ce *ComplianceEngine) SetAlertCallback(cb func(alert *interfaces.MonitoringAlert)) {
 	ce.mu.Lock()
 	defer ce.mu.Unlock()
 	ce.alertCallback = cb

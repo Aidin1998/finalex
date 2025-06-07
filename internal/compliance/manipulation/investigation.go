@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/infrastructure/database"
+	"github.com/Aidin1998/finalex/internal/database"
 	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -17,7 +17,7 @@ import (
 type InvestigationService struct {
 	mu             sync.RWMutex
 	logger         *zap.SugaredLogger
-	database       *database.OptimizedDatabase
+	database       *database.Repository
 	replayService  *OrderReplayService
 	visualAnalyzer *VisualPatternAnalyzer
 	userProfiler   *UserBehaviorProfiler
@@ -88,7 +88,7 @@ type TimeRange struct {
 type OrderReplayService struct {
 	mu          sync.RWMutex
 	logger      *zap.SugaredLogger
-	database    *database.OptimizedDatabase
+	database    *database.Repository
 	replaySpeed time.Duration
 
 	// Active replays
@@ -229,7 +229,7 @@ type VisualIndicators struct {
 type UserBehaviorProfiler struct {
 	mu       sync.RWMutex
 	logger   *zap.SugaredLogger
-	database *database.OptimizedDatabase
+	database *database.Repository
 
 	// Profile cache
 	profileCache map[string]*UserBehaviorProfile
@@ -348,7 +348,7 @@ type BehaviorAnomaly struct {
 // NewInvestigationService creates a new investigation service
 func NewInvestigationService(
 	logger *zap.SugaredLogger,
-	database *database.OptimizedDatabase,
+	database *database.Repository,
 ) *InvestigationService {
 	return &InvestigationService{
 		logger:         logger,
@@ -363,7 +363,7 @@ func NewInvestigationService(
 // NewOrderReplayService creates a new order replay service
 func NewOrderReplayService(
 	logger *zap.SugaredLogger,
-	database *database.OptimizedDatabase,
+	database *database.Repository,
 ) *OrderReplayService {
 	return &OrderReplayService{
 		logger:        logger,
@@ -384,7 +384,7 @@ func NewVisualPatternAnalyzer(logger *zap.SugaredLogger) *VisualPatternAnalyzer 
 // NewUserBehaviorProfiler creates a new user behavior profiler
 func NewUserBehaviorProfiler(
 	logger *zap.SugaredLogger,
-	database *database.OptimizedDatabase,
+	database *database.Repository,
 ) *UserBehaviorProfiler {
 	return &UserBehaviorProfiler{
 		logger:       logger,

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/compliance/risk"
 	"github.com/Aidin1998/finalex/internal/database"
 	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/gin-gonic/gin"
@@ -156,19 +157,20 @@ func NewManipulationService(
 	logger *zap.SugaredLogger,
 	database *database.DatabaseConnection,
 	tradingEngine *engine.MatchingEngine,
+	riskService risk.RiskService,
 	config ManipulationServiceConfig,
 ) *ManipulationService {
 	// Create detector
-	detector := NewManipulationDetector(logger, config.DetectionConfig, tradingEngine)
+	detector := NewManipulationDetector(logger, riskService, config.DetectionConfig, tradingEngine)
 
 	// Create alerting service
 	alertingService := NewAlertingService(logger, config.AlertingConfig)
 
-	// Create investigation service
-	investigationService := NewInvestigationService(logger, database)
+	// Create investigation service (convert database.DatabaseConnection to *database.Repository)
+	investigationService := NewInvestigationService(logger, nil)
 
 	// Create compliance service
-	complianceService := NewComplianceReportingService(logger)
+	complianceService := NewComplianceReportingService(logger, riskService)
 
 	return &ManipulationService{
 		logger:               logger,

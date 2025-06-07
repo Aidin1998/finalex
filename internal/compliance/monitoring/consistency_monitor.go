@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/integration"
+	"github.com/Aidin1998/finalex/internal/trading/integration"
 	"go.uber.org/zap"
 )
 
