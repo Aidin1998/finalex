@@ -103,6 +103,8 @@ type FiatHook interface {
 	OnBankAccountAdded(ctx context.Context, event *BankAccountEvent) error
 	OnPaymentMethodUpdated(ctx context.Context, event *PaymentMethodEvent) error
 	OnFiatTransactionFailed(ctx context.Context, event *FiatTransactionFailedEvent) error
+	// Additional methods expected by manager.go
+	OnFiatTransfer(ctx context.Context, event *FiatTransferEvent) error
 }
 
 // WalletHook defines hooks for wallet events
@@ -112,6 +114,9 @@ type WalletHook interface {
 	OnWalletCreated(ctx context.Context, event *WalletCreatedEvent) error
 	OnWalletBalanceChanged(ctx context.Context, event *WalletBalanceEvent) error
 	OnAddressGenerated(ctx context.Context, event *AddressGeneratedEvent) error
+	// Additional methods expected by manager.go
+	OnBalanceUpdate(ctx context.Context, event *WalletBalanceUpdateEvent) error
+	OnStaking(ctx context.Context, event *WalletStakingEvent) error
 }
 
 // AccountsHook defines hooks for account management events
@@ -122,6 +127,12 @@ type AccountsHook interface {
 	OnKYCStatusChanged(ctx context.Context, event *KYCStatusEvent) error
 	OnDocumentUploaded(ctx context.Context, event *DocumentUploadEvent) error
 	OnProfileUpdated(ctx context.Context, event *ProfileUpdateEvent) error
+	// Additional methods expected by manager.go
+	OnAccountCreation(ctx context.Context, event *AccountCreationEvent) error
+	OnAccountSuspension(ctx context.Context, event *AccountSuspensionEvent) error
+	OnKYCStatusChange(ctx context.Context, event *AccountKYCEvent) error
+	OnTierChange(ctx context.Context, event *AccountTierEvent) error
+	OnDormancyStatusChange(ctx context.Context, event *AccountDormancyEvent) error
 }
 
 // MarketMakingHook defines hooks for market making events
@@ -130,6 +141,14 @@ type MarketMakingHook interface {
 	OnLiquidityProvided(ctx context.Context, event *LiquidityEvent) error
 	OnSpreadAdjusted(ctx context.Context, event *SpreadAdjustmentEvent) error
 	OnMarketMakingPnL(ctx context.Context, event *MarketMakingPnLEvent) error
+	// Additional methods expected by manager.go
+	OnStrategyChange(ctx context.Context, event *MMStrategyEvent) error
+	OnQuoteUpdate(ctx context.Context, event *MMQuoteEvent) error
+	OnOrderManagement(ctx context.Context, event *MMOrderEvent) error
+	OnInventoryRebalancing(ctx context.Context, event *MMInventoryEvent) error
+	OnRiskBreach(ctx context.Context, event *MMRiskEvent) error
+	OnPnLAlert(ctx context.Context, event *MMPnLEvent) error
+	OnPerformanceReport(ctx context.Context, event *MMPerformanceEvent) error
 }
 
 // BaseEvent provides common fields for all events
@@ -161,28 +180,36 @@ const (
 	EventTypeFiatConversion  = "fiat.conversion"
 
 	// Trading events
-	EventTypeTradingOrderPlaced   = "trading.order_placed"
-	EventTypeTradingOrderExecuted = "trading.order_executed"
-	EventTypeTradingOrderCanceled = "trading.order_canceled"
-	EventTypeTradingTradeExecuted = "trading.trade_executed"
+	EventTypeTradingOrderPlaced    = "trading.order_placed"
+	EventTypeTradingOrderExecuted  = "trading.order_executed"
+	EventTypeTradingOrderCanceled  = "trading.order_canceled"
+	EventTypeTradingTradeExecuted  = "trading.trade_executed"
 	EventTypeTradingPositionUpdate = "trading.position_update"
 
 	// Wallet events
-	EventTypeWalletCryptoDeposit     = "wallet.crypto_deposit"
-	EventTypeWalletCryptoWithdrawal  = "wallet.crypto_withdrawal"
-	EventTypeWalletInternalTransfer  = "wallet.internal_transfer"
-	EventTypeWalletBalanceUpdate     = "wallet.balance_update"
-	EventTypeWalletAddress           = "wallet.address"
-	EventTypeWalletStaking           = "wallet.staking"
-
+	EventTypeWalletCryptoDeposit    = "wallet.crypto_deposit"
+	EventTypeWalletCryptoWithdrawal = "wallet.crypto_withdrawal"
+	EventTypeWalletInternalTransfer = "wallet.internal_transfer"
+	EventTypeWalletBalanceUpdate    = "wallet.balance_update"
+	EventTypeWalletAddress          = "wallet.address"
+	EventTypeWalletStaking          = "wallet.staking"
 	// Market making events
-	EventTypeMMStrategy     = "mm.strategy"
-	EventTypeMMQuote        = "mm.quote"
-	EventTypeMMOrder        = "mm.order"
-	EventTypeMMInventory    = "mm.inventory"
-	EventTypeMMRisk         = "mm.risk"
-	EventTypeMMPnL          = "mm.pnl"
-	EventTypeMMPerformance  = "mm.performance"
+	EventTypeMMStrategy    = "mm.strategy"
+	EventTypeMMQuote       = "mm.quote"
+	EventTypeMMOrder       = "mm.order"
+	EventTypeMMInventory   = "mm.inventory"
+	EventTypeMMRisk        = "mm.risk"
+	EventTypeMMPnL         = "mm.pnl"
+	EventTypeMMPerformance = "mm.performance"
+
+	// User authentication events
+	EventTypeUserRegistration  = "user.registration"
+	EventTypeUserLogin         = "user.login"
+	EventTypeUserLogout        = "user.logout"
+	EventTypePasswordChange    = "user.password_change"
+	EventTypeEmailVerification = "user.email_verification"
+	EventTypeTwoFA             = "user.2fa"
+	EventTypeAccountLock       = "user.account_lock"
 )
 
 // Module constants
@@ -203,16 +230,23 @@ func getCurrentTimestamp() time.Time {
 // User authentication events
 type UserRegistrationEvent struct {
 	BaseEvent
-	Email     string `json:"email"`
-	Country   string `json:"country"`
-	IPAddress string `json:"ip_address"`
+	Email     string                 `json:"email"`
+	Country   string                 `json:"country"`
+	IPAddress string                 `json:"ip_address"`
+	UserAgent string                 `json:"user_agent"`
+	DeviceID  string                 `json:"device_id"`
+	Metadata  map[string]interface{} `json:"metadata"`
 }
 
 type UserLoginEvent struct {
 	BaseEvent
-	IPAddress string `json:"ip_address"`
-	UserAgent string `json:"user_agent"`
-	Success   bool   `json:"success"`
+	IPAddress   string `json:"ip_address"`
+	UserAgent   string `json:"user_agent"`
+	Success     bool   `json:"success"`
+	DeviceID    string `json:"device_id"`
+	Country     string `json:"country"`
+	FailReason  string `json:"fail_reason,omitempty"`
+	LoginMethod string `json:"login_method"`
 }
 
 type UserLogoutEvent struct {
@@ -225,12 +259,13 @@ type PasswordChangeEvent struct {
 	BaseEvent
 	IPAddress string `json:"ip_address"`
 	Reason    string `json:"reason"`
+	Success   bool   `json:"success"`
 }
 
 type EmailVerificationEvent struct {
 	BaseEvent
-	Email      string `json:"email"`
-	Verified   bool   `json:"verified"`
+	Email      string    `json:"email"`
+	Verified   bool      `json:"verified"`
 	VerifiedAt time.Time `json:"verified_at"`
 }
 
@@ -243,9 +278,9 @@ type TwoFAEvent struct {
 
 type AccountLockEvent struct {
 	BaseEvent
-	Reason    string    `json:"reason"`
-	LockedBy  uuid.UUID `json:"locked_by"`
-	Duration  *time.Duration `json:"duration,omitempty"`
+	Reason   string         `json:"reason"`
+	LockedBy uuid.UUID      `json:"locked_by"`
+	Duration *time.Duration `json:"duration,omitempty"`
 }
 
 // Trading events
@@ -257,6 +292,7 @@ type OrderPlacedEvent struct {
 	Type      string          `json:"order_type"`
 	Price     decimal.Decimal `json:"price"`
 	Quantity  decimal.Decimal `json:"quantity"`
+	IPAddress string          `json:"ip_address"`
 }
 
 type OrderExecutedEvent struct {
@@ -278,21 +314,23 @@ type OrderCancelledEvent struct {
 
 type TradeExecutedEvent struct {
 	BaseEvent
-	TradeID    string          `json:"trade_id"`
-	Market     string          `json:"market"`
-	Price      decimal.Decimal `json:"price"`
-	Quantity   decimal.Decimal `json:"quantity"`
-	TakerSide  string          `json:"taker_side"`
-	Fee        decimal.Decimal `json:"fee"`
+	TradeID   string          `json:"trade_id"`
+	Market    string          `json:"market"`
+	Price     decimal.Decimal `json:"price"`
+	Quantity  decimal.Decimal `json:"quantity"`
+	TakerSide string          `json:"taker_side"`
+	Fee       decimal.Decimal `json:"fee"`
+	BuyerID   string          `json:"buyer_id"`
+	SellerID  string          `json:"seller_id"`
 }
 
 type PositionUpdateEvent struct {
 	BaseEvent
-	Market    string          `json:"market"`
-	Size      decimal.Decimal `json:"size"`
-	AvgPrice  decimal.Decimal `json:"avg_price"`
-	PnL       decimal.Decimal `json:"pnl"`
-	Margin    decimal.Decimal `json:"margin"`
+	Market   string          `json:"market"`
+	Size     decimal.Decimal `json:"size"`
+	AvgPrice decimal.Decimal `json:"avg_price"`
+	PnL      decimal.Decimal `json:"pnl"`
+	Margin   decimal.Decimal `json:"margin"`
 }
 
 type MarketDataEvent struct {
@@ -366,10 +404,10 @@ type PaymentMethodEvent struct {
 
 type FiatTransactionFailedEvent struct {
 	BaseEvent
-	Amount     decimal.Decimal `json:"amount"`
-	Currency   string          `json:"currency"`
-	Reference  string          `json:"reference"`
-	Reason     string          `json:"reason"`
+	Amount    decimal.Decimal `json:"amount"`
+	Currency  string          `json:"currency"`
+	Reference string          `json:"reference"`
+	Reason    string          `json:"reason"`
 }
 
 // Wallet events
@@ -479,19 +517,19 @@ type WalletCryptoWithdrawalEvent struct {
 // Account events (already properly defined above, just need to add missing fields)
 type AccountCreatedEvent struct {
 	BaseEvent
-	Email       string `json:"email"`
-	Country     string `json:"country"`
-	IPAddress   string `json:"ip_address"`
-	AccountType string `json:"account_type"`
+	Email       string                 `json:"email"`
+	Country     string                 `json:"country"`
+	IPAddress   string                 `json:"ip_address"`
+	AccountType string                 `json:"account_type"`
 	Metadata    map[string]interface{} `json:"metadata"`
 }
 
 type AccountCreationEvent struct {
 	BaseEvent
-	Email       string `json:"email"`
-	Country     string `json:"country"`
-	IPAddress   string `json:"ip_address"`
-	AccountType string `json:"account_type"`
+	Email       string                 `json:"email"`
+	Country     string                 `json:"country"`
+	IPAddress   string                 `json:"ip_address"`
+	AccountType string                 `json:"account_type"`
 	Metadata    map[string]interface{} `json:"metadata"`
 }
 
@@ -583,18 +621,18 @@ type ProfileUpdateEvent struct {
 // Market making events
 type MarketMakerEvent struct {
 	BaseEvent
-	Market       string `json:"market"`
-	Status       string `json:"status"`
-	MinSpread    decimal.Decimal `json:"min_spread"`
-	MaxPosition  decimal.Decimal `json:"max_position"`
+	Market      string          `json:"market"`
+	Status      string          `json:"status"`
+	MinSpread   decimal.Decimal `json:"min_spread"`
+	MaxPosition decimal.Decimal `json:"max_position"`
 }
 
 type LiquidityEvent struct {
 	BaseEvent
-	Market     string          `json:"market"`
-	BidVolume  decimal.Decimal `json:"bid_volume"`
-	AskVolume  decimal.Decimal `json:"ask_volume"`
-	Spread     decimal.Decimal `json:"spread"`
+	Market    string          `json:"market"`
+	BidVolume decimal.Decimal `json:"bid_volume"`
+	AskVolume decimal.Decimal `json:"ask_volume"`
+	Spread    decimal.Decimal `json:"spread"`
 }
 
 type SpreadAdjustmentEvent struct {
@@ -616,11 +654,11 @@ type MarketMakingPnLEvent struct {
 // Additional market making events used in integration files
 type MMStrategyEvent struct {
 	BaseEvent
-	StrategyID string    `json:"strategy_id"`
-	Market     string    `json:"market"`
-	Action     string    `json:"action"` // activate, deactivate
+	StrategyID string     `json:"strategy_id"`
+	Market     string     `json:"market"`
+	Action     string     `json:"action"` // activate, deactivate
 	Strategy   MMStrategy `json:"strategy"`
-	Reason     string    `json:"reason"`
+	Reason     string     `json:"reason"`
 }
 
 type MMQuoteEvent struct {
@@ -646,14 +684,14 @@ type MMInventoryEvent struct {
 
 type MMRiskEvent struct {
 	BaseEvent
-	Market      string        `json:"market"`
-	RiskBreach  MMRiskBreach  `json:"risk_breach"`
+	Market     string       `json:"market"`
+	RiskBreach MMRiskBreach `json:"risk_breach"`
 }
 
 type MMPnLEvent struct {
 	BaseEvent
-	Market   string      `json:"market"`
-	PnLAlert MMPnLAlert  `json:"pnl_alert"`
+	Market   string     `json:"market"`
+	PnLAlert MMPnLAlert `json:"pnl_alert"`
 }
 
 type MMPerformanceEvent struct {
@@ -673,15 +711,15 @@ type BankAccountInfo struct {
 }
 
 type MMStrategy struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Type         string          `json:"type"`
-	Symbol       string          `json:"symbol"`
-	Market       string          `json:"market"`
-	MinSpread    decimal.Decimal `json:"min_spread"`
-	MaxPosition  decimal.Decimal `json:"max_position"`
-	RiskLimit    decimal.Decimal `json:"risk_limit"`
-	IsActive     bool            `json:"is_active"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Type        string          `json:"type"`
+	Symbol      string          `json:"symbol"`
+	Market      string          `json:"market"`
+	MinSpread   decimal.Decimal `json:"min_spread"`
+	MaxPosition decimal.Decimal `json:"max_position"`
+	RiskLimit   decimal.Decimal `json:"risk_limit"`
+	IsActive    bool            `json:"is_active"`
 }
 
 type MMQuote struct {
@@ -739,16 +777,16 @@ type MMPnLAlert struct {
 }
 
 type MMPerformanceReport struct {
-	Market       string          `json:"market"`
-	Period       string          `json:"period"`
-	TotalPnL     decimal.Decimal `json:"total_pnl"`
-	SharpeRatio  decimal.Decimal `json:"sharpe_ratio"`
-	MaxDrawdown  decimal.Decimal `json:"max_drawdown"`
-	Volume       decimal.Decimal `json:"volume"`
-	Trades       int             `json:"trades"`
-	Spread       decimal.Decimal `json:"avg_spread"`
-	Uptime       decimal.Decimal `json:"uptime"`
-	FillRatio    decimal.Decimal `json:"fill_ratio"`
-	PeriodStart  time.Time       `json:"period_start"`
-	PeriodEnd    time.Time       `json:"period_end"`
+	Market      string          `json:"market"`
+	Period      string          `json:"period"`
+	TotalPnL    decimal.Decimal `json:"total_pnl"`
+	SharpeRatio decimal.Decimal `json:"sharpe_ratio"`
+	MaxDrawdown decimal.Decimal `json:"max_drawdown"`
+	Volume      decimal.Decimal `json:"volume"`
+	Trades      int             `json:"trades"`
+	Spread      decimal.Decimal `json:"avg_spread"`
+	Uptime      decimal.Decimal `json:"uptime"`
+	FillRatio   decimal.Decimal `json:"fill_ratio"`
+	PeriodStart time.Time       `json:"period_start"`
+	PeriodEnd   time.Time       `json:"period_end"`
 }

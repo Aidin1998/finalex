@@ -249,10 +249,10 @@ func (w *WalletIntegration) OnStakingDeposit(ctx context.Context, userID string,
 			Module:    ModuleWallet,
 		},
 		Action:         "deposit",
-		Amount:         amount,
+		Amount:         decimal.NewFromFloat(amount),
 		Currency:       currency,
-		StakingPeriod:  stakingPeriod,
-		ExpectedReward: expectedReward,
+		StakingPeriod:  time.Duration(stakingPeriod) * time.Hour,
+		ExpectedReward: decimal.NewFromFloat(expectedReward),
 	}
 
 	w.logger.Info("Processing staking deposit",
@@ -284,10 +284,10 @@ func (w *WalletIntegration) OnStakingWithdrawal(ctx context.Context, userID stri
 			Module:    ModuleWallet,
 		},
 		Action:   "withdrawal",
-		Amount:   amount,
+		Amount:   decimal.NewFromFloat(amount),
 		Currency: currency,
-		Reward:   reward,
-		Penalty:  penalty,
+		Reward:   decimal.NewFromFloat(reward),
+		Penalty:  decimal.NewFromFloat(penalty),
 	}
 
 	w.logger.Info("Processing staking withdrawal",

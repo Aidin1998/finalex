@@ -97,14 +97,13 @@ func (m *MarketMakingIntegration) OnQuoteUpdate(ctx context.Context, userID stri
 		},
 		Quote: quote,
 	}
-
 	m.logger.Info("Processing quote update",
 		zap.String("user_id", userID),
 		zap.String("symbol", quote.Symbol),
-		zap.Float64("bid_price", quote.BidPrice),
-		zap.Float64("ask_price", quote.AskPrice),
-		zap.Float64("bid_size", quote.BidSize),
-		zap.Float64("ask_size", quote.AskSize),
+		zap.String("bid_price", quote.BidPrice.String()),
+		zap.String("ask_price", quote.AskPrice.String()),
+		zap.String("bid_size", quote.BidSize.String()),
+		zap.String("ask_size", quote.AskSize.String()),
 	)
 
 	if err := m.hookManager.TriggerHooks(ctx, event); err != nil {
@@ -131,14 +130,13 @@ func (m *MarketMakingIntegration) OnOrderPlacement(ctx context.Context, userID s
 		Action: "place",
 		Order:  order,
 	}
-
 	m.logger.Info("Processing MM order placement",
 		zap.String("user_id", userID),
 		zap.String("order_id", order.OrderID),
 		zap.String("symbol", order.Symbol),
 		zap.String("side", order.Side),
-		zap.Float64("price", order.Price),
-		zap.Float64("quantity", order.Quantity),
+		zap.String("price", order.Price.String()),
+		zap.String("quantity", order.Quantity.String()),
 		zap.String("strategy_id", order.StrategyID),
 	)
 
@@ -197,12 +195,11 @@ func (m *MarketMakingIntegration) OnInventoryRebalancing(ctx context.Context, us
 		},
 		Rebalancing: rebalancing,
 	}
-
 	m.logger.Info("Processing inventory rebalancing",
 		zap.String("user_id", userID),
 		zap.String("symbol", rebalancing.Symbol),
-		zap.Float64("current_inventory", rebalancing.CurrentInventory),
-		zap.Float64("target_inventory", rebalancing.TargetInventory),
+		zap.String("current_inventory", rebalancing.CurrentInventory.String()),
+		zap.String("target_inventory", rebalancing.TargetInventory.String()),
 		zap.String("action", rebalancing.Action),
 	)
 
@@ -229,12 +226,11 @@ func (m *MarketMakingIntegration) OnRiskLimitBreach(ctx context.Context, userID 
 		},
 		RiskBreach: riskBreach,
 	}
-
 	m.logger.Warn("Processing risk limit breach",
 		zap.String("user_id", userID),
 		zap.String("risk_type", riskBreach.RiskType),
-		zap.Float64("current_value", riskBreach.CurrentValue),
-		zap.Float64("limit", riskBreach.Limit),
+		zap.String("current_value", riskBreach.CurrentValue.String()),
+		zap.String("limit", riskBreach.Limit.String()),
 		zap.String("action_taken", riskBreach.ActionTaken),
 	)
 
@@ -261,12 +257,11 @@ func (m *MarketMakingIntegration) OnPnLAlert(ctx context.Context, userID string,
 		},
 		PnLAlert: pnlAlert,
 	}
-
 	m.logger.Info("Processing P&L alert",
 		zap.String("user_id", userID),
 		zap.String("symbol", pnlAlert.Symbol),
-		zap.Float64("realized_pnl", pnlAlert.RealizedPnL),
-		zap.Float64("unrealized_pnl", pnlAlert.UnrealizedPnL),
+		zap.String("realized_pnl", pnlAlert.RealizedPnL.String()),
+		zap.String("unrealized_pnl", pnlAlert.UnrealizedPnL.String()),
 		zap.String("alert_type", pnlAlert.AlertType),
 	)
 
@@ -293,13 +288,12 @@ func (m *MarketMakingIntegration) OnPerformanceReport(ctx context.Context, userI
 		},
 		Report: report,
 	}
-
 	m.logger.Info("Processing performance report",
 		zap.String("user_id", userID),
 		zap.String("period", report.Period),
-		zap.Float64("total_pnl", report.TotalPnL),
-		zap.Float64("sharpe_ratio", report.SharpeRatio),
-		zap.Float64("max_drawdown", report.MaxDrawdown),
+		zap.String("total_pnl", report.TotalPnL.String()),
+		zap.String("sharpe_ratio", report.SharpeRatio.String()),
+		zap.String("max_drawdown", report.MaxDrawdown.String()),
 	)
 
 	if err := m.hookManager.TriggerHooks(ctx, event); err != nil {

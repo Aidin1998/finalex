@@ -2,8 +2,136 @@ package compliance
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
+
+// PolicyManager manages compliance policies
+type PolicyManager struct {
+	mu       sync.RWMutex
+	policies map[string]*Policy
+	version  string
+	updated  time.Time
+}
+
+// Policy represents a compliance policy
+type Policy struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Active      bool                   `json:"active"`
+	Version     string                 `json:"version"`
+	Rules       []PolicyRule           `json:"rules"`
+	Metadata    map[string]interface{} `json:"metadata"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
+}
+
+// PolicyRule represents a single rule within a policy
+type PolicyRule struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Condition  string                 `json:"condition"`
+	Action     string                 `json:"action"`
+	Parameters map[string]interface{} `json:"parameters"`
+	Active     bool                   `json:"active"`
+}
+
+// SanctionsChecker manages sanctions list checking
+type SanctionsChecker struct {
+	mu    sync.RWMutex
+	lists map[string]*SanctionsList
+}
+
+// SanctionsList represents a sanctions list
+type SanctionsList struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Source      string    `json:"source"`
+	Entries     []Entry   `json:"entries"`
+	LastUpdated time.Time `json:"last_updated"`
+	Version     string    `json:"version"`
+}
+
+// Entry represents a sanctions list entry
+type Entry struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	DateOfBirth string `json:"date_of_birth,omitempty"`
+	Nationality string `json:"nationality,omitempty"`
+	Address     string `json:"address,omitempty"`
+}
+
+// KYCProcessor manages KYC verification processes
+type KYCProcessor struct {
+	mu        sync.RWMutex
+	providers map[string]KYCProvider
+	config    *KYCConfig
+}
+
+// KYCProvider represents a KYC verification provider
+type KYCProvider interface {
+	VerifyIdentity(data map[string]interface{}) (*KYCResult, error)
+	GetStatus(requestID string) (*KYCStatus, error)
+}
+
+// KYCConfig represents KYC configuration
+type KYCConfig struct {
+	RequiredDocuments   []string `json:"required_documents"`
+	RestrictedCountries []string `json:"restricted_countries"`
+	MinimumAge          int      `json:"minimum_age"`
+	EnableFaceMatch     bool     `json:"enable_face_match"`
+}
+
+// KYCResult represents the result of KYC verification
+type KYCResult struct {
+	Status    string  `json:"status"`
+	Score     float64 `json:"score"`
+	Passed    bool    `json:"passed"`
+	Reason    string  `json:"reason,omitempty"`
+	RequestID string  `json:"request_id"`
+}
+
+// KYCStatus represents the status of a KYC request
+type KYCStatus struct {
+	RequestID string `json:"request_id"`
+	Status    string `json:"status"`
+	Progress  int    `json:"progress"`
+}
+
+// AMLProcessor manages AML (Anti-Money Laundering) processing
+type AMLProcessor struct {
+	mu        sync.RWMutex
+	rules     []AMLRule
+	patterns  map[string]*TransactionPattern
+	threshold float64
+}
+
+// AMLRule represents an AML rule
+type AMLRule struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Condition  string                 `json:"condition"`
+	Threshold  float64                `json:"threshold"`
+	Action     string                 `json:"action"`
+	Active     bool                   `json:"active"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
+// TransactionPattern represents a transaction pattern for AML analysis
+type TransactionPattern struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Pattern    string                 `json:"pattern"`
+	RiskScore  float64                `json:"risk_score"`
+	Frequency  int                    `json:"frequency"`
+	TimeWindow time.Duration          `json:"time_window"`
+	Metadata   map[string]interface{} `json:"metadata"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+}
 
 // NewPolicyManager creates a new policy manager
 func NewPolicyManager() *PolicyManager {
@@ -53,8 +181,7 @@ func (pm *PolicyManager) GetActivePolicies() []*Policy {
 // NewSanctionsChecker creates a new sanctions checker
 func NewSanctionsChecker() *SanctionsChecker {
 	return &SanctionsChecker{
-		lists:    make(map[string]*SanctionsList),
-		lastSync: time.Now(),
+		lists: make(map[string]*SanctionsList),
 	}
 }
 
@@ -64,10 +191,9 @@ func (sc *SanctionsChecker) checkName(name string) bool {
 	defer sc.mu.RUnlock()
 
 	normalizedName := strings.ToLower(strings.TrimSpace(name))
-
 	for _, list := range sc.lists {
 		for _, entry := range list.Entries {
-			if strings.Contains(normalizedName, strings.ToLower(entry)) {
+			if strings.Contains(normalizedName, strings.ToLower(entry.Name)) {
 				return true
 			}
 		}
@@ -81,10 +207,9 @@ func (sc *SanctionsChecker) checkAddress(address string) bool {
 	defer sc.mu.RUnlock()
 
 	normalizedAddress := strings.ToLower(strings.TrimSpace(address))
-
 	for _, list := range sc.lists {
 		for _, entry := range list.Entries {
-			if strings.Contains(normalizedAddress, strings.ToLower(entry)) {
+			if entry.Address != "" && strings.Contains(normalizedAddress, strings.ToLower(entry.Address)) {
 				return true
 			}
 		}
@@ -97,9 +222,8 @@ func (sc *SanctionsChecker) UpdateSanctionsList(list *SanctionsList) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
-	list.Updated = time.Now()
+	list.LastUpdated = time.Now()
 	sc.lists[list.ID] = list
-	sc.lastSync = time.Now()
 }
 
 // NewKYCProcessor creates a new KYC processor
@@ -107,11 +231,10 @@ func NewKYCProcessor() *KYCProcessor {
 	return &KYCProcessor{
 		providers: make(map[string]KYCProvider),
 		config: &KYCConfig{
-			RequiredDocuments:     []string{"passport", "driver_license", "national_id"},
-			MinAge:                18,
-			RestrictedCountries:   []string{"US", "CN", "KP", "IR", "CU", "SY"},
-			AutoApprovalLimit:     3.0,
-			ManualReviewThreshold: 7.0,
+			RequiredDocuments:   []string{"passport", "driver_license", "national_id"},
+			RestrictedCountries: []string{"US", "CN", "KP", "IR", "CU", "SY"},
+			MinimumAge:          18,
+			EnableFaceMatch:     true,
 		},
 	}
 }
@@ -192,29 +315,38 @@ func NewAMLProcessor() *AMLProcessor {
 			{
 				ID:        "large_transaction",
 				Name:      "Large Transaction",
-				Pattern:   "amount > 10000",
+				Type:      "amount_threshold",
+				Condition: "amount > 10000",
 				Threshold: 10000,
 				Action:    "flag",
 				Active:    true,
-				Weight:    2.0,
+				Parameters: map[string]interface{}{
+					"weight": 2.0,
+				},
 			},
 			{
 				ID:        "frequent_transactions",
 				Name:      "Frequent Transactions",
-				Pattern:   "count > 100 AND timeframe < 24h",
+				Type:      "frequency_check",
+				Condition: "count > 100 AND timeframe < 24h",
 				Threshold: 100,
 				Action:    "flag",
 				Active:    true,
-				Weight:    1.5,
+				Parameters: map[string]interface{}{
+					"weight": 1.5,
+				},
 			},
 			{
 				ID:        "round_amount",
 				Name:      "Round Amount Pattern",
-				Pattern:   "amount % 1000 == 0",
+				Type:      "pattern_detection",
+				Condition: "amount % 1000 == 0",
 				Threshold: 0,
 				Action:    "monitor",
 				Active:    true,
-				Weight:    0.5,
+				Parameters: map[string]interface{}{
+					"weight": 0.5,
+				},
 			},
 		},
 		patterns:  make(map[string]*TransactionPattern),

@@ -5,17 +5,16 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/compliance/hooks"
 	"github.com/google/uuid"
 )
 
 // UserAuthIntegration provides integration between userauth and compliance modules
 type UserAuthIntegration struct {
-	hookManager *hooks.HookManager
+	hookManager *HookManager
 }
 
 // NewUserAuthIntegration creates a new userauth integration
-func NewUserAuthIntegration(hookManager *hooks.HookManager) *UserAuthIntegration {
+func NewUserAuthIntegration(hookManager *HookManager) *UserAuthIntegration {
 	return &UserAuthIntegration{
 		hookManager: hookManager,
 	}
@@ -23,95 +22,132 @@ func NewUserAuthIntegration(hookManager *hooks.HookManager) *UserAuthIntegration
 
 // OnUserRegistration should be called when a user registers
 func (ui *UserAuthIntegration) OnUserRegistration(ctx context.Context, userID uuid.UUID, email, country, ipAddress, userAgent, deviceID string, metadata map[string]interface{}) error {
-	event := &hooks.UserRegistrationEvent{
-		UserID:    userID,
+	event := &UserRegistrationEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeUserRegistration,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
 		Email:     email,
 		Country:   country,
 		IPAddress: ipAddress,
 		UserAgent: userAgent,
 		DeviceID:  deviceID,
-		Timestamp: time.Now(),
 		Metadata:  metadata,
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "user_registration", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // OnUserLogin should be called when a user attempts to login
 func (ui *UserAuthIntegration) OnUserLogin(ctx context.Context, userID, sessionID uuid.UUID, ipAddress, userAgent, deviceID, country, loginMethod string, success bool, failReason string, metadata map[string]interface{}) error {
-	event := &hooks.UserLoginEvent{
-		UserID:      userID,
-		SessionID:   sessionID,
+	event := &UserLoginEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeUserLogin,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
 		IPAddress:   ipAddress,
 		UserAgent:   userAgent,
+		Success:     success,
 		DeviceID:    deviceID,
 		Country:     country,
-		LoginMethod: loginMethod,
-		Success:     success,
 		FailReason:  failReason,
-		Timestamp:   time.Now(),
-		Metadata:    metadata,
+		LoginMethod: loginMethod,
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "user_login", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // OnUserLogout should be called when a user logs out
 func (ui *UserAuthIntegration) OnUserLogout(ctx context.Context, userID, sessionID uuid.UUID) error {
-	event := &hooks.UserLogoutEvent{
-		UserID:    userID,
-		SessionID: sessionID,
-		Timestamp: time.Now(),
+	event := &UserLogoutEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeUserLogout,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
+		IPAddress: "", // This will need to be passed from the caller if needed
+		Duration:  0,  // This will need to be calculated if needed
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "user_logout", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // OnPasswordChange should be called when a user changes their password
 func (ui *UserAuthIntegration) OnPasswordChange(ctx context.Context, userID uuid.UUID, ipAddress string, success bool) error {
-	event := &hooks.PasswordChangeEvent{
-		UserID:    userID,
+	event := &PasswordChangeEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypePasswordChange,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
 		IPAddress: ipAddress,
+		Reason:    "", // This could be passed as a parameter if needed
 		Success:   success,
-		Timestamp: time.Now(),
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "password_change", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // OnEmailVerification should be called when a user verifies their email
 func (ui *UserAuthIntegration) OnEmailVerification(ctx context.Context, userID uuid.UUID, email string, verified bool) error {
-	event := &hooks.EmailVerificationEvent{
-		UserID:    userID,
-		Email:     email,
-		Verified:  verified,
-		Timestamp: time.Now(),
+	event := &EmailVerificationEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeEmailVerification,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
+		Email:      email,
+		Verified:   verified,
+		VerifiedAt: time.Now(),
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "email_verification", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // On2FAEnabled should be called when 2FA is enabled/disabled
 func (ui *UserAuthIntegration) On2FAEnabled(ctx context.Context, userID uuid.UUID, method string, enabled bool) error {
-	event := &hooks.TwoFAEvent{
-		UserID:    userID,
+	event := &TwoFAEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeTwoFA,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
 		Method:    method,
 		Enabled:   enabled,
-		Timestamp: time.Now(),
+		IPAddress: "", // This could be passed as a parameter if needed
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "2fa_enabled", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }
 
 // OnAccountLocked should be called when an account is locked
 func (ui *UserAuthIntegration) OnAccountLocked(ctx context.Context, userID, lockedBy uuid.UUID, reason string, duration *time.Duration) error {
-	event := &hooks.AccountLockEvent{
-		UserID:    userID,
-		Reason:    reason,
-		LockedBy:  lockedBy,
-		Duration:  duration,
-		Timestamp: time.Now(),
+	event := &AccountLockEvent{
+		BaseEvent: BaseEvent{
+			Type:      EventTypeAccountLock,
+			UserID:    userID.String(),
+			Timestamp: time.Now(),
+			Module:    ModuleUserAuth,
+			ID:        uuid.New(),
+		},
+		Reason:   reason,
+		LockedBy: lockedBy,
+		Duration: duration,
 	}
 
-	return ui.hookManager.ProcessUserAuthEvent(ctx, "account_locked", event)
+	return ui.hookManager.TriggerHooks(ctx, event)
 }

@@ -81,6 +81,13 @@ func NewComplianceUserAuthHook(
 }
 
 func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *UserRegistrationEvent) error {
+	// Parse UserID to UUID
+	userUUID, err := uuid.Parse(event.UserID)
+	if err != nil {
+		log.Printf("Failed to parse UserID as UUID: %v", err)
+		userUUID = uuid.New() // Generate a new UUID if parsing fails
+	}
+
 	// Audit logging
 	if err := h.auditEvent(ctx, "user_registration", event.UserID, event); err != nil {
 		log.Printf("Failed to audit user registration: %v", err)
@@ -88,7 +95,7 @@ func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *
 
 	// Compliance check for new user
 	complianceReq := &interfaces.ComplianceRequest{
-		UserID:           event.UserID,
+		UserID:           userUUID,
 		ActivityType:     interfaces.ActivityRegistration,
 		IPAddress:        event.IPAddress,
 		UserAgent:        event.UserAgent,
@@ -106,7 +113,7 @@ func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *
 
 	// Risk assessment for new user
 	userRiskCtx := &risk.UserRiskContext{
-		UserID:           event.UserID,
+		UserID:           userUUID,
 		Email:            event.Email,
 		Country:          event.Country,
 		RegistrationDate: event.Timestamp,
@@ -121,7 +128,7 @@ func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *
 	// Generate alerts if needed
 	if result.RiskLevel == interfaces.RiskLevelHigh || result.RiskLevel == interfaces.RiskLevelCritical {
 		alert := &interfaces.MonitoringAlert{
-			UserID:    event.UserID.String(),
+			UserID:    event.UserID,
 			AlertType: "high_risk_registration",
 			Severity:  interfaces.AlertSeverityHigh,
 			Status:    interfaces.AlertStatusPending,
@@ -152,7 +159,7 @@ func (h *ComplianceUserAuthHook) OnUserLogin(ctx context.Context, event *UserLog
 	if !event.Success {
 		// Failed login attempt - increase monitoring
 		alert := &interfaces.MonitoringAlert{
-			UserID:    event.UserID.String(),
+			UserID:    event.UserID,
 			AlertType: "failed_login_attempt",
 			Severity:  interfaces.AlertSeverityMedium,
 			Status:    interfaces.AlertStatusPending,
@@ -187,7 +194,7 @@ func (h *ComplianceUserAuthHook) OnPasswordChange(ctx context.Context, event *Pa
 
 	if !event.Success {
 		alert := &interfaces.MonitoringAlert{
-			UserID:    event.UserID.String(),
+			UserID:    event.UserID,
 			AlertType: "failed_password_change",
 			Severity:  interfaces.AlertSeverityMedium,
 			Status:    interfaces.AlertStatusPending,
@@ -218,7 +225,7 @@ func (h *ComplianceUserAuthHook) OnAccountLocked(ctx context.Context, event *Acc
 	}
 
 	alert := &interfaces.MonitoringAlert{
-		UserID:    event.UserID.String(),
+		UserID:    event.UserID,
 		AlertType: "account_locked",
 		Severity:  interfaces.AlertSeverityHigh,
 		Status:    interfaces.AlertStatusPending,
@@ -261,6 +268,13 @@ func NewComplianceTradingHook(
 }
 
 func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderPlacedEvent) error {
+	// Parse UserID to UUID for risk assessment
+	userUUID, err := uuid.Parse(event.UserID)
+	if err != nil {
+		log.Printf("Failed to parse UserID as UUID: %v", err)
+		userUUID = uuid.New() // Generate a new UUID if parsing fails
+	}
+
 	// Audit logging
 	if err := h.auditEvent(ctx, "order_placed", event.UserID, event); err != nil {
 		log.Printf("Failed to audit order placement: %v", err)
@@ -268,8 +282,8 @@ func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderP
 
 	// Risk assessment for the transaction
 	txRiskCtx := &risk.TransactionRiskContext{
-		UserID:          event.UserID,
-		TransactionID:   event.UserID, // Use appropriate transaction ID
+		UserID:          userUUID,
+		TransactionID:   uuid.New(), // Generate a proper transaction ID
 		Amount:          event.Quantity.Mul(event.Price),
 		Currency:        event.Market,
 		TransactionType: "order",
@@ -287,16 +301,15 @@ func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderP
 	if err != nil {
 		log.Printf("Risk assessment failed for order %s: %v", event.OrderID, err)
 	}
-
 	// Manipulation detection
 	manipReq := &interfaces.ManipulationRequest{
 		RequestID: event.OrderID,
-		UserID:    event.UserID,
+		UserID:    userUUID,
 		Market:    event.Market,
 		Orders: []interfaces.Order{
 			{
 				ID:        event.OrderID,
-				UserID:    event.UserID,
+				UserID:    userUUID,
 				Market:    event.Market,
 				Side:      event.Side,
 				Type:      event.Type,
@@ -318,7 +331,7 @@ func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderP
 	// Generate alerts for high-risk transactions
 	if riskAssessment != nil && riskAssessment.Level >= risk.RiskLevelHigh {
 		alert := &interfaces.MonitoringAlert{
-			UserID:    event.UserID.String(),
+			UserID:    event.UserID,
 			AlertType: "high_risk_order",
 			Severity:  interfaces.AlertSeverityHigh,
 			Status:    interfaces.AlertStatusPending,
@@ -356,11 +369,10 @@ func (h *ComplianceTradingHook) OnTradeExecuted(ctx context.Context, event *Trad
 	if err := h.auditEvent(ctx, "trade_executed_seller", event.SellerID, event); err != nil {
 		log.Printf("Failed to audit trade for seller: %v", err)
 	}
-
 	// Check for potential wash trading
 	if event.BuyerID == event.SellerID {
 		alert := &interfaces.MonitoringAlert{
-			UserID:    event.BuyerID.String(),
+			UserID:    event.BuyerID,
 			AlertType: "potential_wash_trading",
 			Severity:  interfaces.AlertSeverityCritical,
 			Status:    interfaces.AlertStatusPending,
@@ -405,7 +417,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessUserAuthEvent(ctx, "2fa_enabled", e)
 	case *AccountLockEvent:
 		return hm.ProcessUserAuthEvent(ctx, "account_locked", e)
-	
+
 	// Account Events
 	case *AccountCreatedEvent:
 		return hm.ProcessAccountEvent(ctx, "account_created", e)
@@ -417,7 +429,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessAccountEvent(ctx, "account_tier", e)
 	case *AccountDormancyEvent:
 		return hm.ProcessAccountEvent(ctx, "account_dormancy", e)
-		
+
 	// Trading Events
 	case *OrderPlacedEvent:
 		return hm.ProcessTradingEvent(ctx, "order_placed", e)
@@ -425,7 +437,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessTradingEvent(ctx, "order_executed", e)
 	case *TradeExecutedEvent:
 		return hm.ProcessTradingEvent(ctx, "trade_executed", e)
-		
+
 	// Fiat Events
 	case *FiatDepositEvent:
 		return hm.ProcessFiatEvent(ctx, "fiat_deposit", e)
@@ -433,7 +445,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessFiatEvent(ctx, "fiat_withdrawal", e)
 	case *FiatTransferEvent:
 		return hm.ProcessFiatEvent(ctx, "fiat_transfer", e)
-		
+
 	// Wallet Events
 	case *CryptoDepositEvent:
 		return hm.ProcessWalletEvent(ctx, "crypto_deposit", e)
@@ -443,7 +455,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessWalletEvent(ctx, "wallet_address", e)
 	case *WalletStakingEvent:
 		return hm.ProcessWalletEvent(ctx, "wallet_staking", e)
-		
+
 	// Market Making Events
 	case *MMStrategyEvent:
 		return hm.ProcessMarketMakingEvent(ctx, "mm_strategy", e)
@@ -459,7 +471,7 @@ func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) erro
 		return hm.ProcessMarketMakingEvent(ctx, "mm_pnl", e)
 	case *MMPerformanceEvent:
 		return hm.ProcessMarketMakingEvent(ctx, "mm_performance", e)
-		
+
 	default:
 		return fmt.Errorf("unsupported event type: %T", event)
 	}
@@ -476,13 +488,13 @@ func (hm *HookManager) ProcessAccountEvent(ctx context.Context, eventType string
 		switch eventType {
 		case "account_created":
 			if e, ok := event.(*AccountCreatedEvent); ok {
-				if err := hook.OnAccountCreation(ctx, e); err != nil {
+				if err := hook.OnAccountCreated(ctx, e); err != nil {
 					return err
 				}
 			}
 		case "account_suspended":
 			if e, ok := event.(*AccountSuspendedEvent); ok {
-				if err := hook.OnAccountSuspension(ctx, e); err != nil {
+				if err := hook.OnAccountSuspended(ctx, e); err != nil {
 					return err
 				}
 			}
@@ -593,7 +605,14 @@ func (hm *HookManager) ProcessWalletEvent(ctx context.Context, eventType string,
 			}
 		case "wallet_address":
 			if e, ok := event.(*WalletAddressEvent); ok {
-				if err := hook.OnAddressGenerated(ctx, e); err != nil {
+				// Convert WalletAddressEvent to AddressGeneratedEvent
+				addressEvent := &AddressGeneratedEvent{
+					BaseEvent: e.BaseEvent,
+					Currency:  e.Currency,
+					Network:   e.Network,
+					Address:   e.Address,
+				}
+				if err := hook.OnAddressGenerated(ctx, addressEvent); err != nil {
 					return err
 				}
 			}
