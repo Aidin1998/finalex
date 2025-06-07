@@ -3,7 +3,7 @@ package compliance
 import (
 	"context"
 	"fmt"
-
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +11,18 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
 )
+
+// OrchestrationService coordinates all compliance-related services.
+type OrchestrationService struct {
+	auditSvc          interfaces.AuditService
+	complianceSvc     interfaces.ComplianceService
+	manipulationSvc   interfaces.ManipulationService
+	monitoringSvc     interfaces.MonitoringService
+	healthCheckers    map[string]interfaces.HealthChecker
+	healthCheckTicker *time.Ticker
+	stopChan          chan struct{}
+	mu                sync.RWMutex
+}
 
 // Start initializes all compliance services
 func (o *OrchestrationService) Start(ctx context.Context) error {
@@ -366,16 +378,22 @@ func (o *OrchestrationService) logError(ctx context.Context, message string, err
 // Alert subscribers for inter-service communication
 
 // ComplianceAlertSubscriber handles compliance violation alerts
+type ComplianceAlertSubscriber struct{}
 
 func (s *ComplianceAlertSubscriber) OnAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
 	// Handle compliance violation - could trigger additional checks or notifications
 	return nil
 }
 
+type ManipulationAlertSubscriber struct{}
+
 func (s *ManipulationAlertSubscriber) OnAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
 	// Handle manipulation detection - could trigger enhanced monitoring
 	return nil
 }
+
+// AuditAlertSubscriber handles audit-related alerts
+type AuditAlertSubscriber struct{}
 
 func (s *AuditAlertSubscriber) OnAlert(ctx context.Context, alert interfaces.MonitoringAlert) error {
 	// Handle audit failures - critical system issue
