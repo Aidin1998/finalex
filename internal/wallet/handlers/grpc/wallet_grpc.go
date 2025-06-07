@@ -56,7 +56,7 @@ func (h *WalletHandler) RequestDeposit(ctx context.Context, req *pb.RequestDepos
 	}
 
 	// Process deposit
-	response, err := h.walletService.RequestDeposit(ctx, depositReq)
+	response, err := h.walletService.RequestDeposit(ctx, &depositReq)
 	if err != nil {
 		return nil, h.handleError(err)
 	}
@@ -129,7 +129,7 @@ func (h *WalletHandler) RequestWithdrawal(ctx context.Context, req *pb.RequestWi
 	}
 
 	// Process withdrawal
-	response, err := h.walletService.RequestWithdrawal(ctx, withdrawalReq)
+	response, err := h.walletService.RequestWithdrawal(ctx, &withdrawalReq)
 	if err != nil {
 		return nil, h.handleError(err)
 	}
@@ -336,7 +336,7 @@ func (h *WalletHandler) ValidateAddress(ctx context.Context, req *pb.ValidateAdd
 		Network: req.Network,
 	}
 
-	result, err := h.walletService.ValidateAddress(ctx, validationReq)
+	result, err := h.walletService.ValidateAddress(ctx, &validationReq)
 	if err != nil {
 		return nil, h.handleError(err)
 	}
