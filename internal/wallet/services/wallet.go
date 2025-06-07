@@ -105,14 +105,13 @@ func NewWalletService(
 		cache:             cache,
 		eventPublisher:    eventPublisher,
 	}
-
 	// Initialize sub-services
-	service.fundLockService = NewFundLockService(repository, cache, logger)
-	service.balanceManager = NewBalanceManager(repository, cache, service.fundLockService, logger)
-	service.addressManager = NewAddressManager(repository, cache, fireblocksClient, logger)
-	service.stateMachine = NewTransactionStateMachine(repository, logger)
-	service.depositManager = NewDepositManager(service, repository, fireblocksClient, logger)
-	service.withdrawalManager = NewWithdrawalManager(service, repository, fireblocksClient, logger)
+	service.fundLockService = NewFundLockService(db, logger, repository, cache, nil)
+	service.balanceManager = NewBalanceManager(db, logger, repository, cache, nil)
+	service.addressManager = NewAddressManager(db, logger, fireblocksClient, repository, cache, nil)
+	// service.stateMachine = NewTransactionStateMachine(repository, cache, eventPublisher, logger) // TODO: Implement state machine
+	service.depositManager = NewDepositManager(db, logger, fireblocksClient, service.balanceManager, service.fundLockService, complianceService, auditService, eventPublisher, repository, cache, nil)
+	service.withdrawalManager = NewWithdrawalManager(db, logger, fireblocksClient, service.balanceManager, service.fundLockService, service.addressManager, complianceService, auditService, eventPublisher, repository, cache, nil)
 
 	return service
 }

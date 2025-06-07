@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // WalletService provides the main wallet functionality
@@ -113,6 +114,10 @@ type BalanceManager interface {
 
 	// Calculate total balance including locks
 	CalculateBalance(ctx context.Context, userID uuid.UUID, asset string) (*AssetBalance, error)
+
+	// Credit and debit methods for transaction processing
+	CreditBalance(ctx context.Context, tx *gorm.DB, userID uuid.UUID, asset string, amount decimal.Decimal, reference string) error
+	DebitBalance(ctx context.Context, tx *gorm.DB, userID uuid.UUID, asset string, amount decimal.Decimal, reference string) error
 }
 
 // AddressManager handles address generation and validation
@@ -164,6 +169,7 @@ type ComplianceIntegration interface {
 type EventPublisher interface {
 	// Publish wallet event
 	PublishEvent(ctx context.Context, event *WalletEvent) error
+	Publish(ctx context.Context, event interface{}) error
 
 	// Publish batch events
 	PublishBatch(ctx context.Context, events []*WalletEvent) error
@@ -176,22 +182,37 @@ type WalletRepository interface {
 	// Transaction operations
 	CreateTransaction(ctx context.Context, tx *WalletTransaction) error
 	UpdateTransaction(ctx context.Context, txID uuid.UUID, updates map[string]interface{}) error
+	UpdateTransactionInTx(ctx context.Context, tx *gorm.DB, transaction *WalletTransaction) error
 	GetTransaction(ctx context.Context, txID uuid.UUID) (*WalletTransaction, error)
 	GetTransactionByFireblocksID(ctx context.Context, fireblocksID string) (*WalletTransaction, error)
+	GetTransactionByTxHash(ctx context.Context, txHash string) (*WalletTransaction, error)
 	GetUserTransactions(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*WalletTransaction, error)
+	GetUserTransactionsByDirection(ctx context.Context, userID uuid.UUID, direction Direction, limit, offset int) ([]*WalletTransaction, error)
 	GetTransactionsByStatus(ctx context.Context, status TxStatus, limit int) ([]*WalletTransaction, error)
+	CountPendingDeposits(ctx context.Context, userID uuid.UUID) (int64, error)
+	GetDailyWithdrawalTotal(ctx context.Context, userID uuid.UUID, asset string, date time.Time) (decimal.Decimal, error)
 
 	// Balance operations
 	GetBalance(ctx context.Context, userID uuid.UUID, asset string) (*WalletBalance, error)
-	UpdateBalance(ctx context.Context, userID uuid.UUID, asset string, available, locked decimal.Decimal) error
-	GetAllBalances(ctx context.Context, userID uuid.UUID) ([]*WalletBalance, error)
+	GetBalanceForUpdateInTx(ctx context.Context, tx *gorm.DB, userID uuid.UUID, asset string) (*WalletBalance, error)
+	UpdateBalance(ctx context.Context, balance *WalletBalance) error
+	UpdateBalanceInTx(ctx context.Context, tx *gorm.DB, balance *WalletBalance) error
+	GetUserBalances(ctx context.Context, userID uuid.UUID) ([]*WalletBalance, error)
 
 	// Lock operations
 	CreateLock(ctx context.Context, lock *FundLock) error
+	CreateFundLockInTx(ctx context.Context, tx *gorm.DB, lock *FundLock) error
 	DeleteLock(ctx context.Context, lockID uuid.UUID) error
+	DeleteFundLockInTx(ctx context.Context, tx *gorm.DB, lockID uuid.UUID) error
+	GetFundLock(ctx context.Context, lockID uuid.UUID) (*FundLock, error)
+	GetFundLockForUpdateInTx(ctx context.Context, tx *gorm.DB, lockID uuid.UUID) (*FundLock, error)
 	GetUserLocks(ctx context.Context, userID uuid.UUID) ([]*FundLock, error)
+	GetUserFundLocks(ctx context.Context, userID uuid.UUID) ([]*FundLock, error)
 	GetLocksByTxRef(ctx context.Context, txRef string) ([]*FundLock, error)
+	UpdateFundLock(ctx context.Context, lock *FundLock) error
 	DeleteExpiredLocks(ctx context.Context, before time.Time) error
+	GetExpiredFundLocks(ctx context.Context, before time.Time) ([]*FundLock, error)
+	CountUserLocks(ctx context.Context, userID uuid.UUID) (int64, error)
 
 	// Address operations
 	CreateAddress(ctx context.Context, addr *DepositAddress) error
@@ -202,6 +223,11 @@ type WalletRepository interface {
 
 // Cache interface for performance
 type WalletCache interface {
+	// Basic cache operations
+	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
+	Get(ctx context.Context, key string) (interface{}, error)
+	Delete(ctx context.Context, key string) error
+
 	// Balance caching
 	GetBalance(ctx context.Context, userID uuid.UUID, asset string) (*AssetBalance, error)
 	SetBalance(ctx context.Context, userID uuid.UUID, asset string, balance *AssetBalance, ttl time.Duration) error

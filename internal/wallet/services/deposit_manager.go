@@ -97,14 +97,13 @@ func (dm *DepositManager) InitiateDeposit(ctx context.Context, req *interfaces.D
 		dm.logger.Error("Failed to create deposit transaction", zap.Error(err))
 		return nil, fmt.Errorf("failed to create deposit transaction: %w", err)
 	}
-
 	// Publish deposit initiated event
 	if err := dm.publishEvent(ctx, &interfaces.DepositInitiatedEvent{
+		ID:            uuid.New(),
 		TransactionID: tx.ID,
 		UserID:        req.UserID,
 		Asset:         req.Asset,
 		Amount:        req.Amount,
-		Network:       req.Network,
 		ToAddress:     req.ToAddress,
 		Timestamp:     time.Now(),
 	}); err != nil {
@@ -115,11 +114,10 @@ func (dm *DepositManager) InitiateDeposit(ctx context.Context, req *interfaces.D
 	if dm.config.ComplianceRequired {
 		go dm.runComplianceCheck(context.Background(), tx.ID)
 	}
-
 	return &interfaces.DepositResponse{
 		TransactionID: tx.ID,
-		Status:        string(tx.Status),
-		Address:       req.ToAddress,
+		Status:        tx.Status,
+		Address:       nil, // Will be set if address generation is needed
 		Network:       req.Network,
 		EstimatedTime: dm.estimateDepositTime(req.Asset),
 		CreatedAt:     tx.CreatedAt,
@@ -139,16 +137,24 @@ func (dm *DepositManager) ProcessIncomingDeposit(ctx context.Context, data *inte
 		return fmt.Errorf("failed to find/create transaction: %w", err)
 	}
 
-	// Update transaction with Fireblocks data
-	tx.FireblocksID = data.ID
+	// Update transaction with Fireblocks data	tx.FireblocksID = data.ID
 	tx.TxHash = data.TxHash
-	tx.FromAddress = data.Source.Address
-	tx.Confirmations = data.NumOfConfirmations
+	// Note: Source address not available in webhook data structure
+	tx.FromAddress = "" // Will be populated from blockchain data if needed
+	// Note: NumOfConfirmations not available in webhook data structure
+	tx.Confirmations = 0 // Will be updated based on network data
 	tx.Status = dm.mapFireblocksStatus(data.Status)
 	tx.UpdatedAt = time.Now()
 
 	// Save updated transaction
-	if err := dm.repository.UpdateTransaction(ctx, tx); err != nil {
+	if err := dm.repository.UpdateTransaction(ctx, tx.ID, map[string]interface{}{
+		"fireblocks_id": tx.FireblocksID,
+		"tx_hash":       tx.TxHash,
+		"from_address":  tx.FromAddress,
+		"confirmations": tx.Confirmations,
+		"status":        tx.Status,
+		"updated_at":    tx.UpdatedAt,
+	}); err != nil {
 		return fmt.Errorf("failed to update transaction: %w", err)
 	}
 
@@ -401,4 +407,63 @@ func (dm *DepositManager) publishEvent(ctx context.Context, event interface{}) e
 		return dm.eventPublisher.Publish(ctx, event)
 	}
 	return nil
+}
+
+// CompleteDeposit completes a deposit transaction and credits the user's account
+func (dm *DepositManager) CompleteDeposit(ctx context.Context, txID uuid.UUID) error {
+	// Get the transaction
+	tx, err := dm.repository.GetTransaction(ctx, txID)
+	if err != nil {
+		return fmt.Errorf("failed to get transaction: %w", err)
+	}
+
+	// Verify transaction is ready to be completed
+	if tx.Status != interfaces.TxStatusConfirmed {
+		return fmt.Errorf("transaction is not ready for completion, status: %s", tx.Status)
+	}
+
+	// Start database transaction
+	return dm.db.Transaction(func(dbTx *gorm.DB) error {
+		// Update transaction status
+		tx.Status = interfaces.TxStatusCompleted
+		tx.UpdatedAt = time.Now()
+
+		updates := map[string]interface{}{
+			"status":     tx.Status,
+			"updated_at": tx.UpdatedAt,
+		}
+
+		if err := dm.repository.UpdateTransaction(ctx, tx.ID, updates); err != nil {
+			return fmt.Errorf("failed to update transaction status: %w", err)
+		}
+		// Credit user's balance
+		if err := dm.balanceManager.UpdateBalance(ctx, tx.UserID, tx.Asset, tx.Amount, "deposit", tx.ID.String()); err != nil {
+			return fmt.Errorf("failed to credit user balance: %w", err)
+		}
+
+		// Log the completion
+		dm.logger.Info("Deposit completed successfully",
+			zap.String("tx_id", tx.ID.String()),
+			zap.String("user_id", tx.UserID.String()),
+			zap.String("asset", tx.Asset),
+			zap.String("amount", tx.Amount.String()),
+		)
+		// Publish deposit completed event
+		event := &interfaces.DepositCompletedEvent{
+			ID:            uuid.New(),
+			TransactionID: tx.ID,
+			UserID:        tx.UserID,
+			Asset:         tx.Asset,
+			Amount:        tx.Amount,
+			TxHash:        tx.TxHash,
+			Timestamp:     time.Now(),
+		}
+
+		if err := dm.publishEvent(ctx, event); err != nil {
+			dm.logger.Error("Failed to publish deposit completed event", zap.Error(err))
+			// Don't fail the transaction for event publishing failure
+		}
+
+		return nil
+	})
 }

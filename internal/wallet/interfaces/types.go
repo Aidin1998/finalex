@@ -82,6 +82,7 @@ const (
 	TxStatusInitiated  TxStatus = "initiated"
 	TxStatusPending    TxStatus = "pending"
 	TxStatusProcessing TxStatus = "processing"
+	TxStatusConfirming TxStatus = "confirming"
 	TxStatusConfirmed  TxStatus = "confirmed"
 	TxStatusCompleted  TxStatus = "completed"
 	TxStatusFailed     TxStatus = "failed"
@@ -205,6 +206,16 @@ type DepositConfirmedEvent struct {
 	TransactionID uuid.UUID       `json:"transaction_id"`
 	TxHash        string          `json:"tx_hash"`
 	Confirmations int             `json:"confirmations"`
+	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type DepositCompletedEvent struct {
+	ID            uuid.UUID       `json:"id"`
+	UserID        uuid.UUID       `json:"user_id"`
+	Asset         string          `json:"asset"`
+	Amount        decimal.Decimal `json:"amount"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	TxHash        string          `json:"tx_hash"`
 	Timestamp     time.Time       `json:"timestamp"`
 }
 
@@ -385,6 +396,7 @@ type FireblocksSource struct {
 	ID      string `json:"id"`   // Account ID
 	Name    string `json:"name,omitempty"`
 	SubType string `json:"subType,omitempty"`
+	Address string `json:"address,omitempty"` // Source address for external sources
 }
 
 type FireblocksDestination struct {
@@ -450,6 +462,7 @@ type BalanceHistoryEntry struct {
 
 // Fireblocks specific request types
 type FireblocksAddressRequest struct {
+	VaultID        string `json:"vaultId"`
 	VaultAccountID string `json:"vaultAccountId"`
 	AssetID        string `json:"assetId"`
 	Description    string `json:"description,omitempty"`

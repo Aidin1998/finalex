@@ -14,6 +14,7 @@ type ComplianceService interface {
 	// Core compliance checks
 	PerformComplianceCheck(ctx context.Context, req *ComplianceRequest) (*ComplianceResult, error)
 	CheckCompliance(ctx context.Context, request *ComplianceRequest) (*ComplianceResult, error)
+	CheckTransaction(ctx context.Context, transactionID string) (*ComplianceResult, error)
 	ValidateTransaction(ctx context.Context, userID uuid.UUID, txType string, amount decimal.Decimal, currency string, metadata map[string]interface{}) (*ComplianceResult, error)
 
 	// User management

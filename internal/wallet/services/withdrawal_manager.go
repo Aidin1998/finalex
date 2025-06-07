@@ -90,9 +90,8 @@ func (wm *WithdrawalManager) InitiateWithdrawal(ctx context.Context, req *interf
 	// Calculate withdrawal fee
 	fee := wm.calculateWithdrawalFee(req.Asset, req.Amount)
 	totalAmount := req.Amount.Add(fee)
-
 	// Check and lock user balance
-	lockID, err := wm.fundLockService.LockFunds(ctx, req.UserID, req.Asset, totalAmount, "withdrawal", "")
+	err := wm.fundLockService.LockFunds(ctx, req.UserID, req.Asset, totalAmount, "withdrawal", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to lock funds: %w", err)
 	}
@@ -107,35 +106,29 @@ func (wm *WithdrawalManager) InitiateWithdrawal(ctx context.Context, req *interf
 		Status:          interfaces.TxStatusInitiated,
 		ToAddress:       req.ToAddress,
 		Network:         req.Network,
-		ComplianceCheck: "pending",
-		Metadata: interfaces.JSONB{
+		ComplianceCheck: "pending", Metadata: interfaces.JSONB{
 			"fee":      fee,
 			"total":    totalAmount,
 			"priority": req.Priority,
 			"tag":      req.Tag,
-			"lock_id":  lockID,
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-
 	// Store transaction
 	if err := wm.repository.CreateTransaction(ctx, tx); err != nil {
 		// Release the fund lock if transaction creation fails
-		wm.fundLockService.ReleaseLock(ctx, lockID)
+		wm.fundLockService.ReleaseLock(ctx, req.UserID, req.Asset, totalAmount, "withdrawal", "")
 		return nil, fmt.Errorf("failed to create withdrawal transaction: %w", err)
 	}
-
 	// Publish withdrawal initiated event
 	if err := wm.publishEvent(ctx, &interfaces.WithdrawalInitiatedEvent{
+		ID:            uuid.New(),
 		TransactionID: tx.ID,
 		UserID:        req.UserID,
 		Asset:         req.Asset,
 		Amount:        req.Amount,
 		ToAddress:     req.ToAddress,
-		Network:       req.Network,
-		Fee:           fee,
-		Priority:      req.Priority,
 		Timestamp:     time.Now(),
 	}); err != nil {
 		wm.logger.Warn("Failed to publish withdrawal initiated event", zap.Error(err))
@@ -183,12 +176,11 @@ func (wm *WithdrawalManager) ConfirmWithdrawal(ctx context.Context, txID uuid.UU
 
 	// Map Fireblocks status to our status
 	newStatus := wm.mapFireblocksStatus(fireblocksStatus)
-
 	// Update transaction status
-	tx.Status = newStatus
-	tx.UpdatedAt = time.Now()
-
-	if err := wm.repository.UpdateTransaction(ctx, tx); err != nil {
+	if err := wm.repository.UpdateTransaction(ctx, tx.ID, map[string]interface{}{
+		"status":     newStatus,
+		"updated_at": time.Now(),
+	}); err != nil {
 		return fmt.Errorf("failed to update transaction: %w", err)
 	}
 
@@ -294,39 +286,38 @@ func (wm *WithdrawalManager) processWithdrawal(ctx context.Context, txID uuid.UU
 		wm.logger.Info("Withdrawal pending compliance check", zap.String("tx_id", txID.String()))
 		return nil // Wait for compliance check to complete
 	}
-
 	// Update status to processing
-	tx.Status = interfaces.TxStatusPending
-	tx.UpdatedAt = time.Now()
-	if err := wm.repository.UpdateTransaction(ctx, tx); err != nil {
+	if err := wm.repository.UpdateTransaction(ctx, tx.ID, map[string]interface{}{
+		"status":     interfaces.TxStatusPending,
+		"updated_at": time.Now(),
+	}); err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
-	}
-
-	// Prepare Fireblocks transaction request
-	fbReq := &interfaces.FireblocksTransactionRequest{
+	} // Prepare Fireblocks transaction request
+	fbReq := &interfaces.TransactionRequest{
 		AssetID: tx.Asset,
-		Amount:  tx.Amount,
-		Source:  interfaces.FireblocksSource{Type: "VAULT_ACCOUNT", ID: "0"}, // Main vault
-		Destination: interfaces.FireblocksDestination{
-			Type:    "EXTERNAL_WALLET",
-			Address: tx.ToAddress,
+		Amount:  tx.Amount.String(),
+		Source:  interfaces.TransactionSource{Type: "VAULT_ACCOUNT", ID: "0"}, // Main vault
+		Destination: interfaces.TransactionDestination{
+			Type: "ONE_TIME_ADDRESS",
+			OneTimeAddress: &interfaces.OneTimeAddress{
+				Address: tx.ToAddress,
+			},
 		},
 		Note: fmt.Sprintf("Withdrawal for user %s", tx.UserID.String()),
 	}
 
 	// Add tag if present
 	if tag, ok := tx.Metadata["tag"].(string); ok && tag != "" {
-		fbReq.Destination.Tag = tag
+		fbReq.Destination.OneTimeAddress.Tag = tag
 	}
-
 	// Execute withdrawal via Fireblocks
 	fbTx, err := wm.fireblocksClient.CreateTransaction(ctx, fbReq)
 	if err != nil {
 		wm.logger.Error("Failed to create Fireblocks transaction", zap.Error(err))
-		tx.Status = interfaces.TxStatusFailed
-		tx.ErrorMsg = err.Error()
-		wm.repository.UpdateTransaction(ctx, tx)
-		return wm.failWithdrawal(ctx, tx)
+		return wm.repository.UpdateTransaction(ctx, tx.ID, map[string]interface{}{
+			"status":    interfaces.TxStatusFailed,
+			"error_msg": err.Error(),
+		})
 	}
 
 	// Update transaction with Fireblocks ID
@@ -618,4 +609,59 @@ func (wm *WithdrawalManager) publishEvent(ctx context.Context, event interface{}
 		return wm.eventPublisher.Publish(ctx, event)
 	}
 	return nil
+}
+
+// GetWithdrawalLimits returns withdrawal limits for a user and asset
+func (wm *WithdrawalManager) GetWithdrawalLimits(ctx context.Context, userID uuid.UUID, asset string) (*interfaces.WithdrawalLimits, error) {
+	// TODO: Implement proper daily/monthly withdrawal tracking
+	// For now, return default limits
+
+	// Get asset-specific limits from config
+	minAmount := decimal.NewFromFloat(0.001)
+	maxAmount := decimal.NewFromFloat(100000)
+	dailyLimit := decimal.NewFromFloat(10000)
+	monthlyLimit := decimal.NewFromFloat(100000)
+	networkFee := decimal.Zero
+
+	if minAmountConfig, exists := wm.config.MinWithdrawalAmount[asset]; exists {
+		minAmount = minAmountConfig
+	}
+	if maxAmountConfig, exists := wm.config.MaxWithdrawalAmount[asset]; exists {
+		maxAmount = maxAmountConfig
+	}
+	if dailyLimitConfig, exists := wm.config.DailyWithdrawalLimit[asset]; exists {
+		dailyLimit = dailyLimitConfig
+	}
+	if feeConfig, exists := wm.config.WithdrawalFee[asset]; exists {
+		networkFee = feeConfig
+	}
+
+	// TODO: Get actual daily and monthly used amounts from repository
+	dailyUsed := decimal.Zero
+	monthlyUsed := decimal.Zero
+
+	// Calculate remaining limits
+	dailyRemaining := dailyLimit.Sub(dailyUsed)
+	if dailyRemaining.IsNegative() {
+		dailyRemaining = decimal.Zero
+	}
+
+	monthlyRemaining := monthlyLimit.Sub(monthlyUsed)
+	if monthlyRemaining.IsNegative() {
+		monthlyRemaining = decimal.Zero
+	}
+
+	return &interfaces.WithdrawalLimits{
+		Asset:            asset,
+		DailyLimit:       dailyLimit,
+		DailyUsed:        dailyUsed,
+		DailyRemaining:   dailyRemaining,
+		MonthlyLimit:     monthlyLimit,
+		MonthlyUsed:      monthlyUsed,
+		MonthlyRemaining: monthlyRemaining,
+		MinWithdrawal:    minAmount,
+		MaxWithdrawal:    maxAmount,
+		NetworkFee:       networkFee,
+		MaintenanceMode:  false, // TODO: Get from config
+	}, nil
 }

@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
@@ -29,6 +30,7 @@ type FundLockConfig struct {
 	CleanupInterval   time.Duration
 	LockRetryAttempts int
 	LockRetryDelay    time.Duration
+	CleanupBatchSize  int
 }
 
 // NewFundLockService creates a new fund lock service
@@ -49,7 +51,7 @@ func NewFundLockService(
 }
 
 // LockFunds locks funds for a user and asset
-func (fls *FundLockService) LockFunds(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal, reason, txRef string) (string, error) {
+func (fls *FundLockService) LockFunds(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal, reason, txRef string) error {
 	fls.logger.Info("Locking funds",
 		zap.String("user_id", userID.String()),
 		zap.String("asset", asset),
@@ -59,21 +61,20 @@ func (fls *FundLockService) LockFunds(ctx context.Context, userID uuid.UUID, ass
 
 	// Validate input
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return "", fmt.Errorf("lock amount must be positive")
+		return fmt.Errorf("lock amount must be positive")
 	}
 
 	// Check maximum locks per user
 	lockCount, err := fls.repository.CountUserLocks(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("failed to check user lock count: %w", err)
+		return fmt.Errorf("failed to check user lock count: %w", err)
 	}
 
-	if lockCount >= fls.config.MaxLocksPerUser {
-		return "", fmt.Errorf("maximum locks per user exceeded")
+	if lockCount >= int64(fls.config.MaxLocksPerUser) {
+		return fmt.Errorf("maximum locks per user exceeded")
 	}
 
 	// Start database transaction with retry logic
-	var lockID string
 	for attempt := 0; attempt < fls.config.LockRetryAttempts; attempt++ {
 		err = fls.db.Transaction(func(tx *gorm.DB) error {
 			// Get current balance with row lock
@@ -114,7 +115,6 @@ func (fls *FundLockService) LockFunds(ctx context.Context, userID uuid.UUID, ass
 				return fmt.Errorf("failed to update balance: %w", err)
 			}
 
-			lockID = lock.ID.String()
 			return nil
 		})
 
@@ -125,59 +125,40 @@ func (fls *FundLockService) LockFunds(ctx context.Context, userID uuid.UUID, ass
 				time.Sleep(fls.config.LockRetryDelay)
 				continue
 			}
-			return "", err
+			return err
 		}
 
 		break // Success
 	}
 
-	// Cache the lock for quick access
-	if fls.cache != nil {
-		cacheKey := fmt.Sprintf("fund_lock:%s", lockID)
-		if err := fls.cache.Set(ctx, cacheKey, lockID, time.Hour); err != nil {
-			fls.logger.Warn("Failed to cache fund lock", zap.Error(err))
-		}
-	}
-
 	fls.logger.Info("Successfully locked funds",
-		zap.String("lock_id", lockID),
 		zap.String("user_id", userID.String()),
 		zap.String("asset", asset),
 		zap.String("amount", amount.String()),
 	)
 
-	return lockID, nil
+	return nil
 }
 
 // ReleaseLock releases a fund lock
-func (fls *FundLockService) ReleaseLock(ctx context.Context, lockID string) error {
-	fls.logger.Info("Releasing fund lock", zap.String("lock_id", lockID))
-
-	lockUUID, err := uuid.Parse(lockID)
-	if err != nil {
-		return fmt.Errorf("invalid lock ID format: %w", err)
-	}
+func (fls *FundLockService) ReleaseLock(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal, reason, txRef string) error {
+	fls.logger.Info("Releasing fund lock",
+		zap.String("user_id", userID.String()),
+		zap.String("asset", asset),
+		zap.String("amount", amount.String()),
+		zap.String("reason", reason),
+	)
 
 	return fls.db.Transaction(func(tx *gorm.DB) error {
-		// Get lock with row lock
-		lock, err := fls.repository.GetFundLockForUpdateInTx(ctx, tx, lockUUID)
-		if err != nil {
-			if err == gorm.ErrRecordNotFound {
-				fls.logger.Warn("Fund lock not found, may already be released", zap.String("lock_id", lockID))
-				return nil // Already released
-			}
-			return fmt.Errorf("failed to get fund lock: %w", err)
-		}
-
 		// Get current balance with row lock
-		balance, err := fls.repository.GetBalanceForUpdateInTx(ctx, tx, lock.UserID, lock.Asset)
+		balance, err := fls.repository.GetBalanceForUpdateInTx(ctx, tx, userID, asset)
 		if err != nil {
 			return fmt.Errorf("failed to get balance for update: %w", err)
 		}
 
 		// Update balance - move amount from locked back to available
-		balance.Available = balance.Available.Add(lock.Amount)
-		balance.Locked = balance.Locked.Sub(lock.Amount)
+		balance.Available = balance.Available.Add(amount)
+		balance.Locked = balance.Locked.Sub(amount)
 		balance.UpdatedAt = time.Now()
 
 		// Ensure locked balance doesn't go negative
@@ -189,112 +170,17 @@ func (fls *FundLockService) ReleaseLock(ctx context.Context, lockID string) erro
 			return fmt.Errorf("failed to update balance: %w", err)
 		}
 
-		// Delete lock record
-		if err := fls.repository.DeleteFundLockInTx(ctx, tx, lockUUID); err != nil {
-			return fmt.Errorf("failed to delete fund lock: %w", err)
-		}
-
 		return nil
 	})
 }
 
-// ConvertLock converts a lock to a permanent balance change (e.g., for completed withdrawals)
-func (fls *FundLockService) ConvertLock(ctx context.Context, lockID string, debitAmount decimal.Decimal) error {
-	fls.logger.Info("Converting fund lock",
-		zap.String("lock_id", lockID),
-		zap.String("debit_amount", debitAmount.String()),
-	)
-
-	lockUUID, err := uuid.Parse(lockID)
+// GetAvailableBalance returns available balance for a user and asset
+func (fls *FundLockService) GetAvailableBalance(ctx context.Context, userID uuid.UUID, asset string) (decimal.Decimal, error) {
+	balance, err := fls.repository.GetBalance(ctx, userID, asset)
 	if err != nil {
-		return fmt.Errorf("invalid lock ID format: %w", err)
+		return decimal.Zero, fmt.Errorf("failed to get balance: %w", err)
 	}
-
-	return fls.db.Transaction(func(tx *gorm.DB) error {
-		// Get lock with row lock
-		lock, err := fls.repository.GetFundLockForUpdateInTx(ctx, tx, lockUUID)
-		if err != nil {
-			return fmt.Errorf("failed to get fund lock: %w", err)
-		}
-
-		// Validate debit amount
-		if debitAmount.GreaterThan(lock.Amount) {
-			return fmt.Errorf("debit amount exceeds locked amount")
-		}
-
-		// Get current balance with row lock
-		balance, err := fls.repository.GetBalanceForUpdateInTx(ctx, tx, lock.UserID, lock.Asset)
-		if err != nil {
-			return fmt.Errorf("failed to get balance for update: %w", err)
-		}
-
-		// Update balance - remove debit amount from locked, calculate difference for available
-		balance.Locked = balance.Locked.Sub(lock.Amount)
-
-		// If debit amount is less than lock amount, return difference to available
-		if debitAmount.LessThan(lock.Amount) {
-			difference := lock.Amount.Sub(debitAmount)
-			balance.Available = balance.Available.Add(difference)
-		}
-
-		// Update total balance
-		balance.Total = balance.Available.Add(balance.Locked)
-		balance.UpdatedAt = time.Now()
-
-		// Ensure balances don't go negative
-		if balance.Locked.LessThan(decimal.Zero) {
-			balance.Locked = decimal.Zero
-		}
-		if balance.Available.LessThan(decimal.Zero) {
-			balance.Available = decimal.Zero
-		}
-
-		if err := fls.repository.UpdateBalanceInTx(ctx, tx, balance); err != nil {
-			return fmt.Errorf("failed to update balance: %w", err)
-		}
-
-		// Delete lock record
-		if err := fls.repository.DeleteFundLockInTx(ctx, tx, lockUUID); err != nil {
-			return fmt.Errorf("failed to delete fund lock: %w", err)
-		}
-
-		return nil
-	})
-}
-
-// ExtendLock extends the expiry time of a lock
-func (fls *FundLockService) ExtendLock(ctx context.Context, lockID string, extension time.Duration) error {
-	fls.logger.Info("Extending fund lock",
-		zap.String("lock_id", lockID),
-		zap.Duration("extension", extension),
-	)
-
-	lockUUID, err := uuid.Parse(lockID)
-	if err != nil {
-		return fmt.Errorf("invalid lock ID format: %w", err)
-	}
-
-	// Get lock
-	lock, err := fls.repository.GetFundLock(ctx, lockUUID)
-	if err != nil {
-		return fmt.Errorf("failed to get fund lock: %w", err)
-	}
-
-	// Update expiry
-	if lock.Expires != nil {
-		newExpiry := lock.Expires.Add(extension)
-		lock.Expires = &newExpiry
-	} else {
-		expiry := time.Now().Add(extension)
-		lock.Expires = &expiry
-	}
-
-	// Update lock
-	if err := fls.repository.UpdateFundLock(ctx, lock); err != nil {
-		return fmt.Errorf("failed to update fund lock: %w", err)
-	}
-
-	return nil
+	return balance.Available, nil
 }
 
 // GetUserLocks returns all active locks for a user
@@ -302,33 +188,30 @@ func (fls *FundLockService) GetUserLocks(ctx context.Context, userID uuid.UUID) 
 	return fls.repository.GetUserFundLocks(ctx, userID)
 }
 
-// GetLock returns a specific lock by ID
-func (fls *FundLockService) GetLock(ctx context.Context, lockID string) (*interfaces.FundLock, error) {
-	lockUUID, err := uuid.Parse(lockID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid lock ID format: %w", err)
-	}
-
-	return fls.repository.GetFundLock(ctx, lockUUID)
-}
-
-// CleanupExpiredLocks removes expired locks and returns funds to available balance
-func (fls *FundLockService) CleanupExpiredLocks(ctx context.Context) error {
+// CleanExpiredLocks removes all expired fund locks and restores balance
+func (fls *FundLockService) CleanExpiredLocks(ctx context.Context) error {
 	fls.logger.Info("Starting cleanup of expired fund locks")
 
+	// Get all expired locks
 	expiredLocks, err := fls.repository.GetExpiredFundLocks(ctx, time.Now())
 	if err != nil {
-		return fmt.Errorf("failed to get expired locks: %w", err)
+		return fmt.Errorf("failed to get expired fund locks: %w", err)
 	}
 
 	if len(expiredLocks) == 0 {
+		fls.logger.Debug("No expired fund locks found")
 		return nil
 	}
 
-	fls.logger.Info("Found expired locks", zap.Int("count", len(expiredLocks)))
+	fls.logger.Info("Found expired fund locks to clean",
+		zap.Int("count", len(expiredLocks)))
 
-	// Process expired locks in batches
-	batchSize := 100
+	// Process in batches
+	batchSize := fls.config.CleanupBatchSize
+	if batchSize == 0 {
+		batchSize = 100 // default batch size
+	}
+
 	for i := 0; i < len(expiredLocks); i += batchSize {
 		end := i + batchSize
 		if end > len(expiredLocks) {
@@ -337,34 +220,18 @@ func (fls *FundLockService) CleanupExpiredLocks(ctx context.Context) error {
 
 		batch := expiredLocks[i:end]
 		if err := fls.processExpiredLocksBatch(ctx, batch); err != nil {
-			fls.logger.Error("Failed to process expired locks batch", zap.Error(err))
+			fls.logger.Error("Failed to process expired locks batch",
+				zap.Int("batch_start", i),
+				zap.Int("batch_end", end),
+				zap.Error(err))
+			// Continue with next batch
 		}
 	}
 
+	fls.logger.Info("Completed cleanup of expired fund locks",
+		zap.Int("processed", len(expiredLocks)))
+
 	return nil
-}
-
-// StartCleanupWorker starts a background worker to cleanup expired locks
-func (fls *FundLockService) StartCleanupWorker(ctx context.Context) {
-	ticker := time.NewTicker(fls.config.CleanupInterval)
-
-	go func() {
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				fls.logger.Info("Fund lock cleanup worker stopped")
-				return
-			case <-ticker.C:
-				if err := fls.CleanupExpiredLocks(ctx); err != nil {
-					fls.logger.Error("Failed to cleanup expired locks", zap.Error(err))
-				}
-			}
-		}
-	}()
-
-	fls.logger.Info("Fund lock cleanup worker started")
 }
 
 // Private helper methods
@@ -379,8 +246,7 @@ func (fls *FundLockService) calculateExpiry() *time.Time {
 
 func (fls *FundLockService) isRetryableError(err error) bool {
 	// Check for database-specific retryable errors
-	// This would depend on the specific database being used
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 
 	// Common retryable error patterns
 	retryablePatterns := []string{
@@ -391,11 +257,9 @@ func (fls *FundLockService) isRetryableError(err error) bool {
 	}
 
 	for _, pattern := range retryablePatterns {
-		if len(errStr) > 0 && errStr != pattern {
-			// Use simple string contains check instead
-			continue
+		if strings.Contains(errStr, pattern) {
+			return true
 		}
-		return true
 	}
 
 	return false

@@ -337,26 +337,26 @@ const (
 	WebhookNetworkConnectionAdded    WebhookEvent = "NETWORK_CONNECTION_ADDED"
 )
 
-// Transaction status constants
+// Fireblocks specific status constants
 const (
-	TxStatusSubmitted            = "SUBMITTED"
-	TxStatusQueued               = "QUEUED"
-	TxStatusPendingSignature     = "PENDING_SIGNATURE"
-	TxStatusPendingAuthorization = "PENDING_AUTHORIZATION"
-	TxStatusPending3rdParty      = "PENDING_3RD_PARTY"
-	TxStatusPendingApproval      = "PENDING_APPROVAL"
-	TxStatusPending              = "PENDING"
-	TxStatusBroadcasting         = "BROADCASTING"
-	TxStatusConfirming           = "CONFIRMING"
-	TxStatusCompleted            = "COMPLETED"
-	TxStatusPendingAmlScreening  = "PENDING_AML_SCREENING"
-	TxStatusPartiallyCompleted   = "PARTIALLY_COMPLETED"
-	TxStatusCancelling           = "CANCELLING"
-	TxStatusCancelled            = "CANCELLED"
-	TxStatusRejected             = "REJECTED"
-	TxStatusFailed               = "FAILED"
-	TxStatusTimeout              = "TIMEOUT"
-	TxStatusBlocked              = "BLOCKED"
+	FireblocksStatusSubmitted            = "SUBMITTED"
+	FireblocksStatusQueued               = "QUEUED"
+	FireblocksStatusPendingSignature     = "PENDING_SIGNATURE"
+	FireblocksStatusPendingAuthorization = "PENDING_AUTHORIZATION"
+	FireblocksStatusPending3rdParty      = "PENDING_3RD_PARTY"
+	FireblocksStatusPendingApproval      = "PENDING_APPROVAL"
+	FireblocksStatusPending              = "PENDING"
+	FireblocksStatusBroadcasting         = "BROADCASTING"
+	FireblocksStatusConfirming           = "CONFIRMING"
+	FireblocksStatusCompleted            = "COMPLETED"
+	FireblocksStatusPendingAmlScreening  = "PENDING_AML_SCREENING"
+	FireblocksStatusPartiallyCompleted   = "PARTIALLY_COMPLETED"
+	FireblocksStatusCancelling           = "CANCELLING"
+	FireblocksStatusCancelled            = "CANCELLED"
+	FireblocksStatusRejected             = "REJECTED"
+	FireblocksStatusFailed               = "FAILED"
+	FireblocksStatusTimeout              = "TIMEOUT"
+	FireblocksStatusBlocked              = "BLOCKED"
 )
 
 // Fee levels

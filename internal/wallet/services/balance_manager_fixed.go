@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"context"
@@ -12,47 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// BalanceConfig holds configuration for the balance manager
-type BalanceConfig struct {
-	MaxConcurrentOps int           `yaml:"max_concurrent_ops" default:"100"`
-	LockTimeout      time.Duration `yaml:"lock_timeout" default:"30s"`
-	CacheTTL         time.Duration `yaml:"cache_ttl" default:"5m"`
-}
-
-// BalanceManager handles balance operations and management
-type BalanceManager struct {
-	db         *gorm.DB
-	logger     *zap.Logger
-	repository interfaces.WalletRepository
-	cache      interfaces.WalletCache
-	config     *BalanceConfig
-}
-
-// NewBalanceManager creates a new BalanceManager instance
-func NewBalanceManager(
-	db *gorm.DB,
-	logger *zap.Logger,
-	repository interfaces.WalletRepository,
-	cache interfaces.WalletCache,
-	config *BalanceConfig,
-) *BalanceManager {
-	if config == nil {
-		config = &BalanceConfig{
-			MaxConcurrentOps: 100,
-			LockTimeout:      30 * time.Second,
-			CacheTTL:         5 * time.Minute,
-		}
-	}
-
-	return &BalanceManager{
-		db:         db,
-		logger:     logger,
-		repository: repository,
-		cache:      cache,
-		config:     config,
-	}
-}
-
 // GetBalance retrieves the balance for a specific user and asset
 func (bm *BalanceManager) GetBalance(ctx context.Context, userID uuid.UUID, asset string) (*interfaces.AssetBalance, error) {
 	bm.logger.Debug("Getting balance",
@@ -61,15 +20,6 @@ func (bm *BalanceManager) GetBalance(ctx context.Context, userID uuid.UUID, asse
 
 	balance, err := bm.repository.GetBalance(ctx, userID, asset)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Return zero balance if not found
-			return &interfaces.AssetBalance{
-				Asset:     asset,
-				Available: decimal.Zero,
-				Locked:    decimal.Zero,
-				Total:     decimal.Zero,
-			}, nil
-		}
 		bm.logger.Error("Failed to get balance",
 			zap.String("user_id", userID.String()),
 			zap.String("asset", asset),
@@ -98,7 +48,6 @@ func (bm *BalanceManager) GetBalances(ctx context.Context, userID uuid.UUID) (*i
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to get balances: %w", err)
 	}
-
 	// Convert to AssetBalances map
 	assetBalances := make(map[string]interfaces.AssetBalance)
 	for _, balance := range balances {
@@ -118,15 +67,19 @@ func (bm *BalanceManager) GetBalances(ctx context.Context, userID uuid.UUID) (*i
 }
 
 // UpdateBalance updates the balance for a specific user and asset
-func (bm *BalanceManager) UpdateBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal, txType, txRef string) error {
+func (bm *BalanceManager) UpdateBalance(ctx context.Context, userID uuid.UUID, asset string, available, locked decimal.Decimal) error {
 	bm.logger.Debug("Updating balance",
 		zap.String("user_id", userID.String()),
 		zap.String("asset", asset),
-		zap.String("amount", amount.String()),
-		zap.String("tx_type", txType),
-		zap.String("tx_ref", txRef))
+		zap.String("available", available.String()),
+		zap.String("locked", locked.String()))
 
-	// Get current balance
+	// Validate amounts
+	if available.IsNegative() || locked.IsNegative() {
+		return fmt.Errorf("balance amounts cannot be negative")
+	}
+
+	// Get current balance to update the ID and other fields
 	existingBalance, err := bm.repository.GetBalance(ctx, userID, asset)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		bm.logger.Error("Failed to get existing balance",
@@ -140,25 +93,18 @@ func (bm *BalanceManager) UpdateBalance(ctx context.Context, userID uuid.UUID, a
 	var balance *interfaces.WalletBalance
 	if existingBalance != nil {
 		balance = existingBalance
-		balance.Available = balance.Available.Add(amount)
+		balance.Available = available
+		balance.Locked = locked
 	} else {
 		balance = &interfaces.WalletBalance{
 			ID:        uuid.New(),
 			UserID:    userID,
 			Asset:     asset,
-			Available: amount,
-			Locked:    decimal.Zero,
+			Available: available,
+			Locked:    locked,
 			UpdatedAt: time.Now(),
 		}
 	}
-
-	// Ensure available balance doesn't go negative
-	if balance.Available.IsNegative() {
-		return fmt.Errorf("insufficient balance")
-	}
-
-	balance.Total = balance.Available.Add(balance.Locked)
-	balance.UpdatedAt = time.Now()
 
 	err = bm.repository.UpdateBalance(ctx, balance)
 	if err != nil {
@@ -172,38 +118,25 @@ func (bm *BalanceManager) UpdateBalance(ctx context.Context, userID uuid.UUID, a
 	return nil
 }
 
-// Transfer transfers balance between users with reference string
-func (bm *BalanceManager) Transfer(ctx context.Context, fromUserID, toUserID uuid.UUID, asset string, amount decimal.Decimal, reference string) error {
-	bm.logger.Debug("Transfer balance",
-		zap.String("from_user_id", fromUserID.String()),
-		zap.String("to_user_id", toUserID.String()),
-		zap.String("asset", asset),
-		zap.String("amount", amount.String()),
-		zap.String("reference", reference))
-
-	if amount.IsNegative() || amount.IsZero() {
-		return fmt.Errorf("transfer amount must be positive")
-	}
-
-	// Start transaction
-	return bm.db.Transaction(func(tx *gorm.DB) error {
-		// Debit from sender
-		if err := bm.UpdateBalance(ctx, fromUserID, asset, amount.Neg(), "transfer_out", reference); err != nil {
-			return fmt.Errorf("failed to debit sender: %w", err)
-		}
-
-		// Credit to receiver
-		if err := bm.UpdateBalance(ctx, toUserID, asset, amount, "transfer_in", reference); err != nil {
-			return fmt.Errorf("failed to credit receiver: %w", err)
-		}
-
-		return nil
-	})
-}
+// Transfer method removed due to duplicate declaration in balance_manager_clean.go
 
 // CalculateBalance calculates the total balance (available + locked) for a user and asset
 func (bm *BalanceManager) CalculateBalance(ctx context.Context, userID uuid.UUID, asset string) (*interfaces.AssetBalance, error) {
-	return bm.GetBalance(ctx, userID, asset)
+	balance, err := bm.GetBalance(ctx, userID, asset)
+	if err != nil {
+		return nil, err
+	}
+
+	if balance == nil {
+		return &interfaces.AssetBalance{
+			Asset:     asset,
+			Available: decimal.Zero,
+			Locked:    decimal.Zero,
+			Total:     decimal.Zero,
+		}, nil
+	}
+
+	return balance, nil
 }
 
 // CreditBalance credits (adds) balance to a user's account - used by deposit manager
@@ -224,12 +157,10 @@ func (bm *BalanceManager) CreditBalance(ctx context.Context, tx *gorm.DB, userID
 		if err == gorm.ErrRecordNotFound {
 			// Create new balance if it doesn't exist
 			balance = &interfaces.WalletBalance{
-				ID:        uuid.New(),
 				UserID:    userID,
 				Asset:     asset,
 				Available: decimal.Zero,
 				Locked:    decimal.Zero,
-				UpdatedAt: time.Now(),
 			}
 		} else {
 			return fmt.Errorf("failed to get balance for credit: %w", err)
@@ -237,9 +168,18 @@ func (bm *BalanceManager) CreditBalance(ctx context.Context, tx *gorm.DB, userID
 	}
 
 	// Add amount to available balance
-	balance.Available = balance.Available.Add(amount)
-	balance.Total = balance.Available.Add(balance.Locked)
-	balance.UpdatedAt = time.Now()
+	newAvailable := balance.Available.Add(amount)
+
+	// Update balance object
+	if balance.ID == uuid.Nil {
+		// Create new balance
+		balance.ID = uuid.New()
+		balance.Available = newAvailable
+		balance.UpdatedAt = time.Now()
+	} else {
+		balance.Available = newAvailable
+		balance.UpdatedAt = time.Now()
+	}
 
 	err = bm.repository.UpdateBalance(ctx, balance)
 	if err != nil {
@@ -278,8 +218,10 @@ func (bm *BalanceManager) DebitBalance(ctx context.Context, tx *gorm.DB, userID 
 	}
 
 	// Subtract amount from available balance
-	balance.Available = balance.Available.Sub(amount)
-	balance.Total = balance.Available.Add(balance.Locked)
+	newAvailable := balance.Available.Sub(amount)
+
+	// Update balance object
+	balance.Available = newAvailable
 	balance.UpdatedAt = time.Now()
 
 	err = bm.repository.UpdateBalance(ctx, balance)
