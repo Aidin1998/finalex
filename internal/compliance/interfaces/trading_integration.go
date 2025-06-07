@@ -133,25 +133,28 @@ func (tei *TradingEngineIntegration) ExecuteEnforcementAction(ctx context.Contex
 
 	result.Success = true
 	result.Message = "Enforcement action executed successfully"
-
 	// Create audit entry
-	auditEntry := AuditEntry{
-		ID:          uuid.New().String(),
-		EntityType:  "enforcement_action",
-		EntityID:    action.ID,
+	auditEntry := &AuditEvent{
+		ID:          uuid.New(),
+		EventType:   "enforcement_action",
+		Category:    "compliance",
+		Severity:    "info",
+		Description: fmt.Sprintf("Enforcement action executed: %s", action.Type),
 		Action:      action.Type,
-		PerformedBy: action.RequestedBy,
-		Timestamp:   time.Now(),
-		Details: map[string]string{
+		Resource:    "enforcement_action",
+		ResourceID:  action.ID,
+		Metadata: map[string]interface{}{
 			"target":   action.Target,
 			"reason":   action.Reason,
-			"success":  fmt.Sprintf("%t", result.Success),
+			"success":  result.Success,
 			"message":  result.Message,
 			"duration": time.Since(startTime).String(),
 		},
+		Timestamp:   time.Now(),
+		ProcessedBy: action.RequestedBy,
 	}
 
-	if err := tei.auditService.CreateAuditEntry(ctx, auditEntry); err != nil {
+	if err := tei.auditService.CreateEvent(ctx, auditEntry); err != nil {
 		tei.logger.Error("Failed to create audit entry for enforcement action",
 			zap.Error(err),
 			zap.String("action_id", action.ID),
@@ -170,11 +173,10 @@ func (tei *TradingEngineIntegration) cancelOrder(ctx context.Context, action Enf
 	if err != nil {
 		return fmt.Errorf("invalid order ID format: %v", err)
 	}
-
 	// Cancel order through trading engine
 	cancelReq := &engine.CancelRequest{
 		OrderID: orderUUID,
-		Reason:  action.Reason,
+		Pair:    "", // Will need to be provided via parameters if needed
 	}
 
 	if userID, exists := action.Parameters["user_id"]; exists {
@@ -229,15 +231,14 @@ func (tei *TradingEngineIntegration) cancelUserOrders(ctx context.Context, actio
 					if err != nil {
 						tei.logger.Error("Invalid order ID in cancel user orders",
 							zap.String("order_id", orderIDStr),
-							zap.Error(err),
-						)
+							zap.Error(err))
 						continue
 					}
 
 					cancelReq := &engine.CancelRequest{
 						OrderID: orderUUID,
 						UserID:  userUUID,
-						Reason:  action.Reason,
+						Pair:    "", // Will need pair from parameters if available
 					}
 
 					err = tei.tradingEngine.CancelOrder(cancelReq)
@@ -297,20 +298,19 @@ func (tei *TradingEngineIntegration) blockUser(ctx context.Context, action Enfor
 			zap.String("user_id", userID),
 			zap.Error(err),
 		)
-	}
-
-	// Update user compliance status to blocked
-	complianceCheck := ComplianceCheckRequest{
-		UserID:    userID,
-		CheckType: "user_block",
-		Parameters: map[string]string{
+	} // Update user compliance status to blocked
+	complianceCheck := &ComplianceRequest{
+		UserID:           uuid.MustParse(userID),
+		ActivityType:     ActivityTrade, // Using trade activity type for user blocking
+		RequestTimestamp: time.Now(),
+		Metadata: map[string]interface{}{
 			"reason":     action.Reason,
 			"blocked_by": action.RequestedBy,
 			"blocked_at": time.Now().Format(time.RFC3339),
 		},
 	}
 
-	_, err = tei.complianceService.PerformCheck(ctx, complianceCheck)
+	_, err = tei.complianceService.PerformComplianceCheck(ctx, complianceCheck)
 	if err != nil {
 		tei.logger.Error("Failed to update user compliance status",
 			zap.String("user_id", userID),
@@ -346,12 +346,12 @@ func (tei *TradingEngineIntegration) haltTrading(ctx context.Context, action Enf
 	// Halt trading using order book admin controls
 	// This would require the order book to implement halt functionality
 	// For now, we'll log the action and update the compliance system
-
 	// Update compliance system with trading halt
-	complianceCheck := ComplianceCheckRequest{
-		UserID:    "system",
-		CheckType: "trading_halt",
-		Parameters: map[string]string{
+	complianceCheck := &ComplianceRequest{
+		UserID:           uuid.Nil, // Using nil UUID for system-level actions
+		ActivityType:     ActivityTrade,
+		RequestTimestamp: time.Now(),
+		Metadata: map[string]interface{}{
 			"instrument": instrument,
 			"reason":     action.Reason,
 			"halted_by":  action.RequestedBy,
@@ -359,7 +359,7 @@ func (tei *TradingEngineIntegration) haltTrading(ctx context.Context, action Enf
 		},
 	}
 
-	_, err := tei.complianceService.PerformCheck(ctx, complianceCheck)
+	_, err := tei.complianceService.PerformComplianceCheck(ctx, complianceCheck)
 	if err != nil {
 		tei.logger.Error("Failed to record trading halt in compliance system",
 			zap.String("instrument", instrument),
@@ -399,12 +399,12 @@ func (tei *TradingEngineIntegration) blockInstrument(ctx context.Context, action
 	if err != nil {
 		return fmt.Errorf("failed to halt trading for instrument: %v", err)
 	}
-
 	// Update compliance system with instrument block
-	complianceCheck := ComplianceCheckRequest{
-		UserID:    "system",
-		CheckType: "instrument_block",
-		Parameters: map[string]string{
+	complianceCheck := &ComplianceRequest{
+		UserID:           uuid.Nil, // Using nil UUID for system-level actions
+		ActivityType:     ActivityTrade,
+		RequestTimestamp: time.Now(),
+		Metadata: map[string]interface{}{
 			"instrument": instrument,
 			"reason":     action.Reason,
 			"blocked_by": action.RequestedBy,
@@ -412,7 +412,7 @@ func (tei *TradingEngineIntegration) blockInstrument(ctx context.Context, action
 		},
 	}
 
-	_, err = tei.complianceService.PerformCheck(ctx, complianceCheck)
+	_, err = tei.complianceService.PerformComplianceCheck(ctx, complianceCheck)
 	if err != nil {
 		tei.logger.Error("Failed to record instrument block in compliance system",
 			zap.String("instrument", instrument),
@@ -434,22 +434,22 @@ func (tei *TradingEngineIntegration) blockInstrument(ctx context.Context, action
 }
 
 // RealTimeEnforcementHook provides real-time enforcement during order processing
-func (tei *TradingEngineIntegration) RealTimeEnforcementHook(ctx context.Context, order *model.Order) error {
-	// Perform real-time compliance check
-	complianceCheck := ComplianceCheckRequest{
-		UserID:        order.UserID.String(),
-		CheckType:     "real_time_order",
-		TransactionID: order.ID.String(),
-		Parameters: map[string]string{
-			"instrument": order.Pair,
-			"side":       order.Side,
-			"quantity":   order.Quantity.String(),
-			"price":      order.Price.String(),
-			"order_type": order.Type,
+func (tei *TradingEngineIntegration) RealTimeEnforcementHook(ctx context.Context, order *model.Order) error { // Perform real-time compliance check
+	complianceCheck := &ComplianceRequest{
+		UserID:           order.UserID,
+		ActivityType:     ActivityTrade,
+		RequestTimestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"instrument":     order.Pair,
+			"side":           order.Side,
+			"quantity":       order.Quantity.String(),
+			"price":          order.Price.String(),
+			"order_type":     order.Type,
+			"transaction_id": order.ID.String(),
 		},
 	}
 
-	result, err := tei.complianceService.PerformCheck(ctx, complianceCheck)
+	result, err := tei.complianceService.PerformComplianceCheck(ctx, complianceCheck)
 	if err != nil {
 		tei.logger.Error("Compliance check failed during real-time enforcement",
 			zap.String("order_id", order.ID.String()),
@@ -458,27 +458,27 @@ func (tei *TradingEngineIntegration) RealTimeEnforcementHook(ctx context.Context
 		)
 		return fmt.Errorf("compliance check failed: %v", err)
 	}
-
 	// If not compliant, block the order
-	if !result.Compliant {
+	if !result.Approved || result.Blocked {
 		tei.logger.Warn("Order blocked by real-time compliance check",
 			zap.String("order_id", order.ID.String()),
 			zap.String("user_id", order.UserID.String()),
-			zap.Float64("risk_score", result.RiskScore),
-			zap.Strings("violations", result.Violations),
+			zap.String("risk_score", result.RiskScore.String()),
+			zap.Strings("flags", result.Flags),
+			zap.String("reason", result.Reason),
 		)
 
-		// Execute required actions
-		for _, action := range result.RequiredActions {
+		// Execute required actions based on compliance result
+		if result.Blocked {
 			enforcementAction := EnforcementAction{
 				ID:     uuid.New().String(),
-				Type:   action.Type,
+				Type:   "cancel_order",
 				Target: order.ID.String(),
 				Parameters: map[string]interface{}{
 					"user_id": order.UserID.String(),
-					"reason":  fmt.Sprintf("Real-time compliance violation: %v", result.Violations),
+					"reason":  fmt.Sprintf("Real-time compliance violation: %s", result.Reason),
 				},
-				Reason:      action.Description,
+				Reason:      result.Reason,
 				RequestedBy: "compliance_system",
 				CreatedAt:   time.Now(),
 				Status:      "pending",
@@ -494,7 +494,7 @@ func (tei *TradingEngineIntegration) RealTimeEnforcementHook(ctx context.Context
 			}
 		}
 
-		return fmt.Errorf("order blocked by compliance: %v", result.Violations)
+		return fmt.Errorf("order blocked by compliance: %s", result.Reason)
 	}
 
 	return nil

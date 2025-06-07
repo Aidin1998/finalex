@@ -3,7 +3,10 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -23,19 +26,24 @@ func NewWalletIntegration(hookManager *HookManager, logger *zap.Logger) *WalletI
 
 // OnCryptoDeposit handles cryptocurrency deposit events
 func (w *WalletIntegration) OnCryptoDeposit(ctx context.Context, userID string, amount float64, currency string, txHash string, fromAddress string, toAddress string, confirmations int) error {
+	// Convert amount to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+
 	event := WalletCryptoDepositEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeWalletCryptoDeposit,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleWallet,
+			ID:        uuid.New(),
 		},
-		Amount:        amount,
+		Amount:        amountDecimal,
 		Currency:      currency,
 		TxHash:        txHash,
 		FromAddress:   fromAddress,
 		ToAddress:     toAddress,
 		Confirmations: confirmations,
+		Network:       "mainnet", // Default value
 	}
 
 	w.logger.Info("Processing crypto deposit",
@@ -62,19 +70,25 @@ func (w *WalletIntegration) OnCryptoDeposit(ctx context.Context, userID string, 
 
 // OnCryptoWithdrawal handles cryptocurrency withdrawal events
 func (w *WalletIntegration) OnCryptoWithdrawal(ctx context.Context, userID string, amount float64, currency string, txHash string, fromAddress string, toAddress string, fee float64) error {
+	// Convert amounts to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+	feeDecimal := decimal.NewFromFloat(fee)
+
 	event := WalletCryptoWithdrawalEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeWalletCryptoWithdrawal,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleWallet,
+			ID:        uuid.New(),
 		},
-		Amount:      amount,
+		Amount:      amountDecimal,
 		Currency:    currency,
 		TxHash:      txHash,
 		FromAddress: fromAddress,
 		ToAddress:   toAddress,
-		Fee:         fee,
+		Fee:         feeDecimal,
+		Network:     "mainnet", // Default value
 	}
 
 	w.logger.Info("Processing crypto withdrawal",
@@ -101,16 +115,31 @@ func (w *WalletIntegration) OnCryptoWithdrawal(ctx context.Context, userID strin
 
 // OnInternalTransfer handles internal wallet transfer events
 func (w *WalletIntegration) OnInternalTransfer(ctx context.Context, fromUserID, toUserID string, amount float64, currency string, reference string) error {
+	// Parse UUIDs
+	fromUserUUID, err := uuid.Parse(fromUserID)
+	if err != nil {
+		return fmt.Errorf("invalid from_user_id UUID: %w", err)
+	}
+
+	toUserUUID, err := uuid.Parse(toUserID)
+	if err != nil {
+		return fmt.Errorf("invalid to_user_id UUID: %w", err)
+	}
+
+	// Convert amount to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+
 	event := WalletInternalTransferEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeWalletInternalTransfer,
 			UserID:    fromUserID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleWallet,
+			ID:        uuid.New(),
 		},
-		FromUserID: fromUserID,
-		ToUserID:   toUserID,
-		Amount:     amount,
+		FromUserID: fromUserUUID,
+		ToUserID:   toUserUUID,
+		Amount:     amountDecimal,
 		Currency:   currency,
 		Reference:  reference,
 	}
@@ -138,16 +167,21 @@ func (w *WalletIntegration) OnInternalTransfer(ctx context.Context, fromUserID, 
 
 // OnBalanceUpdate handles balance update events
 func (w *WalletIntegration) OnBalanceUpdate(ctx context.Context, userID string, currency string, oldBalance, newBalance float64, reason string) error {
+	// Convert balances to decimal
+	oldBalanceDecimal := decimal.NewFromFloat(oldBalance)
+	newBalanceDecimal := decimal.NewFromFloat(newBalance)
+
 	event := WalletBalanceUpdateEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeWalletBalanceUpdate,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleWallet,
+			ID:        uuid.New(),
 		},
 		Currency:   currency,
-		OldBalance: oldBalance,
-		NewBalance: newBalance,
+		OldBalance: oldBalanceDecimal,
+		NewBalance: newBalanceDecimal,
 		Reason:     reason,
 	}
 

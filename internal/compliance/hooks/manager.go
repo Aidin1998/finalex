@@ -10,6 +10,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
 	"github.com/Aidin1998/finalex/internal/compliance/risk"
+	"github.com/google/uuid"
 )
 
 // RegisterUserAuthHook registers a user authentication hook
@@ -61,7 +62,7 @@ type ComplianceUserAuthHook struct {
 	compliance interfaces.ComplianceService
 	audit      interfaces.AuditService
 	monitoring interfaces.MonitoringService
-	risk       interfaces.RiskService
+	risk       risk.RiskService
 }
 
 // NewComplianceUserAuthHook creates a new compliance user auth hook
@@ -69,13 +70,13 @@ func NewComplianceUserAuthHook(
 	compliance interfaces.ComplianceService,
 	audit interfaces.AuditService,
 	monitoring interfaces.MonitoringService,
-	risk interfaces.RiskService,
+	riskSvc risk.RiskService,
 ) *ComplianceUserAuthHook {
 	return &ComplianceUserAuthHook{
 		compliance: compliance,
 		audit:      audit,
 		monitoring: monitoring,
-		risk:       risk,
+		risk:       riskSvc,
 	}
 }
 
@@ -239,7 +240,7 @@ type ComplianceTradingHook struct {
 	audit        interfaces.AuditService
 	monitoring   interfaces.MonitoringService
 	manipulation interfaces.ManipulationService
-	risk         interfaces.RiskService
+	risk         risk.RiskService
 }
 
 // NewComplianceTradingHook creates a new compliance trading hook
@@ -248,14 +249,14 @@ func NewComplianceTradingHook(
 	audit interfaces.AuditService,
 	monitoring interfaces.MonitoringService,
 	manipulation interfaces.ManipulationService,
-	risk interfaces.RiskService,
+	riskSvc risk.RiskService,
 ) *ComplianceTradingHook {
 	return &ComplianceTradingHook{
 		compliance:   compliance,
 		audit:        audit,
 		monitoring:   monitoring,
 		manipulation: manipulation,
-		risk:         risk,
+		risk:         riskSvc,
 	}
 }
 
@@ -309,7 +310,7 @@ func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderP
 		IPAddress: event.IPAddress,
 	}
 
-	manipResult, err := h.manipulation.DetectManipulation(ctx, manipReq)
+	manipResult, err := h.manipulation.DetectManipulation(ctx, *manipReq)
 	if err != nil {
 		log.Printf("Manipulation detection failed for order %s: %v", event.OrderID, err)
 	}
@@ -386,6 +387,282 @@ func (h *ComplianceTradingHook) OnMarketDataReceived(ctx context.Context, event 
 	return nil
 }
 
+// TriggerHooks processes the given event through appropriate hooks based on event type
+func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) error {
+	switch e := event.(type) {
+	// User Authentication Events
+	case *UserRegistrationEvent:
+		return hm.ProcessUserAuthEvent(ctx, "user_registration", e)
+	case *UserLoginEvent:
+		return hm.ProcessUserAuthEvent(ctx, "user_login", e)
+	case *UserLogoutEvent:
+		return hm.ProcessUserAuthEvent(ctx, "user_logout", e)
+	case *PasswordChangeEvent:
+		return hm.ProcessUserAuthEvent(ctx, "password_change", e)
+	case *EmailVerificationEvent:
+		return hm.ProcessUserAuthEvent(ctx, "email_verification", e)
+	case *TwoFAEvent:
+		return hm.ProcessUserAuthEvent(ctx, "2fa_enabled", e)
+	case *AccountLockEvent:
+		return hm.ProcessUserAuthEvent(ctx, "account_locked", e)
+	
+	// Account Events
+	case *AccountCreatedEvent:
+		return hm.ProcessAccountEvent(ctx, "account_created", e)
+	case *AccountSuspendedEvent:
+		return hm.ProcessAccountEvent(ctx, "account_suspended", e)
+	case *AccountKYCEvent:
+		return hm.ProcessAccountEvent(ctx, "account_kyc", e)
+	case *AccountTierEvent:
+		return hm.ProcessAccountEvent(ctx, "account_tier", e)
+	case *AccountDormancyEvent:
+		return hm.ProcessAccountEvent(ctx, "account_dormancy", e)
+		
+	// Trading Events
+	case *OrderPlacedEvent:
+		return hm.ProcessTradingEvent(ctx, "order_placed", e)
+	case *OrderExecutedEvent:
+		return hm.ProcessTradingEvent(ctx, "order_executed", e)
+	case *TradeExecutedEvent:
+		return hm.ProcessTradingEvent(ctx, "trade_executed", e)
+		
+	// Fiat Events
+	case *FiatDepositEvent:
+		return hm.ProcessFiatEvent(ctx, "fiat_deposit", e)
+	case *FiatWithdrawalEvent:
+		return hm.ProcessFiatEvent(ctx, "fiat_withdrawal", e)
+	case *FiatTransferEvent:
+		return hm.ProcessFiatEvent(ctx, "fiat_transfer", e)
+		
+	// Wallet Events
+	case *CryptoDepositEvent:
+		return hm.ProcessWalletEvent(ctx, "crypto_deposit", e)
+	case *WalletBalanceUpdateEvent:
+		return hm.ProcessWalletEvent(ctx, "wallet_balance_update", e)
+	case *WalletAddressEvent:
+		return hm.ProcessWalletEvent(ctx, "wallet_address", e)
+	case *WalletStakingEvent:
+		return hm.ProcessWalletEvent(ctx, "wallet_staking", e)
+		
+	// Market Making Events
+	case *MMStrategyEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_strategy", e)
+	case *MMQuoteEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_quote", e)
+	case *MMOrderEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_order", e)
+	case *MMInventoryEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_inventory", e)
+	case *MMRiskEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_risk", e)
+	case *MMPnLEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_pnl", e)
+	case *MMPerformanceEvent:
+		return hm.ProcessMarketMakingEvent(ctx, "mm_performance", e)
+		
+	default:
+		return fmt.Errorf("unsupported event type: %T", event)
+	}
+}
+
+// Helper methods for processing different event categories
+func (hm *HookManager) ProcessAccountEvent(ctx context.Context, eventType string, event interface{}) error {
+	hm.mu.RLock()
+	hooks := make([]AccountsHook, len(hm.accountsHooks))
+	copy(hooks, hm.accountsHooks)
+	hm.mu.RUnlock()
+
+	for _, hook := range hooks {
+		switch eventType {
+		case "account_created":
+			if e, ok := event.(*AccountCreatedEvent); ok {
+				if err := hook.OnAccountCreation(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "account_suspended":
+			if e, ok := event.(*AccountSuspendedEvent); ok {
+				if err := hook.OnAccountSuspension(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "account_kyc":
+			if e, ok := event.(*AccountKYCEvent); ok {
+				if err := hook.OnKYCStatusChange(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "account_tier":
+			if e, ok := event.(*AccountTierEvent); ok {
+				if err := hook.OnTierChange(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "account_dormancy":
+			if e, ok := event.(*AccountDormancyEvent); ok {
+				if err := hook.OnDormancyStatusChange(ctx, e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (hm *HookManager) ProcessTradingEvent(ctx context.Context, eventType string, event interface{}) error {
+	hm.mu.RLock()
+	hooks := make([]TradingHook, len(hm.tradingHooks))
+	copy(hooks, hm.tradingHooks)
+	hm.mu.RUnlock()
+
+	for _, hook := range hooks {
+		switch eventType {
+		case "order_placed":
+			if e, ok := event.(*OrderPlacedEvent); ok {
+				if err := hook.OnOrderPlaced(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "order_executed":
+			if e, ok := event.(*OrderExecutedEvent); ok {
+				if err := hook.OnOrderExecuted(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "trade_executed":
+			if e, ok := event.(*TradeExecutedEvent); ok {
+				if err := hook.OnTradeExecuted(ctx, e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (hm *HookManager) ProcessFiatEvent(ctx context.Context, eventType string, event interface{}) error {
+	hm.mu.RLock()
+	hooks := make([]FiatHook, len(hm.fiatHooks))
+	copy(hooks, hm.fiatHooks)
+	hm.mu.RUnlock()
+
+	for _, hook := range hooks {
+		switch eventType {
+		case "fiat_deposit":
+			if e, ok := event.(*FiatDepositEvent); ok {
+				if err := hook.OnFiatDeposit(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "fiat_withdrawal":
+			if e, ok := event.(*FiatWithdrawalEvent); ok {
+				if err := hook.OnFiatWithdrawal(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "fiat_transfer":
+			if e, ok := event.(*FiatTransferEvent); ok {
+				if err := hook.OnFiatTransfer(ctx, e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (hm *HookManager) ProcessWalletEvent(ctx context.Context, eventType string, event interface{}) error {
+	hm.mu.RLock()
+	hooks := make([]WalletHook, len(hm.walletHooks))
+	copy(hooks, hm.walletHooks)
+	hm.mu.RUnlock()
+
+	for _, hook := range hooks {
+		switch eventType {
+		case "crypto_deposit":
+			if e, ok := event.(*CryptoDepositEvent); ok {
+				if err := hook.OnCryptoDeposit(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "wallet_balance_update":
+			if e, ok := event.(*WalletBalanceUpdateEvent); ok {
+				if err := hook.OnBalanceUpdate(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "wallet_address":
+			if e, ok := event.(*WalletAddressEvent); ok {
+				if err := hook.OnAddressGenerated(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "wallet_staking":
+			if e, ok := event.(*WalletStakingEvent); ok {
+				if err := hook.OnStaking(ctx, e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (hm *HookManager) ProcessMarketMakingEvent(ctx context.Context, eventType string, event interface{}) error {
+	hm.mu.RLock()
+	hooks := make([]MarketMakingHook, len(hm.marketMakingHooks))
+	copy(hooks, hm.marketMakingHooks)
+	hm.mu.RUnlock()
+
+	for _, hook := range hooks {
+		switch eventType {
+		case "mm_strategy":
+			if e, ok := event.(*MMStrategyEvent); ok {
+				if err := hook.OnStrategyChange(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_quote":
+			if e, ok := event.(*MMQuoteEvent); ok {
+				if err := hook.OnQuoteUpdate(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_order":
+			if e, ok := event.(*MMOrderEvent); ok {
+				if err := hook.OnOrderManagement(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_inventory":
+			if e, ok := event.(*MMInventoryEvent); ok {
+				if err := hook.OnInventoryRebalancing(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_risk":
+			if e, ok := event.(*MMRiskEvent); ok {
+				if err := hook.OnRiskBreach(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_pnl":
+			if e, ok := event.(*MMPnLEvent); ok {
+				if err := hook.OnPnLAlert(ctx, e); err != nil {
+					return err
+				}
+			}
+		case "mm_performance":
+			if e, ok := event.(*MMPerformanceEvent); ok {
+				if err := hook.OnPerformanceReport(ctx, e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // Helper function for audit logging
 func (h *ComplianceUserAuthHook) auditEvent(ctx context.Context, eventType string, userID interface{}, data interface{}) error {
 	auditEvent := &interfaces.AuditEvent{
@@ -399,7 +676,12 @@ func (h *ComplianceUserAuthHook) auditEvent(ctx context.Context, eventType strin
 		Timestamp: time.Now(),
 	}
 
+	// Handle different UserID types and convert to *uuid.UUID
 	if uid, ok := userID.(string); ok {
+		if parsedUUID, err := uuid.Parse(uid); err == nil {
+			auditEvent.UserID = &parsedUUID
+		}
+	} else if uid, ok := userID.(uuid.UUID); ok {
 		auditEvent.UserID = &uid
 	}
 
@@ -418,10 +700,14 @@ func (h *ComplianceTradingHook) auditEvent(ctx context.Context, eventType string
 		Timestamp: time.Now(),
 	}
 
+	// Handle different UserID types and convert to *uuid.UUID
 	if uid, ok := userID.(string); ok {
+		if parsedUUID, err := uuid.Parse(uid); err == nil {
+			auditEvent.UserID = &parsedUUID
+		}
+	} else if uid, ok := userID.(uuid.UUID); ok {
 		auditEvent.UserID = &uid
 	}
-
 	return h.audit.CreateEvent(ctx, auditEvent)
 }
 

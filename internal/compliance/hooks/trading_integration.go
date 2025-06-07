@@ -5,18 +5,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/compliance/hooks"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
 // TradingIntegration provides integration between trading and compliance modules
 type TradingIntegration struct {
-	hookManager *hooks.HookManager
+	hookManager *HookManager
 }
 
 // NewTradingIntegration creates a new trading integration
-func NewTradingIntegration(hookManager *hooks.HookManager) *TradingIntegration {
+func NewTradingIntegration(hookManager *HookManager) *TradingIntegration {
 	return &TradingIntegration{
 		hookManager: hookManager,
 	}

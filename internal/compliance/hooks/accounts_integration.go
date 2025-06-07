@@ -3,7 +3,10 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -87,15 +90,22 @@ func (a *AccountsIntegration) OnAccountUpdate(ctx context.Context, userID string
 
 // OnAccountSuspension handles account suspension events
 func (a *AccountsIntegration) OnAccountSuspension(ctx context.Context, userID string, reason string, suspendedBy string, duration int64) error {
+	// Parse UUID
+	suspendedByUUID, err := uuid.Parse(suspendedBy)
+	if err != nil {
+		return fmt.Errorf("invalid suspended_by UUID: %w", err)
+	}
+
 	event := AccountSuspensionEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountSuspension,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
 		Reason:      reason,
-		SuspendedBy: suspendedBy,
+		SuspendedBy: suspendedByUUID,
 		Duration:    duration,
 	}
 
@@ -120,15 +130,22 @@ func (a *AccountsIntegration) OnAccountSuspension(ctx context.Context, userID st
 
 // OnAccountReactivation handles account reactivation events
 func (a *AccountsIntegration) OnAccountReactivation(ctx context.Context, userID string, reason string, reactivatedBy string) error {
+	// Parse UUID
+	reactivatedByUUID, err := uuid.Parse(reactivatedBy)
+	if err != nil {
+		return fmt.Errorf("invalid reactivated_by UUID: %w", err)
+	}
+
 	event := AccountReactivationEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountReactivation,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
 		Reason:        reason,
-		ReactivatedBy: reactivatedBy,
+		ReactivatedBy: reactivatedByUUID,
 	}
 
 	a.logger.Info("Processing account reactivation",
@@ -151,16 +168,23 @@ func (a *AccountsIntegration) OnAccountReactivation(ctx context.Context, userID 
 
 // OnPermissionChange handles permission change events
 func (a *AccountsIntegration) OnPermissionChange(ctx context.Context, userID string, permission string, action string, changedBy string) error {
+	// Parse UUID
+	changedByUUID, err := uuid.Parse(changedBy)
+	if err != nil {
+		return fmt.Errorf("invalid changed_by UUID: %w", err)
+	}
+
 	event := AccountPermissionEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountPermission,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
 		Permission: permission,
 		Action:     action,
-		ChangedBy:  changedBy,
+		ChangedBy:  changedByUUID,
 	}
 
 	a.logger.Info("Processing permission change",
@@ -185,16 +209,23 @@ func (a *AccountsIntegration) OnPermissionChange(ctx context.Context, userID str
 
 // OnKYCStatusChange handles KYC status change events
 func (a *AccountsIntegration) OnKYCStatusChange(ctx context.Context, userID string, oldStatus, newStatus string, verifiedBy string, documents []string) error {
+	// Parse UUID
+	verifiedByUUID, err := uuid.Parse(verifiedBy)
+	if err != nil {
+		return fmt.Errorf("invalid verified_by UUID: %w", err)
+	}
+
 	event := AccountKYCEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountKYC,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
 		OldStatus:  oldStatus,
 		NewStatus:  newStatus,
-		VerifiedBy: verifiedBy,
+		VerifiedBy: verifiedByUUID,
 		Documents:  documents,
 	}
 
@@ -221,16 +252,34 @@ func (a *AccountsIntegration) OnKYCStatusChange(ctx context.Context, userID stri
 
 // OnTierChange handles account tier change events
 func (a *AccountsIntegration) OnTierChange(ctx context.Context, userID string, oldTier, newTier string, changedBy string, reason string) error {
+	// Parse UUID
+	changedByUUID, err := uuid.Parse(changedBy)
+	if err != nil {
+		return fmt.Errorf("invalid changed_by UUID: %w", err)
+	}
+
+	// Convert tier strings to integers
+	oldTierInt, err := strconv.Atoi(oldTier)
+	if err != nil {
+		return fmt.Errorf("invalid old_tier value: %w", err)
+	}
+
+	newTierInt, err := strconv.Atoi(newTier)
+	if err != nil {
+		return fmt.Errorf("invalid new_tier value: %w", err)
+	}
+
 	event := AccountTierEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountTier,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
-		OldTier:   oldTier,
-		NewTier:   newTier,
-		ChangedBy: changedBy,
+		OldTier:   oldTierInt,
+		NewTier:   newTierInt,
+		ChangedBy: changedByUUID,
 		Reason:    reason,
 	}
 
@@ -257,15 +306,19 @@ func (a *AccountsIntegration) OnTierChange(ctx context.Context, userID string, o
 
 // OnDormancyStatusChange handles account dormancy status change events
 func (a *AccountsIntegration) OnDormancyStatusChange(ctx context.Context, userID string, isDormant bool, lastActivity int64, reason string) error {
+	// Convert int64 to time.Time
+	lastActivityTime := time.Unix(lastActivity, 0)
+
 	event := AccountDormancyEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeAccountDormancy,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleAccounts,
+			ID:        uuid.New(),
 		},
 		IsDormant:    isDormant,
-		LastActivity: lastActivity,
+		LastActivity: lastActivityTime,
 		Reason:       reason,
 	}
 

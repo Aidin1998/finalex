@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -23,17 +25,29 @@ func NewFiatIntegration(hookManager *HookManager, logger *zap.Logger) *FiatInteg
 
 // OnDeposit handles fiat deposit events
 func (f *FiatIntegration) OnDeposit(ctx context.Context, userID string, amount float64, currency string, bankAccount string, reference string) error {
+	// Convert amount to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+
+	// Create BankAccountInfo (simplified - in real implementation, you'd parse this properly)
+	bankAccountInfo := BankAccountInfo{
+		BankName:      bankAccount, // Simplified
+		AccountNumber: bankAccount,
+		Currency:      currency,
+	}
+
 	event := FiatDepositEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeFiatDeposit,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleFiat,
+			ID:        uuid.New(),
 		},
-		Amount:      amount,
+		Amount:      amountDecimal,
 		Currency:    currency,
-		BankAccount: bankAccount,
+		BankAccount: bankAccountInfo,
 		Reference:   reference,
+		Status:      "pending",
 	}
 
 	f.logger.Info("Processing fiat deposit",
@@ -58,17 +72,29 @@ func (f *FiatIntegration) OnDeposit(ctx context.Context, userID string, amount f
 
 // OnWithdrawal handles fiat withdrawal events
 func (f *FiatIntegration) OnWithdrawal(ctx context.Context, userID string, amount float64, currency string, bankAccount string, reference string) error {
+	// Convert amount to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+
+	// Create BankAccountInfo (simplified - in real implementation, you'd parse this properly)
+	bankAccountInfo := BankAccountInfo{
+		BankName:      bankAccount, // Simplified
+		AccountNumber: bankAccount,
+		Currency:      currency,
+	}
+
 	event := FiatWithdrawalEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeFiatWithdrawal,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleFiat,
+			ID:        uuid.New(),
 		},
-		Amount:      amount,
+		Amount:      amountDecimal,
 		Currency:    currency,
-		BankAccount: bankAccount,
+		BankAccount: bankAccountInfo,
 		Reference:   reference,
+		Status:      "pending",
 	}
 
 	f.logger.Info("Processing fiat withdrawal",
@@ -93,16 +119,31 @@ func (f *FiatIntegration) OnWithdrawal(ctx context.Context, userID string, amoun
 
 // OnTransfer handles fiat transfer events
 func (f *FiatIntegration) OnTransfer(ctx context.Context, fromUserID, toUserID string, amount float64, currency string, reference string) error {
+	// Parse UUIDs
+	fromUserUUID, err := uuid.Parse(fromUserID)
+	if err != nil {
+		return fmt.Errorf("invalid from_user_id UUID: %w", err)
+	}
+
+	toUserUUID, err := uuid.Parse(toUserID)
+	if err != nil {
+		return fmt.Errorf("invalid to_user_id UUID: %w", err)
+	}
+
+	// Convert amount to decimal
+	amountDecimal := decimal.NewFromFloat(amount)
+
 	event := FiatTransferEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeFiatTransfer,
 			UserID:    fromUserID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleFiat,
+			ID:        uuid.New(),
 		},
-		FromUserID: fromUserID,
-		ToUserID:   toUserID,
-		Amount:     amount,
+		FromUserID: fromUserUUID,
+		ToUserID:   toUserUUID,
+		Amount:     amountDecimal,
 		Currency:   currency,
 		Reference:  reference,
 	}
@@ -192,18 +233,24 @@ func (f *FiatIntegration) OnBankAccountRemove(ctx context.Context, userID string
 
 // OnCurrencyConversion handles currency conversion events
 func (f *FiatIntegration) OnCurrencyConversion(ctx context.Context, userID string, fromCurrency, toCurrency string, fromAmount, toAmount float64, rate float64, reference string) error {
+	// Convert amounts to decimal
+	fromAmountDecimal := decimal.NewFromFloat(fromAmount)
+	toAmountDecimal := decimal.NewFromFloat(toAmount)
+	rateDecimal := decimal.NewFromFloat(rate)
+
 	event := FiatConversionEvent{
 		BaseEvent: BaseEvent{
 			Type:      EventTypeFiatConversion,
 			UserID:    userID,
 			Timestamp: getCurrentTimestamp(),
 			Module:    ModuleFiat,
+			ID:        uuid.New(),
 		},
 		FromCurrency: fromCurrency,
 		ToCurrency:   toCurrency,
-		FromAmount:   fromAmount,
-		ToAmount:     toAmount,
-		Rate:         rate,
+		FromAmount:   fromAmountDecimal,
+		ToAmount:     toAmountDecimal,
+		Rate:         rateDecimal,
 		Reference:    reference,
 	}
 

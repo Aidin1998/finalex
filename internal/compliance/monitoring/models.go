@@ -80,17 +80,19 @@ func (m *MonitoringAlertModel) ToInterface() interfaces.MonitoringAlert {
 
 // MonitoringPolicyModel represents monitoring policies in the database
 type MonitoringPolicyModel struct {
-	ID         string                 `gorm:"primaryKey;type:varchar(36)" json:"id"`
-	Name       string                 `gorm:"type:varchar(200);unique" json:"name"`
-	AlertType  string                 `gorm:"type:varchar(100);index" json:"alert_type"`
-	Enabled    bool                   `gorm:"default:true" json:"enabled"`
-	Threshold  float64                `json:"threshold"`
-	TimeWindow time.Duration          `json:"time_window"`
-	Action     string                 `gorm:"type:varchar(100)" json:"action"`
-	Conditions map[string]interface{} `gorm:"type:jsonb" json:"conditions"`
-	Recipients []string               `gorm:"type:jsonb" json:"recipients"`
-	CreatedAt  time.Time              `json:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at"`
+	ID          string                 `gorm:"primaryKey;type:varchar(36)" json:"id"`
+	Name        string                 `gorm:"type:varchar(200);unique" json:"name"`
+	Description string                 `gorm:"type:text" json:"description"`
+	AlertType   string                 `gorm:"type:varchar(100);index" json:"alert_type"`
+	Enabled     bool                   `gorm:"default:true" json:"enabled"`
+	Threshold   float64                `json:"threshold"`
+	TimeWindow  time.Duration          `json:"time_window"`
+	Action      string                 `gorm:"type:varchar(100)" json:"action"`
+	Conditions  map[string]interface{} `gorm:"type:jsonb" json:"conditions"`
+	Actions     map[string]interface{} `gorm:"type:jsonb" json:"actions"`
+	Recipients  []string               `gorm:"type:jsonb" json:"recipients"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
 // TableName specifies the table name for MonitoringPolicyModel

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/Aidin1998/finalex/internal/compliance/risk"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -17,7 +18,7 @@ type HookManager struct {
 	audit        interfaces.AuditService
 	monitoring   interfaces.MonitoringService
 	manipulation interfaces.ManipulationService
-	risk         interfaces.RiskService
+	risk         risk.RiskService
 
 	// Hook registries
 	userAuthHooks     []UserAuthHook
@@ -49,7 +50,7 @@ func NewHookManager(
 	audit interfaces.AuditService,
 	monitoring interfaces.MonitoringService,
 	manipulation interfaces.ManipulationService,
-	risk interfaces.RiskService,
+	risk risk.RiskService,
 	config *HookConfig,
 ) *HookManager {
 	if config == nil {
@@ -131,321 +132,623 @@ type MarketMakingHook interface {
 	OnMarketMakingPnL(ctx context.Context, event *MarketMakingPnLEvent) error
 }
 
-// Event types for different modules
+// BaseEvent provides common fields for all events
+type BaseEvent struct {
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	Module    string    `json:"module"`
+	ID        uuid.UUID `json:"id"`
+	UserID    string    `json:"user_id"` // Added UserID field that integration files expect
+}
 
-// UserAuth Events
+// Event type constants
+const (
+	// Account events
+	EventTypeAccountCreation     = "account.creation"
+	EventTypeAccountUpdate       = "account.update"
+	EventTypeAccountSuspension   = "account.suspension"
+	EventTypeAccountReactivation = "account.reactivation"
+	EventTypeAccountPermission   = "account.permission"
+	EventTypeAccountKYC          = "account.kyc"
+	EventTypeAccountTier         = "account.tier"
+	EventTypeAccountDormancy     = "account.dormancy"
+
+	// Fiat events
+	EventTypeFiatDeposit     = "fiat.deposit"
+	EventTypeFiatWithdrawal  = "fiat.withdrawal"
+	EventTypeFiatTransfer    = "fiat.transfer"
+	EventTypeFiatBankAccount = "fiat.bank_account"
+	EventTypeFiatConversion  = "fiat.conversion"
+
+	// Trading events
+	EventTypeTradingOrderPlaced   = "trading.order_placed"
+	EventTypeTradingOrderExecuted = "trading.order_executed"
+	EventTypeTradingOrderCanceled = "trading.order_canceled"
+	EventTypeTradingTradeExecuted = "trading.trade_executed"
+	EventTypeTradingPositionUpdate = "trading.position_update"
+
+	// Wallet events
+	EventTypeWalletCryptoDeposit     = "wallet.crypto_deposit"
+	EventTypeWalletCryptoWithdrawal  = "wallet.crypto_withdrawal"
+	EventTypeWalletInternalTransfer  = "wallet.internal_transfer"
+	EventTypeWalletBalanceUpdate     = "wallet.balance_update"
+	EventTypeWalletAddress           = "wallet.address"
+	EventTypeWalletStaking           = "wallet.staking"
+
+	// Market making events
+	EventTypeMMStrategy     = "mm.strategy"
+	EventTypeMMQuote        = "mm.quote"
+	EventTypeMMOrder        = "mm.order"
+	EventTypeMMInventory    = "mm.inventory"
+	EventTypeMMRisk         = "mm.risk"
+	EventTypeMMPnL          = "mm.pnl"
+	EventTypeMMPerformance  = "mm.performance"
+)
+
+// Module constants
+const (
+	ModuleAccounts     = "accounts"
+	ModuleFiat         = "fiat"
+	ModuleTrading      = "trading"
+	ModuleWallet       = "wallet"
+	ModuleMarketMaking = "market_making"
+	ModuleUserAuth     = "user_auth"
+)
+
+// getCurrentTimestamp returns the current timestamp
+func getCurrentTimestamp() time.Time {
+	return time.Now().UTC()
+}
+
+// User authentication events
 type UserRegistrationEvent struct {
-	UserID    uuid.UUID              `json:"user_id"`
-	Email     string                 `json:"email"`
-	Country   string                 `json:"country"`
-	IPAddress string                 `json:"ip_address"`
-	UserAgent string                 `json:"user_agent"`
-	DeviceID  string                 `json:"device_id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Metadata  map[string]interface{} `json:"metadata"`
+	BaseEvent
+	Email     string `json:"email"`
+	Country   string `json:"country"`
+	IPAddress string `json:"ip_address"`
 }
 
 type UserLoginEvent struct {
-	UserID      uuid.UUID              `json:"user_id"`
-	SessionID   uuid.UUID              `json:"session_id"`
-	IPAddress   string                 `json:"ip_address"`
-	UserAgent   string                 `json:"user_agent"`
-	DeviceID    string                 `json:"device_id"`
-	Country     string                 `json:"country"`
-	LoginMethod string                 `json:"login_method"`
-	Success     bool                   `json:"success"`
-	FailReason  string                 `json:"fail_reason,omitempty"`
-	Timestamp   time.Time              `json:"timestamp"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	BaseEvent
+	IPAddress string `json:"ip_address"`
+	UserAgent string `json:"user_agent"`
+	Success   bool   `json:"success"`
 }
 
 type UserLogoutEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	SessionID uuid.UUID `json:"session_id"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	IPAddress string `json:"ip_address"`
+	Duration  int64  `json:"duration"`
 }
 
 type PasswordChangeEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	IPAddress string    `json:"ip_address"`
-	Success   bool      `json:"success"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	IPAddress string `json:"ip_address"`
+	Reason    string `json:"reason"`
 }
 
 type EmailVerificationEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Email     string    `json:"email"`
-	Verified  bool      `json:"verified"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	Email      string `json:"email"`
+	Verified   bool   `json:"verified"`
+	VerifiedAt time.Time `json:"verified_at"`
 }
 
 type TwoFAEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Method    string    `json:"method"`
-	Enabled   bool      `json:"enabled"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	Method    string `json:"method"`
+	Enabled   bool   `json:"enabled"`
+	IPAddress string `json:"ip_address"`
 }
 
 type AccountLockEvent struct {
-	UserID    uuid.UUID      `json:"user_id"`
-	Reason    string         `json:"reason"`
-	LockedBy  uuid.UUID      `json:"locked_by"`
+	BaseEvent
+	Reason    string    `json:"reason"`
+	LockedBy  uuid.UUID `json:"locked_by"`
 	Duration  *time.Duration `json:"duration,omitempty"`
-	Timestamp time.Time      `json:"timestamp"`
 }
 
-// Trading Events
+// Trading events
 type OrderPlacedEvent struct {
+	BaseEvent
 	OrderID   string          `json:"order_id"`
-	UserID    uuid.UUID       `json:"user_id"`
 	Market    string          `json:"market"`
 	Side      string          `json:"side"`
-	Type      string          `json:"type"`
-	Quantity  decimal.Decimal `json:"quantity"`
+	Type      string          `json:"order_type"`
 	Price     decimal.Decimal `json:"price"`
-	IPAddress string          `json:"ip_address"`
-	Timestamp time.Time       `json:"timestamp"`
+	Quantity  decimal.Decimal `json:"quantity"`
 }
 
 type OrderExecutedEvent struct {
+	BaseEvent
 	OrderID       string          `json:"order_id"`
-	UserID        uuid.UUID       `json:"user_id"`
 	Market        string          `json:"market"`
-	ExecutedQty   decimal.Decimal `json:"executed_qty"`
+	Side          string          `json:"side"`
 	ExecutedPrice decimal.Decimal `json:"executed_price"`
-	RemainingQty  decimal.Decimal `json:"remaining_qty"`
-	TradeID       string          `json:"trade_id"`
-	Timestamp     time.Time       `json:"timestamp"`
+	ExecutedQty   decimal.Decimal `json:"executed_qty"`
+	Fee           decimal.Decimal `json:"fee"`
 }
 
 type OrderCancelledEvent struct {
-	OrderID   string    `json:"order_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Market    string    `json:"market"`
-	Reason    string    `json:"reason"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	OrderID string `json:"order_id"`
+	Market  string `json:"market"`
+	Reason  string `json:"reason"`
 }
 
 type TradeExecutedEvent struct {
-	TradeID     string          `json:"trade_id"`
-	Market      string          `json:"market"`
-	BuyerID     uuid.UUID       `json:"buyer_id"`
-	SellerID    uuid.UUID       `json:"seller_id"`
-	Quantity    decimal.Decimal `json:"quantity"`
-	Price       decimal.Decimal `json:"price"`
-	BuyOrderID  string          `json:"buy_order_id"`
-	SellOrderID string          `json:"sell_order_id"`
-	Timestamp   time.Time       `json:"timestamp"`
+	BaseEvent
+	TradeID    string          `json:"trade_id"`
+	Market     string          `json:"market"`
+	Price      decimal.Decimal `json:"price"`
+	Quantity   decimal.Decimal `json:"quantity"`
+	TakerSide  string          `json:"taker_side"`
+	Fee        decimal.Decimal `json:"fee"`
 }
 
 type PositionUpdateEvent struct {
-	UserID        uuid.UUID       `json:"user_id"`
-	Market        string          `json:"market"`
-	Position      decimal.Decimal `json:"position"`
-	AvgPrice      decimal.Decimal `json:"avg_price"`
-	UnrealizedPnL decimal.Decimal `json:"unrealized_pnl"`
-	Timestamp     time.Time       `json:"timestamp"`
+	BaseEvent
+	Market    string          `json:"market"`
+	Size      decimal.Decimal `json:"size"`
+	AvgPrice  decimal.Decimal `json:"avg_price"`
+	PnL       decimal.Decimal `json:"pnl"`
+	Margin    decimal.Decimal `json:"margin"`
 }
 
 type MarketDataEvent struct {
+	BaseEvent
 	Market    string          `json:"market"`
 	Price     decimal.Decimal `json:"price"`
 	Volume    decimal.Decimal `json:"volume"`
-	BidPrice  decimal.Decimal `json:"bid_price"`
-	AskPrice  decimal.Decimal `json:"ask_price"`
-	Timestamp time.Time       `json:"timestamp"`
+	Change24h decimal.Decimal `json:"change_24h"`
 }
 
-// Fiat Events
+// Fiat events
 type FiatDepositEvent struct {
-	DepositID     uuid.UUID       `json:"deposit_id"`
-	UserID        uuid.UUID       `json:"user_id"`
-	Amount        decimal.Decimal `json:"amount"`
-	Currency      string          `json:"currency"`
-	PaymentMethod string          `json:"payment_method"`
-	BankAccount   string          `json:"bank_account"`
-	Status        string          `json:"status"`
-	Timestamp     time.Time       `json:"timestamp"`
+	BaseEvent
+	Amount      decimal.Decimal `json:"amount"`
+	Currency    string          `json:"currency"`
+	Reference   string          `json:"reference"`
+	Status      string          `json:"status"`
+	BankAccount BankAccountInfo `json:"bank_account"`
 }
 
 type FiatWithdrawalEvent struct {
-	WithdrawalID uuid.UUID       `json:"withdrawal_id"`
-	UserID       uuid.UUID       `json:"user_id"`
-	Amount       decimal.Decimal `json:"amount"`
-	Currency     string          `json:"currency"`
-	BankAccount  string          `json:"bank_account"`
-	Status       string          `json:"status"`
-	Timestamp    time.Time       `json:"timestamp"`
+	BaseEvent
+	Amount      decimal.Decimal `json:"amount"`
+	Currency    string          `json:"currency"`
+	Reference   string          `json:"reference"`
+	Status      string          `json:"status"`
+	BankAccount BankAccountInfo `json:"bank_account"`
+}
+
+type FiatTransferEvent struct {
+	BaseEvent
+	FromUserID uuid.UUID       `json:"from_user_id"`
+	ToUserID   uuid.UUID       `json:"to_user_id"`
+	Amount     decimal.Decimal `json:"amount"`
+	Currency   string          `json:"currency"`
+	Reference  string          `json:"reference"`
+}
+
+type FiatBankAccountEvent struct {
+	BaseEvent
+	BankAccount BankAccountInfo `json:"bank_account"`
+	Action      string          `json:"action"` // add, remove, update
+}
+
+type FiatConversionEvent struct {
+	BaseEvent
+	FromCurrency string          `json:"from_currency"`
+	ToCurrency   string          `json:"to_currency"`
+	FromAmount   decimal.Decimal `json:"from_amount"`
+	ToAmount     decimal.Decimal `json:"to_amount"`
+	Rate         decimal.Decimal `json:"rate"`
+	Reference    string          `json:"reference"`
 }
 
 type BankAccountEvent struct {
-	UserID        uuid.UUID `json:"user_id"`
-	AccountID     string    `json:"account_id"`
-	BankName      string    `json:"bank_name"`
-	AccountNumber string    `json:"account_number"`
-	Country       string    `json:"country"`
-	Currency      string    `json:"currency"`
-	Status        string    `json:"status"`
-	Timestamp     time.Time `json:"timestamp"`
+	BaseEvent
+	BankName      string `json:"bank_name"`
+	AccountNumber string `json:"account_number"`
+	Country       string `json:"country"`
+	Currency      string `json:"currency"`
+	Action        string `json:"action"`
 }
 
 type PaymentMethodEvent struct {
-	UserID     uuid.UUID `json:"user_id"`
-	MethodID   string    `json:"method_id"`
-	MethodType string    `json:"method_type"`
-	Status     string    `json:"status"`
-	Timestamp  time.Time `json:"timestamp"`
+	BaseEvent
+	MethodType string `json:"method_type"`
+	Provider   string `json:"provider"`
+	Status     string `json:"status"`
+	Action     string `json:"action"`
 }
 
 type FiatTransactionFailedEvent struct {
-	TransactionID uuid.UUID `json:"transaction_id"`
-	UserID        uuid.UUID `json:"user_id"`
-	Type          string    `json:"type"`
-	Reason        string    `json:"reason"`
-	ErrorCode     string    `json:"error_code"`
-	Timestamp     time.Time `json:"timestamp"`
+	BaseEvent
+	Amount     decimal.Decimal `json:"amount"`
+	Currency   string          `json:"currency"`
+	Reference  string          `json:"reference"`
+	Reason     string          `json:"reason"`
 }
 
-// Wallet Events
+// Wallet events
 type CryptoDepositEvent struct {
-	DepositID     uuid.UUID       `json:"deposit_id"`
-	UserID        uuid.UUID       `json:"user_id"`
+	BaseEvent
 	Currency      string          `json:"currency"`
 	Amount        decimal.Decimal `json:"amount"`
-	Address       string          `json:"address"`
+	FromAddress   string          `json:"from_address"`
+	ToAddress     string          `json:"to_address"`
 	TxHash        string          `json:"tx_hash"`
 	Network       string          `json:"network"`
 	Confirmations int             `json:"confirmations"`
-	Status        string          `json:"status"`
-	Timestamp     time.Time       `json:"timestamp"`
 }
 
 type CryptoWithdrawalEvent struct {
-	WithdrawalID uuid.UUID       `json:"withdrawal_id"`
-	UserID       uuid.UUID       `json:"user_id"`
-	Currency     string          `json:"currency"`
-	Amount       decimal.Decimal `json:"amount"`
-	ToAddress    string          `json:"to_address"`
-	TxHash       string          `json:"tx_hash"`
-	Network      string          `json:"network"`
-	Fee          decimal.Decimal `json:"fee"`
-	Status       string          `json:"status"`
-	Timestamp    time.Time       `json:"timestamp"`
+	BaseEvent
+	Currency    string          `json:"currency"`
+	Amount      decimal.Decimal `json:"amount"`
+	FromAddress string          `json:"from_address"`
+	ToAddress   string          `json:"to_address"`
+	TxHash      string          `json:"tx_hash"`
+	Network     string          `json:"network"`
+	Fee         decimal.Decimal `json:"fee"`
 }
 
 type WalletCreatedEvent struct {
-	WalletID  uuid.UUID `json:"wallet_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Currency  string    `json:"currency"`
-	Network   string    `json:"network"`
-	Address   string    `json:"address"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	WalletType string `json:"wallet_type"`
+	Currency   string `json:"currency"`
+	Address    string `json:"address"`
 }
 
 type WalletBalanceEvent struct {
-	UserID       uuid.UUID       `json:"user_id"`
-	Currency     string          `json:"currency"`
-	Balance      decimal.Decimal `json:"balance"`
-	Available    decimal.Decimal `json:"available"`
-	Locked       decimal.Decimal `json:"locked"`
-	ChangeType   string          `json:"change_type"`
-	ChangeAmount decimal.Decimal `json:"change_amount"`
-	Timestamp    time.Time       `json:"timestamp"`
+	BaseEvent
+	Currency  string          `json:"currency"`
+	Balance   decimal.Decimal `json:"balance"`
+	Available decimal.Decimal `json:"available"`
+	Locked    decimal.Decimal `json:"locked"`
+}
+
+type WalletInternalTransferEvent struct {
+	BaseEvent
+	FromUserID uuid.UUID       `json:"from_user_id"`
+	ToUserID   uuid.UUID       `json:"to_user_id"`
+	Currency   string          `json:"currency"`
+	Amount     decimal.Decimal `json:"amount"`
+	Reference  string          `json:"reference"`
+}
+
+type WalletBalanceUpdateEvent struct {
+	BaseEvent
+	Currency   string          `json:"currency"`
+	OldBalance decimal.Decimal `json:"old_balance"`
+	NewBalance decimal.Decimal `json:"new_balance"`
+	Reason     string          `json:"reason"`
+}
+
+type WalletAddressEvent struct {
+	BaseEvent
+	Currency    string `json:"currency"`
+	Network     string `json:"network"`
+	Address     string `json:"address"`
+	AddressType string `json:"address_type"`
+	Action      string `json:"action"`
+}
+
+type WalletStakingEvent struct {
+	BaseEvent
+	Currency       string          `json:"currency"`
+	Amount         decimal.Decimal `json:"amount"`
+	Action         string          `json:"action"` // stake, unstake
+	StakingPeriod  time.Duration   `json:"staking_period"`
+	ExpectedReward decimal.Decimal `json:"expected_reward"`
+	Reward         decimal.Decimal `json:"reward"`
+	Penalty        decimal.Decimal `json:"penalty"`
 }
 
 type AddressGeneratedEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Currency  string    `json:"currency"`
-	Network   string    `json:"network"`
-	Address   string    `json:"address"`
-	Purpose   string    `json:"purpose"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	Currency string `json:"currency"`
+	Network  string `json:"network"`
+	Address  string `json:"address"`
 }
 
-// Account Events
+type WalletCryptoDepositEvent struct {
+	BaseEvent
+	Currency      string          `json:"currency"`
+	Amount        decimal.Decimal `json:"amount"`
+	FromAddress   string          `json:"from_address"`
+	ToAddress     string          `json:"to_address"`
+	TxHash        string          `json:"tx_hash"`
+	Network       string          `json:"network"`
+	Confirmations int             `json:"confirmations"`
+}
+
+type WalletCryptoWithdrawalEvent struct {
+	BaseEvent
+	Currency    string          `json:"currency"`
+	Amount      decimal.Decimal `json:"amount"`
+	FromAddress string          `json:"from_address"`
+	ToAddress   string          `json:"to_address"`
+	TxHash      string          `json:"tx_hash"`
+	Network     string          `json:"network"`
+	Fee         decimal.Decimal `json:"fee"`
+}
+
+// Account events (already properly defined above, just need to add missing fields)
 type AccountCreatedEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Email     string    `json:"email"`
-	Country   string    `json:"country"`
-	IPAddress string    `json:"ip_address"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	Email       string `json:"email"`
+	Country     string `json:"country"`
+	IPAddress   string `json:"ip_address"`
+	AccountType string `json:"account_type"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+type AccountCreationEvent struct {
+	BaseEvent
+	Email       string `json:"email"`
+	Country     string `json:"country"`
+	IPAddress   string `json:"ip_address"`
+	AccountType string `json:"account_type"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+type AccountUpdateEvent struct {
+	BaseEvent
+	UpdateType string                 `json:"update_type"`
+	OldData    map[string]interface{} `json:"old_data"`
+	NewData    map[string]interface{} `json:"new_data"`
+}
+
+type AccountSuspensionEvent struct {
+	BaseEvent
+	Reason      string    `json:"reason"`
+	SuspendedBy uuid.UUID `json:"suspended_by"`
+	Duration    int64     `json:"duration"`
 }
 
 type AccountUpdatedEvent struct {
-	UserID    uuid.UUID              `json:"user_id"`
-	Changes   map[string]interface{} `json:"changes"`
-	UpdatedBy uuid.UUID              `json:"updated_by"`
-	Timestamp time.Time              `json:"timestamp"`
+	BaseEvent
+	UpdateType string                 `json:"update_type"`
+	OldData    map[string]interface{} `json:"old_data"`
+	NewData    map[string]interface{} `json:"new_data"`
 }
 
 type AccountSuspendedEvent struct {
-	UserID      uuid.UUID      `json:"user_id"`
-	Reason      string         `json:"reason"`
-	SuspendedBy uuid.UUID      `json:"suspended_by"`
-	Duration    *time.Duration `json:"duration,omitempty"`
-	Timestamp   time.Time      `json:"timestamp"`
+	BaseEvent
+	Reason      string    `json:"reason"`
+	SuspendedBy uuid.UUID `json:"suspended_by"`
+	Duration    int64     `json:"duration"`
 }
 
-type KYCStatusEvent struct {
-	UserID     uuid.UUID `json:"user_id"`
-	Level      int       `json:"level"`
-	Status     string    `json:"status"`
-	PrevStatus string    `json:"prev_status"`
-	ReviewedBy uuid.UUID `json:"reviewed_by"`
-	Timestamp  time.Time `json:"timestamp"`
+type AccountReactivationEvent struct {
+	BaseEvent
+	ReactivatedBy uuid.UUID `json:"reactivated_by"`
+	Reason        string    `json:"reason"`
+}
+
+type AccountPermissionEvent struct {
+	BaseEvent
+	Permission string    `json:"permission"`
+	Action     string    `json:"action"` // grant, revoke
+	ChangedBy  uuid.UUID `json:"changed_by"`
+}
+
+type AccountKYCEvent struct {
+	BaseEvent
+	OldStatus  string    `json:"old_status"`
+	NewStatus  string    `json:"new_status"`
+	VerifiedBy uuid.UUID `json:"verified_by"`
+	Documents  []string  `json:"documents"`
+}
+
+type AccountTierEvent struct {
+	BaseEvent
+	OldTier   int       `json:"old_tier"`
+	NewTier   int       `json:"new_tier"`
+	ChangedBy uuid.UUID `json:"changed_by"`
+	Reason    string    `json:"reason"`
+}
+
+type AccountDormancyEvent struct {
+	BaseEvent
+	IsDormant    bool      `json:"is_dormant"`
+	LastActivity time.Time `json:"last_activity"`
+	Reason       string    `json:"reason"`
 }
 
 type DocumentUploadEvent struct {
-	UserID       uuid.UUID `json:"user_id"`
-	DocumentID   uuid.UUID `json:"document_id"`
-	DocumentType string    `json:"document_type"`
-	Status       string    `json:"status"`
-	Timestamp    time.Time `json:"timestamp"`
+	BaseEvent
+	DocumentType string `json:"document_type"`
+	FileName     string `json:"file_name"`
+	Status       string `json:"status"`
+}
+
+type KYCStatusEvent struct {
+	BaseEvent
+	OldStatus  string    `json:"old_status"`
+	NewStatus  string    `json:"new_status"`
+	Level      int       `json:"level"`
+	ReviewedBy uuid.UUID `json:"reviewed_by"`
 }
 
 type ProfileUpdateEvent struct {
-	UserID    uuid.UUID              `json:"user_id"`
-	Field     string                 `json:"field"`
-	OldValue  interface{}            `json:"old_value"`
-	NewValue  interface{}            `json:"new_value"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	Timestamp time.Time              `json:"timestamp"`
+	BaseEvent
+	Changes   map[string]interface{} `json:"changes"`
+	UpdatedBy uuid.UUID              `json:"updated_by"`
 }
 
-// Market Making Events
+// Market making events
 type MarketMakerEvent struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Market    string    `json:"market"`
-	Status    string    `json:"status"`
-	TierLevel int       `json:"tier_level"`
-	Timestamp time.Time `json:"timestamp"`
+	BaseEvent
+	Market       string `json:"market"`
+	Status       string `json:"status"`
+	MinSpread    decimal.Decimal `json:"min_spread"`
+	MaxPosition  decimal.Decimal `json:"max_position"`
 }
 
 type LiquidityEvent struct {
-	UserID    uuid.UUID       `json:"user_id"`
-	Market    string          `json:"market"`
-	BidAmount decimal.Decimal `json:"bid_amount"`
-	AskAmount decimal.Decimal `json:"ask_amount"`
-	BidPrice  decimal.Decimal `json:"bid_price"`
-	AskPrice  decimal.Decimal `json:"ask_price"`
-	Timestamp time.Time       `json:"timestamp"`
+	BaseEvent
+	Market     string          `json:"market"`
+	BidVolume  decimal.Decimal `json:"bid_volume"`
+	AskVolume  decimal.Decimal `json:"ask_volume"`
+	Spread     decimal.Decimal `json:"spread"`
 }
 
 type SpreadAdjustmentEvent struct {
-	UserID       uuid.UUID       `json:"user_id"`
-	Market       string          `json:"market"`
-	OldSpread    decimal.Decimal `json:"old_spread"`
-	NewSpread    decimal.Decimal `json:"new_spread"`
-	AdjustReason string          `json:"adjust_reason"`
-	Timestamp    time.Time       `json:"timestamp"`
+	BaseEvent
+	Market    string          `json:"market"`
+	OldSpread decimal.Decimal `json:"old_spread"`
+	NewSpread decimal.Decimal `json:"new_spread"`
+	Reason    string          `json:"reason"`
 }
 
 type MarketMakingPnLEvent struct {
-	UserID        uuid.UUID       `json:"user_id"`
+	BaseEvent
 	Market        string          `json:"market"`
 	RealizedPnL   decimal.Decimal `json:"realized_pnl"`
 	UnrealizedPnL decimal.Decimal `json:"unrealized_pnl"`
 	Fees          decimal.Decimal `json:"fees"`
+}
+
+// Additional market making events used in integration files
+type MMStrategyEvent struct {
+	BaseEvent
+	StrategyID string    `json:"strategy_id"`
+	Market     string    `json:"market"`
+	Action     string    `json:"action"` // activate, deactivate
+	Strategy   MMStrategy `json:"strategy"`
+	Reason     string    `json:"reason"`
+}
+
+type MMQuoteEvent struct {
+	BaseEvent
+	Market string  `json:"market"`
+	Quote  MMQuote `json:"quote"`
+}
+
+type MMOrderEvent struct {
+	BaseEvent
+	OrderID string  `json:"order_id"`
+	Market  string  `json:"market"`
+	Order   MMOrder `json:"order"`
+	Action  string  `json:"action"` // place, cancel
+	Reason  string  `json:"reason"`
+}
+
+type MMInventoryEvent struct {
+	BaseEvent
+	Market      string                 `json:"market"`
+	Rebalancing MMInventoryRebalancing `json:"rebalancing"`
+}
+
+type MMRiskEvent struct {
+	BaseEvent
+	Market      string        `json:"market"`
+	RiskBreach  MMRiskBreach  `json:"risk_breach"`
+}
+
+type MMPnLEvent struct {
+	BaseEvent
+	Market   string      `json:"market"`
+	PnLAlert MMPnLAlert  `json:"pnl_alert"`
+}
+
+type MMPerformanceEvent struct {
+	BaseEvent
+	Market string              `json:"market"`
+	Report MMPerformanceReport `json:"report"`
+}
+
+// Supporting data types referenced by integration files
+type BankAccountInfo struct {
+	BankName      string `json:"bank_name"`
+	AccountNumber string `json:"account_number"`
+	RoutingNumber string `json:"routing_number"`
+	Country       string `json:"country"`
+	Currency      string `json:"currency"`
+	AccountType   string `json:"account_type"`
+}
+
+type MMStrategy struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Type         string          `json:"type"`
+	Symbol       string          `json:"symbol"`
+	Market       string          `json:"market"`
+	MinSpread    decimal.Decimal `json:"min_spread"`
+	MaxPosition  decimal.Decimal `json:"max_position"`
+	RiskLimit    decimal.Decimal `json:"risk_limit"`
+	IsActive     bool            `json:"is_active"`
+}
+
+type MMQuote struct {
+	Symbol   string          `json:"symbol"`
+	Market   string          `json:"market"`
+	BidPrice decimal.Decimal `json:"bid_price"`
+	AskPrice decimal.Decimal `json:"ask_price"`
+	BidSize  decimal.Decimal `json:"bid_size"`
+	AskSize  decimal.Decimal `json:"ask_size"`
+}
+
+type MMOrder struct {
+	ID         string          `json:"id"`
+	OrderID    string          `json:"order_id"`
+	StrategyID string          `json:"strategy_id"`
+	Symbol     string          `json:"symbol"`
+	Market     string          `json:"market"`
+	Side       string          `json:"side"`
+	Price      decimal.Decimal `json:"price"`
+	Quantity   decimal.Decimal `json:"quantity"`
+	Type       string          `json:"type"`
+}
+
+type MMInventoryRebalancing struct {
+	Symbol           string          `json:"symbol"`
+	Market           string          `json:"market"`
+	Currency         string          `json:"currency"`
+	CurrentInventory decimal.Decimal `json:"current_inventory"`
+	TargetInventory  decimal.Decimal `json:"target_inventory"`
+	CurrentPos       decimal.Decimal `json:"current_position"`
+	TargetPos        decimal.Decimal `json:"target_position"`
+	RebalanceQty     decimal.Decimal `json:"rebalance_qty"`
+	Action           string          `json:"action"`
+}
+
+type MMRiskBreach struct {
+	Market       string          `json:"market"`
+	RiskType     string          `json:"risk_type"`
+	Limit        decimal.Decimal `json:"limit"`
+	Current      decimal.Decimal `json:"current"`
+	CurrentValue decimal.Decimal `json:"current_value"`
+	Severity     string          `json:"severity"`
+	ActionTaken  string          `json:"action_taken"`
+}
+
+type MMPnLAlert struct {
+	Symbol        string          `json:"symbol"`
+	Market        string          `json:"market"`
+	RealizedPnL   decimal.Decimal `json:"realized_pnl"`
+	UnrealizedPnL decimal.Decimal `json:"unrealized_pnl"`
+	PnL           decimal.Decimal `json:"pnl"`
+	Threshold     decimal.Decimal `json:"threshold"`
+	AlertType     string          `json:"alert_type"`
 	Period        string          `json:"period"`
-	Timestamp     time.Time       `json:"timestamp"`
+}
+
+type MMPerformanceReport struct {
+	Market       string          `json:"market"`
+	Period       string          `json:"period"`
+	TotalPnL     decimal.Decimal `json:"total_pnl"`
+	SharpeRatio  decimal.Decimal `json:"sharpe_ratio"`
+	MaxDrawdown  decimal.Decimal `json:"max_drawdown"`
+	Volume       decimal.Decimal `json:"volume"`
+	Trades       int             `json:"trades"`
+	Spread       decimal.Decimal `json:"avg_spread"`
+	Uptime       decimal.Decimal `json:"uptime"`
+	FillRatio    decimal.Decimal `json:"fill_ratio"`
+	PeriodStart  time.Time       `json:"period_start"`
+	PeriodEnd    time.Time       `json:"period_end"`
 }

@@ -109,18 +109,36 @@ func (ai *AccountsIntegration) ValidateBalanceCompliance(ctx context.Context, us
 	if err != nil {
 		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
-
 	// Perform compliance check
 	complianceReq := &ComplianceRequest{
-		UserID:   userID,
-		Type:     "balance_operation",
-		Amount:   amount,
-		Currency: currency,
+		UserID:           userID,
+		ActivityType:     ActivityDeposit, // Will be set based on operationType
+		Amount:           &amount,
+		Currency:         currency,
+		IPAddress:        "",
+		UserAgent:        "",
+		DeviceID:         "",
+		Country:          "",
+		RequestTimestamp: time.Now(),
 		Metadata: map[string]interface{}{
 			"operation_type":    operationType,
 			"available_balance": balance.Available.String(),
 			"requested_amount":  amount.String(),
 		},
+	}
+
+	// Set proper activity type based on operation
+	switch operationType {
+	case "withdraw":
+		complianceReq.ActivityType = ActivityWithdrawal
+	case "deposit":
+		complianceReq.ActivityType = ActivityDeposit
+	case "trade":
+		complianceReq.ActivityType = ActivityTrade
+	case "transfer":
+		complianceReq.ActivityType = ActivityTransfer
+	default:
+		complianceReq.ActivityType = ActivityDeposit
 	}
 
 	complianceResult, err := ai.complianceService.PerformComplianceCheck(ctx, complianceReq)
@@ -136,22 +154,29 @@ func (ai *AccountsIntegration) ValidateBalanceCompliance(ctx context.Context, us
 		OperationType:    operationType,
 		ComplianceResult: complianceResult,
 		CheckedAt:        time.Now(),
-	}
-
-	// Log audit event
+	} // Log audit event
 	auditEvent := &AuditEvent{
-		ID:          uuid.New().String(),
-		EventType:   "balance_compliance_check",
+		ID:          uuid.New(),
 		UserID:      &userID,
+		EventType:   "balance_compliance_check",
+		Category:    "compliance",
+		Severity:    "info",
 		Description: fmt.Sprintf("Balance compliance check for %s %s %s", operationType, amount.String(), currency),
-		Details: map[string]interface{}{
+		IPAddress:   "",
+		UserAgent:   "",
+		Resource:    "balance",
+		ResourceID:  userID.String(),
+		Action:      "compliance_check",
+		Metadata: map[string]interface{}{
 			"currency":          currency,
 			"amount":            amount.String(),
 			"operation_type":    operationType,
-			"compliance_status": complianceResult.Status,
+			"compliance_status": complianceResult.Status.String(),
+			"risk_level":        complianceResult.RiskLevel.String(),
 			"available_balance": balance.Available.String(),
 		},
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
+		ProcessedBy: "accounts_integration",
 	}
 
 	if err := ai.auditService.LogEvent(ctx, auditEvent); err != nil {
@@ -184,13 +209,12 @@ func (ai *AccountsIntegration) GetUserRiskProfile(ctx context.Context, userID uu
 	// Get transaction history for last 24 hours
 	// Note: This would need to be implemented based on actual transaction history API
 	transactionVolume, transactionCount := ai.calculateRecentActivity(ctx, userID)
-
 	// Assess compliance risk
 	riskResult, err := ai.complianceService.AssessUserRisk(ctx, userID)
 	if err != nil {
 		ai.logger.Warn("Failed to assess user risk", zap.Error(err))
 		riskResult = &ComplianceResult{
-			Status:    ComplianceStatusUnknown,
+			Status:    ComplianceStatusPending,
 			RiskScore: decimal.NewFromFloat(0.5), // default moderate risk
 			RiskLevel: RiskLevelMedium,
 		}
@@ -243,18 +267,18 @@ func (ai *AccountsIntegration) FreezeAccountAssets(ctx context.Context, req *Acc
 		if req.Amount != nil && req.Amount.LessThan(balance.Available) {
 			amountToFreeze = *req.Amount
 		}
-
 		// Reserve the amount (effectively freezing it)
 		reserveReq := &contracts.ReserveBalanceRequest{
-			UserID:      req.UserID,
-			Currency:    req.Currency,
-			Amount:      amountToFreeze,
-			ReferenceID: freezeID,
-			Description: fmt.Sprintf("Compliance freeze: %s", req.Reason),
+			UserID:          req.UserID,
+			Currency:        req.Currency,
+			Amount:          amountToFreeze,
+			ReservationType: "compliance_freeze",
+			ReferenceID:     freezeID,
 			Metadata: map[string]interface{}{
 				"freeze_type":  "compliance",
 				"reason":       req.Reason,
 				"requested_by": req.RequestedBy,
+				"description":  fmt.Sprintf("Compliance freeze: %s", req.Reason),
 			},
 		}
 
@@ -274,15 +298,16 @@ func (ai *AccountsIntegration) FreezeAccountAssets(ctx context.Context, req *Acc
 		for _, balance := range balances {
 			if balance.Available.IsPositive() {
 				reserveReq := &contracts.ReserveBalanceRequest{
-					UserID:      req.UserID,
-					Currency:    balance.Currency,
-					Amount:      balance.Available,
-					ReferenceID: freezeID,
-					Description: fmt.Sprintf("Compliance freeze: %s", req.Reason),
+					UserID:          req.UserID,
+					Currency:        balance.Currency,
+					Amount:          balance.Available,
+					ReservationType: "compliance_freeze",
+					ReferenceID:     freezeID,
 					Metadata: map[string]interface{}{
 						"freeze_type":  "compliance",
 						"reason":       req.Reason,
 						"requested_by": req.RequestedBy,
+						"description":  fmt.Sprintf("Compliance freeze: %s", req.Reason),
 					},
 				}
 
@@ -312,22 +337,27 @@ func (ai *AccountsIntegration) FreezeAccountAssets(ctx context.Context, req *Acc
 	if req.Duration != nil {
 		expiresAt := time.Now().Add(*req.Duration)
 		result.ExpiresAt = &expiresAt
-	}
-
-	// Log audit event
+	} // Log audit event
 	auditEvent := &AuditEvent{
-		ID:          uuid.New().String(),
-		EventType:   "account_freeze",
+		ID:          uuid.New(),
 		UserID:      &req.UserID,
+		EventType:   "account_freeze",
+		Category:    "compliance",
+		Severity:    "high",
 		Description: fmt.Sprintf("Account assets frozen: %s", req.Reason),
-		Details: map[string]interface{}{
+		IPAddress:   "",
+		UserAgent:   "",
+		Resource:    "account",
+		ResourceID:  req.UserID.String(),
+		Action:      "freeze",
+		Metadata: map[string]interface{}{
 			"freeze_id":       freezeID,
 			"reason":          req.Reason,
 			"requested_by":    req.RequestedBy,
 			"frozen_balances": frozenBalances,
-			"currency":        req.Currency,
 		},
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
+		ProcessedBy: "accounts_integration",
 	}
 
 	if err := ai.auditService.LogEvent(ctx, auditEvent); err != nil {
@@ -349,18 +379,25 @@ func (ai *AccountsIntegration) UnfreezeAccountAssets(ctx context.Context, freeze
 	if err != nil {
 		return fmt.Errorf("failed to release frozen assets: %w", err)
 	}
-
 	// Log audit event
 	auditEvent := &AuditEvent{
-		ID:          uuid.New().String(),
+		ID:          uuid.New(),
 		EventType:   "account_unfreeze",
+		Category:    "compliance",
+		Severity:    "info",
 		Description: fmt.Sprintf("Account assets unfrozen: %s", reason),
-		Details: map[string]interface{}{
+		IPAddress:   "",
+		UserAgent:   "",
+		Resource:    "account",
+		ResourceID:  "",
+		Action:      "unfreeze",
+		Metadata: map[string]interface{}{
 			"freeze_id":    freezeID,
 			"reason":       reason,
 			"requested_by": requestedBy,
 		},
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
+		ProcessedBy: "accounts_integration",
 	}
 
 	if err := ai.auditService.LogEvent(ctx, auditEvent); err != nil {
@@ -396,21 +433,28 @@ func (ai *AccountsIntegration) ValidateTransactionCompliance(ctx context.Context
 	if err != nil {
 		return nil, fmt.Errorf("transaction compliance validation failed: %w", err)
 	}
-
 	// Log audit event
 	auditEvent := &AuditEvent{
-		ID:          uuid.New().String(),
+		ID:          uuid.New(),
 		EventType:   "transaction_compliance_check",
 		UserID:      &userID,
+		Category:    "compliance",
+		Severity:    "info",
 		Description: fmt.Sprintf("Transaction compliance check for %s", txType),
-		Details: map[string]interface{}{
+		IPAddress:   "",
+		UserAgent:   "",
+		Resource:    "transaction",
+		ResourceID:  "",
+		Action:      "compliance_check",
+		Metadata: map[string]interface{}{
 			"tx_type":           txType,
 			"amount":            amount.String(),
 			"currency":          currency,
 			"compliance_status": result.Status,
 			"risk_score":        result.RiskScore.String(),
 		},
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
+		ProcessedBy: "accounts_integration",
 	}
 
 	if err := ai.auditService.LogEvent(ctx, auditEvent); err != nil {
@@ -432,12 +476,11 @@ func (ai *AccountsIntegration) calculateRecentActivity(ctx context.Context, user
 // extractComplianceFlags extracts compliance flags from compliance result
 func (ai *AccountsIntegration) extractComplianceFlags(result *ComplianceResult) []ComplianceFlag {
 	var flags []ComplianceFlag
-
 	if result.Status == ComplianceStatusBlocked {
 		flags = append(flags, ComplianceFlag{
 			Type:        "blocked",
 			Severity:    "high",
-			Description: result.Message,
+			Description: result.Reason,
 			CreatedAt:   time.Now(),
 		})
 	}
@@ -462,20 +505,27 @@ func (ai *AccountsIntegration) GetAccountIntegrityStatus(ctx context.Context, us
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate balance integrity: %w", err)
 	}
-
 	// Log audit event if integrity issues found
 	if !report.IsValid {
 		auditEvent := &AuditEvent{
-			ID:          uuid.New().String(),
+			ID:          uuid.New(),
 			EventType:   "integrity_violation",
 			UserID:      &userID,
+			Category:    "compliance",
+			Severity:    "warning",
 			Description: "Account balance integrity issues detected",
-			Details: map[string]interface{}{
+			IPAddress:   "",
+			UserAgent:   "",
+			Resource:    "account",
+			ResourceID:  userID.String(),
+			Action:      "integrity_check",
+			Metadata: map[string]interface{}{
 				"issue_count": len(report.Issues),
 				"issues":      report.Issues,
 				"metrics":     report.Metrics,
 			},
-			Timestamp: time.Now(),
+			Timestamp:   time.Now(),
+			ProcessedBy: "accounts_integration",
 		}
 
 		if err := ai.auditService.LogEvent(ctx, auditEvent); err != nil {
