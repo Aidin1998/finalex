@@ -168,11 +168,9 @@ func (c *CrossPairTransactionCoordinator) preparePhase(
 
 				atomic.AddInt64(&c.metrics.PreparationErrors, 1)
 				return fmt.Errorf("resource %s prepare failed: %w", result.resourceName, result.err)
-			}
-
-			// Update resource state
+			}			// Update resource state
 			txnCtx.mu.Lock()
-			txnCtx.resourceStates[result.resourceName] = ResourceState{
+			txnCtx.ResourceStates[result.resourceName] = ResourceState{
 				Name:       result.resourceName,
 				State:      transaction.XAResourceStatePrepared,
 				PreparedAt: timePtr(time.Now()),
@@ -252,13 +250,11 @@ func (c *CrossPairTransactionCoordinator) commitPhase(
 
 				atomic.AddInt64(&c.metrics.CommitErrors, 1)
 				return fmt.Errorf("resource %s commit failed: %w", result.resourceName, result.err)
-			}
-
-			// Update resource state
+			}			// Update resource state
 			txnCtx.mu.Lock()
-			if state, exists := txnCtx.resourceStates[result.resourceName]; exists {
+			if state, exists := txnCtx.ResourceStates[result.resourceName]; exists {
 				state.State = transaction.XAResourceStateCommitted
-				txnCtx.resourceStates[result.resourceName] = state
+				txnCtx.ResourceStates[result.resourceName] = state
 			}
 			txnCtx.mu.Unlock()
 
@@ -330,12 +326,11 @@ func (c *CrossPairTransactionCoordinator) rollbackPhase(
 
 				rollbackErrors = append(rollbackErrors,
 					fmt.Errorf("resource %s rollback failed: %w", result.resourceName, result.err))
-			} else {
-				// Update resource state
+			} else {				// Update resource state
 				txnCtx.mu.Lock()
-				if state, exists := txnCtx.resourceStates[result.resourceName]; exists {
+				if state, exists := txnCtx.ResourceStates[result.resourceName]; exists {
 					state.State = transaction.XAResourceStateRolledBack
-					txnCtx.resourceStates[result.resourceName] = state
+					txnCtx.ResourceStates[result.resourceName] = state
 				}
 				txnCtx.mu.Unlock()
 

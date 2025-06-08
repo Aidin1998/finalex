@@ -341,11 +341,14 @@ func (api *TransactionAPI) registerResourcesForTransaction(txnCtx *CrossPairTran
 	if txnCtx.Type == TransactionTypeTrade && txnCtx.Order != nil {
 		// Register matching engines for both sides of the trade
 		if txnCtx.Route != nil {
-			for _, leg := range txnCtx.Route.Legs {
-				if engine, exists := api.coordinator.matchingEngines[leg.Symbol]; exists {
-					engineResource := NewMatchingEngineResource(api.logger, engine, leg.Symbol)
-					txnCtx.Resources = append(txnCtx.Resources, engineResource)
-				}
+			// Add matching engines for first and second pair
+			if engine, exists := api.coordinator.matchingEngines[txnCtx.Route.FirstPair]; exists {
+				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.FirstPair)
+				txnCtx.Resources = append(txnCtx.Resources, engineResource)
+			}
+			if engine, exists := api.coordinator.matchingEngines[txnCtx.Route.SecondPair]; exists {
+				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.SecondPair)
+				txnCtx.Resources = append(txnCtx.Resources, engineResource)
 			}
 		}
 	}
@@ -358,7 +361,7 @@ func (api *TransactionAPI) registerResourcesForTransaction(txnCtx *CrossPairTran
 
 	// Initialize resource states
 	for _, resource := range txnCtx.Resources {
-		txnCtx.resourceStates[resource.GetResourceName()] = ResourceState{
+		txnCtx.ResourceStates[resource.GetResourceName()] = ResourceState{
 			Name:  resource.GetResourceName(),
 			State: transaction.XAResourceStateIdle,
 		}

@@ -363,7 +363,7 @@ func (c *CrossPairTransactionCoordinator) BeginTransaction(
 	txnCtx.UpdatedAt = startTime
 	txnCtx.TimeoutAt = startTime.Add(c.config.DefaultTimeout)
 	txnCtx.Order = order
-	txnCtx.resourceStates = make(map[string]ResourceState)
+	txnCtx.ResourceStates = make(map[string]ResourceState)
 	txnCtx.RollbackData = make(map[string]interface{})
 	txnCtx.completedChan = make(chan struct{})
 	txnCtx.Metrics = &TransactionMetrics{
