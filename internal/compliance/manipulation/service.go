@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/compliance/risk"
-	"github.com/Aidin1998/finalex/internal/database"
+	"github.com/Aidin1998/finalex/internal/infrastructure/database"
 	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/gin-gonic/gin"
 
