@@ -1,0 +1,92 @@
+# Fee Engine Configuration
+# This file configures the centralized fee calculation system
+
+# Default fee rates (as decimal values, e.g., 0.001 = 0.1%)
+default_maker_fee: 0.001      # 0.1% maker fee
+default_taker_fee: 0.001      # 0.1% taker fee
+
+# Cross-pair trading configuration
+cross_pair_fee_multiplier: 1.2    # 20% extra for cross-pair trades
+cross_pair_min_fee: 0.0001        # Minimum cross-pair fee
+cross_pair_max_fee: 0.01          # Maximum cross-pair fee (1%)
+
+# Fee limits
+min_fee_amount: 0.00000001        # Minimum fee (1 satoshi equivalent)
+max_fee_amount: 0               # Maximum fee (0 = no limit)
+fee_display_precision: 8        # Number of decimal places for fee display
+
+# Fee tiers based on monthly trading volume
+fee_tiers:
+  default:
+    name: "Default"
+    maker_fee: 0.001             # 0.1%
+    taker_fee: 0.001             # 0.1%
+    monthly_volume_min: 0
+    monthly_volume_max: 10000
+    description: "Default fee tier for new users"
+    
+  bronze:
+    name: "Bronze"
+    maker_fee: 0.0008            # 0.08%
+    taker_fee: 0.0009            # 0.09%
+    monthly_volume_min: 10000
+    monthly_volume_max: 50000
+    description: "Bronze tier for regular traders"
+    
+  silver:
+    name: "Silver"
+    maker_fee: 0.0006            # 0.06%
+    taker_fee: 0.0008            # 0.08%
+    monthly_volume_min: 50000
+    monthly_volume_max: 200000
+    description: "Silver tier for active traders"
+    
+  gold:
+    name: "Gold"
+    maker_fee: 0.0004            # 0.04%
+    taker_fee: 0.0006            # 0.06%
+    monthly_volume_min: 200000
+    monthly_volume_max: 1000000
+    description: "Gold tier for high-volume traders"
+    
+  platinum:
+    name: "Platinum"
+    maker_fee: 0.0002            # 0.02%
+    taker_fee: 0.0004            # 0.04%
+    monthly_volume_min: 1000000
+    monthly_volume_max: 0        # No upper limit
+    description: "Platinum tier for institutional traders"
+
+# Per-pair fee overrides (example configurations)
+pair_overrides:
+  BTCUSDT:
+    pair: "BTCUSDT"
+    maker_fee: 0.0005            # 0.05% for BTC/USDT
+    taker_fee: 0.0007            # 0.07% for BTC/USDT
+    enabled: true
+    valid_from: "2024-01-01T00:00:00Z"
+    # valid_to: null              # No expiration
+    
+  ETHUSDT:
+    pair: "ETHUSDT"
+    maker_fee: 0.0006            # 0.06% for ETH/USDT
+    taker_fee: 0.0008            # 0.08% for ETH/USDT
+    enabled: true
+    valid_from: "2024-01-01T00:00:00Z"
+
+# Cross-pair routing configuration
+cross_pair:
+  enabled: true
+  base_fee_multiplier: 1.2      # 20% extra fee for cross-pair routing
+  routing_fee: 0.0001           # 0.01% routing fee
+  liquidity_provider_fee: 0.0002 # 0.02% LP fee
+  max_hops: 3                   # Maximum number of trading pairs in route
+
+# Account-level discounts (can be set via admin API)
+# account_discounts:
+#   user123:
+#     user_id: "user123"
+#     discount_pct: 10.0         # 10% discount
+#     valid_from: "2024-01-01T00:00:00Z"
+#     valid_to: "2024-12-31T23:59:59Z"
+#     description: "VIP customer discount"

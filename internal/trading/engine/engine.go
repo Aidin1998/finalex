@@ -41,6 +41,7 @@ import (
 	"go.uber.org/zap"
 
 	metricsapi "github.com/Aidin1998/finalex/internal/marketmaking/analytics/metrics"
+	events "github.com/Aidin1998/finalex/internal/trading/events"
 )
 
 // CancelRequest is re-exported from orderbook package for unified API.
@@ -1052,6 +1053,9 @@ type MatchingEngine struct {
 
 	// --- Persistence Layer ---
 	persistenceLayer *persistence.PersistenceLayer
+
+	// --- Event Bus ---
+	EventBus events.EventBus // Unified event bus for all trading events
 }
 
 // enqueueAdvancedAsync adds an async job to the advanced async job channel with observability, retries, and idempotency.
@@ -1177,6 +1181,20 @@ func NewMatchingEngine(
 		settlementEngine: settlementEngine,
 		triggerMonitor:   triggerMonitor, // Initialize triggerMonitor
 	}
+
+	// Initialize unified event bus (in-memory for now)
+	me.EventBus = events.NewInMemoryEventBus(logger.Desugar())
+
+	// Example event bus subscriptions (UI, compliance, audit)
+	me.EventBus.Subscribe(events.TopicTrade, func(ev events.Event) {
+		logger.Infow("[EventBus/UI] Trade event received", "payload", ev.Payload)
+	})
+	me.EventBus.Subscribe(events.TopicOrder, func(ev events.Event) {
+		logger.Infow("[EventBus/Compliance] Order event received", "payload", ev.Payload)
+	})
+	me.EventBus.Subscribe(events.TopicSettlement, func(ev events.Event) {
+		logger.Infow("[EventBus/Audit] Settlement event received", "payload", ev.Payload)
+	})
 
 	// Initialize object pools with pre-warming for optimal performance
 	// This reduces GC pressure by pre-allocating objects
@@ -1406,4 +1424,74 @@ func (me *MatchingEngine) initializeObjectPools(logger *zap.SugaredLogger) {
 			"snapshot_slice_pool_size", snapshotSliceSize,
 		)
 	}
+}
+
+// --- Example: Publish trade/order/settlement events ---
+// Call this after a trade is executed
+func (me *MatchingEngine) publishTradeEvent(trade *model.Trade) {
+	if me.EventBus == nil {
+		return
+	}
+	event := events.Event{
+		Topic:     events.TopicTrade,
+		Type:      "TRADE_EXECUTED",
+		Timestamp: time.Now(),
+		Payload: events.TradeEvent{
+			TradeID:     trade.ID.String(),
+			Pair:        trade.Pair,
+			Price:       trade.Price.String(),
+			Quantity:    trade.Quantity.String(),
+			Side:        trade.Side,
+			Timestamp:   trade.CreatedAt,
+			MakerUserID: trade.UserID.String(),        // UserID is the maker
+			TakerUserID: trade.CounterUserID.String(), // CounterUserID is the taker
+			Meta:        map[string]interface{}{},
+		},
+	}
+	me.EventBus.Publish(context.Background(), event)
+}
+
+// Call this after an order is placed/filled/canceled/rejected
+func (me *MatchingEngine) publishOrderEvent(order *model.Order, eventType string) {
+	if me.EventBus == nil {
+		return
+	}
+	event := events.Event{
+		Topic:     events.TopicOrder,
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Payload: events.OrderEvent{
+			OrderID:   order.ID.String(),
+			UserID:    order.UserID.String(),
+			Type:      order.Type,
+			Status:    order.Status,
+			Pair:      order.Pair,
+			Side:      order.Side,
+			Price:     order.Price.String(),
+			Quantity:  order.Quantity.String(),
+			Timestamp: order.CreatedAt,
+			Meta:      map[string]interface{}{},
+		},
+	}
+	me.EventBus.Publish(context.Background(), event)
+}
+
+// Call this after a settlement batch is completed
+func (me *MatchingEngine) publishSettlementEvent(settlementID, tradeID, status string) {
+	if me.EventBus == nil {
+		return
+	}
+	event := events.Event{
+		Topic:     events.TopicSettlement,
+		Type:      "SETTLEMENT_COMPLETED",
+		Timestamp: time.Now(),
+		Payload: events.SettlementEvent{
+			SettlementID: settlementID,
+			TradeID:      tradeID,
+			Status:       status,
+			Timestamp:    time.Now(),
+			Meta:         map[string]interface{}{},
+		},
+	}
+	me.EventBus.Publish(context.Background(), event)
 }

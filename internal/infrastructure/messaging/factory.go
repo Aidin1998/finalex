@@ -7,6 +7,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"go.uber.org/zap"
 )
 
@@ -63,13 +64,14 @@ func (f *MessagingFactory) CreateTradingServices(
 	messageBus *MessageBus,
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	wsHub *ws.Hub,
+	feeEngine *engine.FeeEngine,
 ) (*TradingServices, error) {
 
 	// Create bookkeeper message service
 	bookkeeperMsgSvc := NewBookkeeperMessageService(bookkeeperSvc, messageBus, f.logger)
 
 	// Create trading message service
-	tradingMsgSvc := NewTradingMessageService(bookkeeperMsgSvc, messageBus, wsHub, f.logger)
+	tradingMsgSvc := NewTradingMessageService(bookkeeperMsgSvc, messageBus, wsHub, feeEngine, f.logger)
 
 	// Create market data message service
 	marketDataMsgSvc := NewMarketDataMessageService(messageBus, wsHub, f.logger)

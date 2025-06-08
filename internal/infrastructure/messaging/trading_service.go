@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	ws "github.com/Aidin1998/finalex/internal/infrastructure/ws"
+	"github.com/Aidin1998/finalex/internal/trading/engine"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -17,6 +19,7 @@ type TradingMessageService struct {
 	bookkeeperMsgSvc *BookkeeperMessageService
 	messageBus       *MessageBus
 	wsHub            *ws.Hub
+	feeEngine        *engine.FeeEngine
 	logger           *zap.Logger
 }
 
@@ -25,12 +28,14 @@ func NewTradingMessageService(
 	bookkeeperMsgSvc *BookkeeperMessageService,
 	messageBus *MessageBus,
 	wsHub *ws.Hub,
+	feeEngine *engine.FeeEngine,
 	logger *zap.Logger,
 ) *TradingMessageService {
 	service := &TradingMessageService{
 		bookkeeperMsgSvc: bookkeeperMsgSvc,
 		messageBus:       messageBus,
 		wsHub:            wsHub,
+		feeEngine:        feeEngine,
 		logger:           logger,
 	}
 
@@ -279,7 +284,31 @@ func (s *TradingMessageService) lockOrderFunds(ctx context.Context, order *Order
 	if order.Side == "BUY" {
 		// For buy orders, lock quote currency
 		currency = s.getQuoteCurrency(order.Symbol)
-		amount = order.Price.Mul(order.Quantity).Mul(decimal.NewFromFloat(1.001)) // Add 0.1% for fees
+
+		// Calculate required funds using FeeEngine
+		orderValue := order.Price.Mul(order.Quantity)
+		feeReq := &engine.FeeCalculationRequest{
+			UserID:      order.UserID,
+			Pair:        order.Symbol,
+			Side:        order.Side,
+			OrderType:   order.Type,
+			Quantity:    order.Quantity,
+			Price:       order.Price,
+			TradedValue: orderValue,
+			IsMaker:     false, // Conservative assumption for fund locking
+			Timestamp:   time.Now(),
+		}
+
+		feeResult, err := s.feeEngine.CalculateFee(ctx, feeReq)
+		if err != nil {
+			s.logger.Error("Failed to calculate fee for fund locking",
+				zap.Error(err),
+				zap.String("order_id", order.OrderID))
+			// Fallback to default fee rate
+			amount = orderValue.Mul(decimal.NewFromFloat(1.001))
+		} else {
+			amount = orderValue.Add(feeResult.FinalFee)
+		}
 	} else {
 		// For sell orders, lock base currency
 		currency = s.getBaseCurrency(order.Symbol)
@@ -296,7 +325,31 @@ func (s *TradingMessageService) unlockOrderFunds(ctx context.Context, order *Ord
 
 	if order.Side == "BUY" {
 		currency = s.getQuoteCurrency(order.Symbol)
-		amount = order.Price.Mul(order.Quantity).Mul(decimal.NewFromFloat(1.001))
+
+		// Calculate amount to unlock using FeeEngine
+		orderValue := order.Price.Mul(order.Quantity)
+		feeReq := &engine.FeeCalculationRequest{
+			UserID:      order.UserID,
+			Pair:        order.Symbol,
+			Side:        order.Side,
+			OrderType:   order.Type,
+			Quantity:    order.Quantity,
+			Price:       order.Price,
+			TradedValue: orderValue,
+			IsMaker:     false, // Conservative assumption
+			Timestamp:   time.Now(),
+		}
+
+		feeResult, err := s.feeEngine.CalculateFee(ctx, feeReq)
+		if err != nil {
+			s.logger.Error("Failed to calculate fee for fund unlocking",
+				zap.Error(err),
+				zap.String("order_id", order.OrderID))
+			// Fallback to default fee rate
+			amount = orderValue.Mul(decimal.NewFromFloat(1.001))
+		} else {
+			amount = orderValue.Add(feeResult.FinalFee)
+		}
 	} else {
 		currency = s.getBaseCurrency(order.Symbol)
 		amount = order.Quantity
@@ -312,7 +365,31 @@ func (s *TradingMessageService) unlockPartialOrderFunds(ctx context.Context, ord
 
 	if order.Side == "BUY" {
 		currency = s.getQuoteCurrency(order.Symbol)
-		amount = order.Price.Mul(remainingQty).Mul(decimal.NewFromFloat(1.001))
+
+		// Calculate amount to unlock using FeeEngine for remaining quantity
+		orderValue := order.Price.Mul(remainingQty)
+		feeReq := &engine.FeeCalculationRequest{
+			UserID:      order.UserID,
+			Pair:        order.Symbol,
+			Side:        order.Side,
+			OrderType:   order.Type,
+			Quantity:    remainingQty,
+			Price:       order.Price,
+			TradedValue: orderValue,
+			IsMaker:     false, // Conservative assumption
+			Timestamp:   time.Now(),
+		}
+
+		feeResult, err := s.feeEngine.CalculateFee(ctx, feeReq)
+		if err != nil {
+			s.logger.Error("Failed to calculate fee for partial fund unlocking",
+				zap.Error(err),
+				zap.String("order_id", order.OrderID))
+			// Fallback to default fee rate
+			amount = orderValue.Mul(decimal.NewFromFloat(1.001))
+		} else {
+			amount = orderValue.Add(feeResult.FinalFee)
+		}
 	} else {
 		currency = s.getBaseCurrency(order.Symbol)
 		amount = remainingQty

@@ -318,8 +318,31 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 			quoteCurrency = cleanSymbol[strings.Index(cleanSymbol, "/")+1:]
 		}
 
-		// Calculate required funds (price * quantity + fees)
-		requiredFunds := order.Price * order.Quantity * 1.001 // Add 0.1% for fees
+		// Calculate required funds using FeeEngine
+		var requiredFunds float64
+		orderValue := decimal.NewFromFloat(order.Price * order.Quantity)
+		feeReq := &engine.FeeCalculationRequest{
+			UserID:      order.UserID.String(),
+			Pair:        cleanSymbol,
+			Side:        order.Side,
+			OrderType:   order.Type,
+			Quantity:    decimal.NewFromFloat(order.Quantity),
+			Price:       decimal.NewFromFloat(order.Price),
+			TradedValue: orderValue,
+			IsMaker:     false, // Conservative assumption for fund checking
+			Timestamp:   time.Now(),
+		}
+
+		feeResult, err := s.feeEngine.CalculateFee(ctx, feeReq)
+		if err != nil {
+			s.logger.Error("Failed to calculate fee for fund verification",
+				zap.Error(err),
+				zap.String("order_id", order.ID.String()))
+			// Fallback to default fee rate
+			requiredFunds = order.Price * order.Quantity * 1.001
+		} else {
+			requiredFunds = orderValue.Add(feeResult.FinalFee).InexactFloat64()
+		}
 
 		// Check available balance through bookkeeper
 		if s.bookkeeperSvc != nil {

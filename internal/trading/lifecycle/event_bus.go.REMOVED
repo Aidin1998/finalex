@@ -1,0 +1,2 @@
+// This file was removed as part of the migration to the unified event bus in internal/trading/events/event_bus.go.
+// All event publishing should now use the unified event bus.
