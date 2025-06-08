@@ -53,9 +53,9 @@ type PlatformConfig struct {
 	Environment string `mapstructure:"environment" yaml:"environment" validate:"required,oneof=development staging production"`
 
 	// Core Services
-	Server   ServerConfig   `mapstructure:"server" yaml:"server" validate:"required"`
-	Database DatabaseConfig `mapstructure:"database" yaml:"database" validate:"required"`
-	Redis    RedisConfig    `mapstructure:"redis" yaml:"redis" validate:"required"`
+	Server   VaultServerConfig `mapstructure:"server" yaml:"server" validate:"required"`
+	Database DatabaseConfig    `mapstructure:"database" yaml:"database" validate:"required"`
+	Redis    RedisConfig       `mapstructure:"redis" yaml:"redis" validate:"required"`
 
 	// Security
 	JWT      JWTConfig      `mapstructure:"jwt" yaml:"jwt" validate:"required"`
@@ -77,8 +77,8 @@ type PlatformConfig struct {
 	Logging LoggingConfig `mapstructure:"logging" yaml:"logging" validate:"required"`
 }
 
-// ServerConfig holds server configuration
-type ServerConfig struct {
+// VaultServerConfig holds server configuration
+type VaultServerConfig struct {
 	Host                    string        `mapstructure:"host" yaml:"host" validate:"required"`
 	Port                    int           `mapstructure:"port" yaml:"port" validate:"required,min=1,max=65535"`
 	TLSEnabled              bool          `mapstructure:"tls_enabled" yaml:"tls_enabled"`
@@ -231,8 +231,8 @@ type KafkaConfig struct {
 	ConsumerConfig      ConsumerConfig `mapstructure:"consumer" yaml:"consumer" validate:"required"`
 
 	// Security
-	SASL SASLConfig `mapstructure:"sasl" yaml:"sasl"`
-	TLS  TLSConfig  `mapstructure:"tls" yaml:"tls"`
+	SASL SASLConfig     `mapstructure:"sasl" yaml:"sasl"`
+	TLS  VaultTLSConfig `mapstructure:"tls" yaml:"tls"`
 }
 
 // ProducerConfig represents Kafka producer configuration
@@ -262,8 +262,8 @@ type SASLConfig struct {
 	Password  string `mapstructure:"password" yaml:"password"`
 }
 
-// TLSConfig represents TLS configuration
-type TLSConfig struct {
+// VaultTLSConfig represents TLS configuration for Vault
+type VaultTLSConfig struct {
 	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
 	CertFile           string `mapstructure:"cert_file" yaml:"cert_file"`
 	KeyFile            string `mapstructure:"key_file" yaml:"key_file"`
@@ -389,10 +389,10 @@ type SecretsConfig struct {
 
 // VaultConfig represents HashiCorp Vault configuration
 type VaultConfig struct {
-	Address   string    `mapstructure:"address" yaml:"address" validate:"url"`
-	Token     string    `mapstructure:"token" yaml:"token"`
-	Path      string    `mapstructure:"path" yaml:"path"`
-	TLSConfig TLSConfig `mapstructure:"tls" yaml:"tls"`
+	Address   string         `mapstructure:"address" yaml:"address" validate:"url"`
+	Token     string         `mapstructure:"token" yaml:"token"`
+	Path      string         `mapstructure:"path" yaml:"path"`
+	TLSConfig VaultTLSConfig `mapstructure:"tls" yaml:"tls"`
 }
 
 // AWSSecretsConfig represents AWS Secrets Manager configuration
