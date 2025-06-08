@@ -162,15 +162,12 @@ func main() {
 	transactionSuite.BookkeeperXA = transaction.NewBookkeeperXAResource(bookkeeperXAService, zapLogger)
 
 	// Create userauth service (includes auth, identities, and KYC)
-	userauthSvc, err := userauth.NewService(zapLogger, db, simpleRedis)
+	userauthSvc, err := userauth.NewSimpleService(zapLogger, db, simpleRedis)
 	if err != nil {
 		zapLogger.Fatal("Failed to create userauth service", zap.Error(err))
 	}
 
-	fiatSvc, err := fiat.NewService(zapLogger, db, bookkeeperSvc, userauthSvc.KYCService())
-	if err != nil {
-		zapLogger.Fatal("Failed to create fiat service", zap.Error(err))
-	}
+	fiatSvc := fiat.NewFiatService(db, zapLogger, []byte("default-signature-key")) // TODO: Load from config
 
 	// Update transaction suite with fiat service
 	transactionSuite.FiatXA = transaction.NewFiatXAResource(fiatSvc, db, zapLogger, "main")
@@ -233,12 +230,11 @@ func main() {
 		zapLogger,
 		userauthSvc,
 		bookkeeperSvc,
-		fiatSvc,
 		marketfeedsSvc,
 		tradingSvc,
+		fiatSvc,
 		wsHub,
-		nil, // audit service (disabled)
-		nil, // audit handlers (disabled)
+		db,
 	)
 
 	// Initialize transaction API

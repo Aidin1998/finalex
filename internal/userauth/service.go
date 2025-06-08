@@ -6,6 +6,7 @@ import (
 	"time"
 
 	twofa "github.com/Aidin1998/finalex/internal/userauth/2FA"
+	"gorm.io/gorm"
 
 	"github.com/Aidin1998/finalex/internal/userauth/audit"
 	"github.com/Aidin1998/finalex/internal/userauth/auth"
@@ -21,6 +22,7 @@ import (
 	"go.uber.org/zap"
 
 	redisv8 "github.com/go-redis/redis/v8"
+	redisv9 "github.com/redis/go-redis/v9"
 )
 
 // Service implements the full UserAuthService interface and all enterprise features.
@@ -37,6 +39,119 @@ type Service struct {
 	clusteredCache    *cache.ClusteredCache
 	tieredRateLimiter *auth.TieredRateLimiter
 	redisCluster      *redisv8.ClusterClient
+}
+
+// NewService creates a new userauth service with all enterprise features
+func NewService(
+	logger *zap.Logger,
+	authService auth.AuthService,
+	identityService identities.Service,
+	kycService kyc.Service,
+	auditService *audit.Service,
+	passwordService *password.Service,
+	complianceService *compliance.ComplianceService,
+	encryptionService *encryption.PIIEncryptionService,
+	twoFAService *twofa.Service,
+	clusteredCache *cache.ClusteredCache,
+	tieredRateLimiter *auth.TieredRateLimiter,
+	redisCluster *redisv8.ClusterClient,
+) *Service {
+	return &Service{
+		logger:            logger,
+		authService:       authService,
+		identityService:   identityService,
+		kycService:        kycService,
+		auditService:      auditService,
+		passwordService:   passwordService,
+		complianceService: complianceService,
+		encryptionService: encryptionService,
+		twoFAService:      twoFAService,
+		clusteredCache:    clusteredCache,
+		tieredRateLimiter: tieredRateLimiter,
+		redisCluster:      redisCluster,
+	}
+}
+
+// NewSimpleService creates a userauth service with basic configuration
+// This is a simplified constructor that initializes all sub-services with defaults
+func NewSimpleService(logger *zap.Logger, db *gorm.DB, redisClient *redisv9.Client) (*Service, error) {
+	// Initialize all sub-services with default configurations
+
+	// Create audit service
+	auditService := audit.NewService(logger, db)
+
+	// Create password service (skip Redis for now due to version mismatch)
+	// TODO: Fix Redis version compatibility or upgrade to v9
+	var passwordService *password.Service
+	if redisClient != nil {
+		passwordService = password.NewService(logger, db, redisClient)
+	} else {
+		// Skip password service initialization for now
+		logger.Warn("Skipping password service initialization due to nil Redis client")
+	}
+
+	// Create auth service with default rate limiter
+	authService, err := auth.NewAuthService(
+		logger,
+		db,
+		"default-jwt-secret-change-in-production", // TODO: Load from config
+		24*time.Hour, // JWT expiration
+		"default-refresh-secret-change-in-production", // TODO: Load from config
+		7*24*time.Hour,                                // Refresh expiration
+		"finalex",                                     // Issuer
+		nil,                                           // Rate limiter (optional)
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create auth service: %w", err)
+	}
+
+	// Create identity service
+	identityService := identities.NewService(logger, db)
+
+	// Create KYC service
+	kycService := kyc.NewService(logger, db)
+
+	// Create compliance service with stub dependencies
+	complianceService := compliance.NewComplianceService(
+		db,
+		logger,
+		compliance.NewStubGeolocationService(),
+		compliance.NewStubSanctionCheckService(),
+		compliance.NewStubKYCProvider(),
+	)
+
+	// Create encryption service (only takes master key string)
+	encryptionService := encryption.NewPIIEncryptionService("default-encryption-key-change-in-production")
+
+	// Create 2FA service
+	twoFAService := twofa.NewService(logger, db, "Finalex")
+
+	// Create clustered cache (optional)
+	var clusteredCache *cache.ClusteredCache
+	// clusteredCache = cache.NewClusteredCache(...) // Initialize if needed
+
+	// Create tiered rate limiter (optional)
+	var tieredRateLimiter *auth.TieredRateLimiter
+	// tieredRateLimiter = auth.NewTieredRateLimiter(...) // Initialize if needed
+
+	// Convert single redis client to cluster client if needed
+	var redisCluster *redisv8.ClusterClient
+	// redisCluster = ... // Initialize if needed
+
+	return NewService(
+		logger,
+		authService,
+		identityService,
+		kycService,
+		auditService,
+		passwordService,
+		complianceService,
+		encryptionService,
+		twoFAService,
+		clusteredCache,
+		tieredRateLimiter,
+		redisCluster,
+	), nil
 }
 
 // Core service accessors
