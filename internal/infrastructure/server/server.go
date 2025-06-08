@@ -16,7 +16,6 @@ import (
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/aml"
 	"github.com/Aidin1998/finalex/internal/trading/handlers"
-	"github.com/Aidin1998/finalex/internal/trading/lifecycle"
 	"github.com/Aidin1998/finalex/internal/trading/middleware"
 	"github.com/Aidin1998/finalex/internal/userauth"
 	"github.com/Aidin1998/finalex/internal/userauth/auth"
@@ -27,6 +26,8 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+
+	events "github.com/Aidin1998/finalex/internal/trading/events"
 )
 
 // --- Enhanced error response helpers ---
@@ -54,7 +55,6 @@ type Server struct {
 	tradingHandler    *handlers.TradingHandler
 	marketDataHandler *handlers.MarketDataHandler
 	rateLimiter       *middleware.RateLimiter
-	lifecycleManager  *lifecycle.OrderLifecycleManager
 }
 
 // NewServer creates a new HTTP server
@@ -68,16 +68,6 @@ func NewServer(
 	wsHub *ws.Hub,
 	db *gorm.DB,
 ) *Server {
-	// Initialize event bus for lifecycle manager
-	eventBus := lifecycle.NewSimpleEventBus(logger)
-
-	// Initialize order lifecycle manager
-	lifecycleManager := lifecycle.NewOrderLifecycleManager(db, logger, eventBus)
-
-	// Initialize rate limiter with default config
-	rateLimiterConfig := middleware.DefaultRateLimitConfig()
-	rateLimiter := middleware.NewRateLimiter(rateLimiterConfig, logger)
-
 	// Initialize trading handlers
 	tradingHandler := handlers.NewTradingHandler(tradingSvc, logger)
 	marketDataHandler := handlers.NewMarketDataHandler(tradingSvc, logger)
@@ -98,7 +88,6 @@ func NewServer(
 		tradingHandler:    tradingHandler,
 		marketDataHandler: marketDataHandler,
 		rateLimiter:       rateLimiter,
-		lifecycleManager:  lifecycleManager,
 	}
 }
 
@@ -288,29 +277,6 @@ func (s *Server) Router() *gin.Engine {
 	return router
 }
 
-// httpError interface for errors with status code
-type httpError interface {
-	error
-	StatusCode() int
-}
-
-// errorMapper maps error messages to HTTP status codes
-type errorMapper struct{}
-
-func (m *errorMapper) mapError(err error) int {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "unauthorized"):
-		return http.StatusUnauthorized
-	case strings.Contains(msg, "forbidden"):
-		return http.StatusForbidden
-	case strings.Contains(msg, "not found"):
-		return http.StatusNotFound
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
 // writeError writes a JSON error response with RFC 7807 compliant format
 func (s *Server) writeError(c *gin.Context, err error) {
 	instance := c.Request.URL.Path
@@ -343,19 +309,16 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		}
 
 		// Remove "Bearer " prefix if present
-		if strings.HasPrefix(token, "Bearer ") {
-			token = token[7:]
-		}
+		token = strings.TrimPrefix(token, "Bearer ")
 
 		// Extract client IP for enhanced security auditing
 		clientIP := c.ClientIP()
 
 		// Set client IP in context for enhanced JWT validator
-		ctx := context.WithValue(c.Request.Context(), "client_ip", clientIP)
+		ctx := context.WithValue(c.Request.Context(), contextKey("client_ip"), clientIP)
 		c.Request = c.Request.WithContext(ctx)
 
 		var userID string
-		var err error
 
 		// Try unified auth service first (enhanced validation)
 		if s.userAuthSvc.AuthService() != nil {
@@ -379,8 +342,6 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 					zap.String("client_ip", clientIP),
 					zap.String("endpoint", c.Request.URL.Path),
 					zap.String("method", c.Request.Method))
-			} else {
-				err = authErr
 			}
 		} else {
 			// Fallback to identities service (legacy validation)
@@ -388,19 +349,16 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			if err == nil {
 				if userIDStr, ok := userIDInterface.(string); ok {
 					userID = userIDStr
-				} else {
-					err = fmt.Errorf("invalid user ID type")
 				}
 			}
 		}
 
-		if err != nil {
+		if userID == "" {
 			// Enhanced error logging for security monitoring
 			s.logger.Warn("Authentication failed",
 				zap.String("client_ip", clientIP),
 				zap.String("endpoint", c.Request.URL.Path),
-				zap.String("method", c.Request.Method),
-				zap.Error(err))
+				zap.String("method", c.Request.Method))
 
 			s.writeError(c, fmt.Errorf("unauthorized: %w", err))
 			c.Abort()
@@ -697,7 +655,7 @@ func (s *Server) handleGetAccount(c *gin.Context) {
 // @Param			per_page	query		int						false	"Items per page"			default(20)
 // @Param			type		query		string					false	"Transaction type filter"	Enums(deposit, withdrawal, trade, fee)
 // @Success		200			{object}	map[string]interface{}	"Transaction history"
-// @Failure		401			{object}	map[string/interface{}	"Unauthorized"
+// @Failure		401			{object}	map[string]interface{}	"Unauthorized"
 // @Failure		404			{object}	map[string]interface{}	"Account not found"
 // @Failure		500			{object}	map[string]interface{}	"Internal server error"
 // @Router			/accounts/{currency}/transactions [get]
@@ -769,7 +727,7 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 	// TODO: Write to time-series DB (Prometheus/Influx/Timescale) here
 
 	// Pass trace ID downstream (e.g., via context, headers, or order struct)
-	ctx := context.WithValue(c.Request.Context(), "trace_id", traceID)
+	ctx := context.WithValue(c.Request.Context(), contextKey("trace_id"), traceID)
 	_ = ctx // TODO: Use ctx for downstream calls
 
 	// For demonstration, simulate validation and order book insertion
@@ -1252,6 +1210,13 @@ func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
 	}
 
 	s.userAuthSvc.TieredRateLimiter().UpdateEndpointConfig(request.Endpoint, request.Config)
+	c.JSON(http.StatusOK, gin.H{"message": "Endpoint configuration updated", "endpoint": request.Endpoint})
+}
+
+// @Summary		Get User Rate Limit Status
+// @Description	Retrieve current rate limit status for a specific user across all rate types
+// @Tags			Rate Limiting
+// @Produce		json
 	c.JSON(http.StatusOK, gin.H{"message": "Endpoint configuration updated", "endpoint": request.Endpoint})
 }
 
@@ -1911,3 +1876,5 @@ func (s *Server) handleListRiskReports(c *gin.Context) {
 		"total": 1,
 	})
 }
+
+type contextKey string
