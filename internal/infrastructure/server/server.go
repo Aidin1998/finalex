@@ -26,8 +26,6 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-
-	events "github.com/Aidin1998/finalex/internal/trading/events"
 )
 
 // --- Enhanced error response helpers ---
@@ -74,6 +72,9 @@ func NewServer(
 
 	// Initialize risk service (using mock for now)
 	riskSvc := aml.NewMockRiskService(logger)
+
+	// Initialize rate limiter
+	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig(), logger)
 
 	return &Server{
 		logger:            logger,
@@ -319,10 +320,11 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 
 		var userID string
-
+		var authErr error
 		// Try unified auth service first (enhanced validation)
 		if s.userAuthSvc.AuthService() != nil {
-			claims, authErr := s.userAuthSvc.AuthService().ValidateToken(ctx, token)
+			claims, err := s.userAuthSvc.AuthService().ValidateToken(ctx, token)
+			authErr = err
 			if authErr == nil {
 				userID = claims.UserID.String()
 				// Set comprehensive context from enhanced validation claims
@@ -346,6 +348,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		} else {
 			// Fallback to identities service (legacy validation)
 			userIDInterface, err := s.userAuthSvc.IdentityService().ValidateToken(c.Request.Context(), token)
+			authErr = err
 			if err == nil {
 				if userIDStr, ok := userIDInterface.(string); ok {
 					userID = userIDStr
@@ -360,7 +363,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 				zap.String("endpoint", c.Request.URL.Path),
 				zap.String("method", c.Request.Method))
 
-			s.writeError(c, fmt.Errorf("unauthorized: %w", err))
+			s.writeError(c, fmt.Errorf("unauthorized: %w", authErr))
 			c.Abort()
 			return
 		}
@@ -1217,13 +1220,6 @@ func (s *Server) handleUpdateEndpointConfig(c *gin.Context) {
 // @Description	Retrieve current rate limit status for a specific user across all rate types
 // @Tags			Rate Limiting
 // @Produce		json
-	c.JSON(http.StatusOK, gin.H{"message": "Endpoint configuration updated", "endpoint": request.Endpoint})
-}
-
-// @Summary		Get User Rate Limit Status
-// @Description	Retrieve current rate limit status for a specific user across all rate types
-// @Tags			Rate Limiting
-// @Produce		json
 // @Security		BearerAuth
 // @Param			userID	path		string						true	"User ID"
 // @Success		200		{object}	docs.UserRateLimitResponse	"User rate limit status retrieved successfully"
@@ -1471,7 +1467,7 @@ func (s *Server) handleUpdateRiskLimit(c *gin.Context) {
 // @Failure		401		{object}	map[string]interface{}		"Unauthorized"
 // @Failure		403		{object}	map[string]interface{}		"Admin access required"
 // @Failure		404		{object}	map[string]interface{}		"Risk limit not found"
-// @Failure		500		{object}	map[string]interface{}		"Internal server error"
+// @Failure			500		{object}	map[string]interface{}		"Internal server error"
 // @Router			/admin/risk/limits/{type}/{id} [delete]
 func (s *Server) handleDeleteRiskLimit(c *gin.Context) {
 	limitType := c.Param("type")
