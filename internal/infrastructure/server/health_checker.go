@@ -42,6 +42,7 @@ type HealthReport struct {
 type ReadinessReport struct {
 	Ready      bool                        `json:"ready"`
 	Timestamp  time.Time                   `json:"timestamp"`
+	Duration   time.Duration               `json:"duration"`
 	Components map[string]*ComponentHealth `json:"components"`
 }
 
@@ -252,12 +253,12 @@ func (hc *HealthChecker) CheckReadiness(ctx context.Context) *ReadinessReport {
 			mu.Unlock()
 		}(name, check)
 	}
-
 	wg.Wait()
 
 	report := &ReadinessReport{
 		Ready:      ready,
 		Timestamp:  time.Now(),
+		Duration:   time.Since(start),
 		Components: components,
 	}
 

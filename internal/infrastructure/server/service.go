@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/accounts"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/internal/marketmaking"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/userauth"
-	"github.com/Aidin1998/finalex/internal/wallet"
+	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -22,10 +22,10 @@ type Service struct {
 	router          *gin.Engine
 	httpServer      *http.Server
 	userAuthSvc     userauth.Service
-	accountsSvc     accounts.Service
-	tradingSvc      trading.Service
-	fiatSvc         fiat.Service
-	walletSvc       wallet.Service
+	accountsSvc     bookkeeper.BookkeeperService
+	tradingSvc      *trading.Service
+	fiatSvc         *fiat.FiatService
+	walletSvc       interfaces.WalletService
 	marketMakingSvc marketmaking.Service
 	handlers        map[string]map[string]http.HandlerFunc
 }
@@ -45,10 +45,10 @@ func NewService(
 	logger *zap.Logger,
 	config *Config,
 	userAuthSvc userauth.Service,
-	accountsSvc accounts.Service,
-	tradingSvc trading.Service,
-	fiatSvc fiat.Service,
-	walletSvc wallet.Service,
+	accountsSvc bookkeeper.BookkeeperService,
+	tradingSvc *trading.Service,
+	fiatSvc *fiat.FiatService,
+	walletSvc interfaces.WalletService,
 	marketMakingSvc marketmaking.Service,
 ) (*Service, error) {
 	router := gin.Default()
