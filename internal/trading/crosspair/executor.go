@@ -21,6 +21,7 @@ type AtomicExecutor struct {
 	rateCalculator  RateCalculator
 	matchingEngines map[string]MatchingEngine
 	tradeStore      CrossPairTradeStore
+	eventPublisher  EventPublisher
 }
 
 // AtomicExecutionResult represents the result of an atomic execution
@@ -40,6 +41,7 @@ func NewAtomicExecutor(
 	rateCalculator RateCalculator,
 	matchingEngines map[string]MatchingEngine,
 	tradeStore CrossPairTradeStore,
+	eventPublisher EventPublisher,
 ) *AtomicExecutor {
 	return &AtomicExecutor{
 		logger:          logger.Named("atomic-executor"),
@@ -48,6 +50,7 @@ func NewAtomicExecutor(
 		rateCalculator:  rateCalculator,
 		matchingEngines: matchingEngines,
 		tradeStore:      tradeStore,
+		eventPublisher:  eventPublisher,
 	}
 }
 
@@ -153,10 +156,32 @@ func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPai
 		return nil, fmt.Errorf("first leg execution failed: %w", err)
 	}
 
+	// After each leg execution, check for partial fill and publish event
+	if firstLeg.Quantity.LessThan(order.Quantity) {
+		order.ExecutedQuantity = order.ExecutedQuantity.Add(firstLeg.Quantity)
+		order.Status = CrossPairOrderPartiallyFilled
+		// Publish partial fill event for first leg
+		if e.eventPublisher != nil {
+			e.eventPublisher.PublishPartialFill(order, 1, firstLeg.Quantity, firstLeg.TradeID, firstLeg.Fees)
+		}
+		// Optionally: update audit trail, balances, etc. here
+	}
+
 	// Execute second leg: BaseAsset -> ToAsset
 	secondLeg, err := e.executeSecondLeg(ctx, order, route, firstLeg.Quantity, coordCtx)
 	if err != nil {
 		return nil, fmt.Errorf("second leg execution failed: %w", err)
+	}
+
+	// After each leg execution, check for partial fill and publish event
+	if secondLeg.Quantity.LessThan(order.Quantity) {
+		order.ExecutedQuantity = order.ExecutedQuantity.Add(secondLeg.Quantity)
+		order.Status = CrossPairOrderPartiallyFilled
+		// Publish partial fill event for second leg
+		if e.eventPublisher != nil {
+			e.eventPublisher.PublishPartialFill(order, 2, secondLeg.Quantity, secondLeg.TradeID, secondLeg.Fees)
+		}
+		// Optionally: update audit trail, balances, etc. here
 	}
 
 	// Calculate actual execution rate and slippage

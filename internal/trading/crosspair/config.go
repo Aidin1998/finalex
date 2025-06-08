@@ -54,6 +54,7 @@ type WebSocketConfig struct {
 	PongTimeout        time.Duration `json:"pong_timeout" yaml:"pong_timeout"`
 	MessageRateLimit   int           `json:"message_rate_limit" yaml:"message_rate_limit"`
 	BroadcastQueueSize int           `json:"broadcast_queue_size" yaml:"broadcast_queue_size"`
+	AllowedOrigins     []string      `json:"allowed_origins" yaml:"allowed_origins"` // NEW: allowed websocket origins
 }
 
 // StorageConfig holds configuration for data storage
@@ -139,6 +140,7 @@ func DefaultConfig() *CrossPairConfig {
 			PongTimeout:        60 * time.Second,
 			MessageRateLimit:   100, // messages per minute
 			BroadcastQueueSize: 1000,
+			AllowedOrigins:     []string{"https://yourdomain.com"}, // <-- set your production domain(s) here
 		},
 
 		Storage: StorageConfig{

@@ -85,12 +85,17 @@ type TradeUpdate struct {
 }
 
 // NewWebSocketManager creates a new WebSocket manager
-func NewWebSocketManager(rateCalc RateCalculator, engine *CrossPairEngine) *WebSocketManager {
+func NewWebSocketManager(rateCalc RateCalculator, engine *CrossPairEngine, allowedOrigins []string) *WebSocketManager {
+	originMap := make(map[string]struct{})
+	for _, o := range allowedOrigins {
+		originMap[o] = struct{}{}
+	}
 	return &WebSocketManager{
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				// TODO: Implement proper origin checking for production
-				return true
+				origin := r.Header.Get("Origin")
+				_, ok := originMap[origin]
+				return ok
 			},
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,

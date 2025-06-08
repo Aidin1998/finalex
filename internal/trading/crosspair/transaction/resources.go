@@ -20,6 +20,8 @@ type BalanceResource struct {
 	balanceService crosspair.BalanceService
 	name           string
 
+	EventPublisher crosspair.CrossPairEventPublisher // Injected event publisher
+
 	// Track prepared operations for rollback
 	preparedOps map[string]*BalanceOperation
 	opsMutex    sync.RWMutex
@@ -40,12 +42,14 @@ type BalanceOperation struct {
 func NewBalanceResource(
 	logger *zap.Logger,
 	balanceService crosspair.BalanceService,
+	eventPublisher crosspair.CrossPairEventPublisher,
 ) *BalanceResource {
 	return &BalanceResource{
 		logger:         logger.Named("balance-resource"),
 		balanceService: balanceService,
 		name:           "BALANCE_SERVICE",
 		preparedOps:    make(map[string]*BalanceOperation),
+		EventPublisher: eventPublisher,
 	}
 }
 
@@ -85,6 +89,17 @@ func (br *BalanceResource) Rollback(ctx context.Context, xid transaction.XID) er
 			return fmt.Errorf("failed to reverse balance operation: %w", err)
 		}
 		delete(br.preparedOps, xidStr)
+
+		// Notify frontend of rollback/failure
+		if br.EventPublisher != nil {
+			event := crosspair.CrossPairOrderEvent{
+				UserID:    ops.UserID,
+				Status:    "FAILED",
+				Error:     ptrString("Balance rollback executed"),
+				UpdatedAt: time.Now(),
+			}
+			br.EventPublisher.PublishCrossPairOrderEvent(ctx, event)
+		}
 	}
 
 	return nil
@@ -180,6 +195,8 @@ type MatchingEngineResource struct {
 	// Track prepared orders for rollback
 	preparedOrders map[string]*OrderOperation
 	ordersMutex    sync.RWMutex
+
+	EventPublisher crosspair.CrossPairEventPublisher // Injected event publisher
 }
 
 // OrderOperation represents an order operation that can be rolled back
@@ -196,6 +213,7 @@ func NewMatchingEngineResource(
 	logger *zap.Logger,
 	matchingEngine crosspair.MatchingEngine,
 	symbol string,
+	eventPublisher crosspair.CrossPairEventPublisher,
 ) *MatchingEngineResource {
 	return &MatchingEngineResource{
 		logger:         logger.Named("matching-engine-resource"),
@@ -203,6 +221,7 @@ func NewMatchingEngineResource(
 		name:           fmt.Sprintf("MATCHING_ENGINE_%s", symbol),
 		symbol:         symbol,
 		preparedOrders: make(map[string]*OrderOperation),
+		EventPublisher: eventPublisher,
 	}
 }
 
@@ -245,6 +264,22 @@ func (mer *MatchingEngineResource) Rollback(ctx context.Context, xid transaction
 			return fmt.Errorf("failed to reverse order operation: %w", err)
 		}
 		delete(mer.preparedOrders, xidStr)
+
+		// Notify frontend of rollback/failure with rich context
+		if mer.EventPublisher != nil && op.OriginalOrder != nil {
+			event := crosspair.CrossPairOrderEvent{
+				OrderID:        op.OriginalOrder.ID,
+				UserID:         op.OriginalOrder.UserID,
+				Status:         "ROLLED_BACK",
+				FillAmountLeg1: op.OriginalOrder.ExecutedQuantity, // best available
+				SyntheticRate:  op.OriginalOrder.EstimatedRate,
+				Fee:            op.OriginalOrder.Fees,
+				CreatedAt:      op.OriginalOrder.CreatedAt,
+				UpdatedAt:      time.Now(),
+				Error:          ptrString("Order rollback executed"),
+			}
+			mer.EventPublisher.PublishCrossPairOrderEvent(ctx, event)
+		}
 	}
 
 	return nil
@@ -337,6 +372,8 @@ type TradeStoreResource struct {
 	// Track prepared trades for rollback
 	preparedTrades map[string]*TradeOperation
 	tradesMutex    sync.RWMutex
+
+	EventPublisher crosspair.CrossPairEventPublisher // Injected event publisher
 }
 
 // TradeOperation represents a trade operation that can be rolled back
@@ -351,12 +388,14 @@ type TradeOperation struct {
 func NewTradeStoreResource(
 	logger *zap.Logger,
 	tradeStore crosspair.CrossPairTradeStore,
+	eventPublisher crosspair.CrossPairEventPublisher,
 ) *TradeStoreResource {
 	return &TradeStoreResource{
 		logger:         logger.Named("trade-store-resource"),
 		tradeStore:     tradeStore,
 		name:           "TRADE_STORE",
 		preparedTrades: make(map[string]*TradeOperation),
+		EventPublisher: eventPublisher,
 	}
 }
 
@@ -393,6 +432,23 @@ func (tsr *TradeStoreResource) Rollback(ctx context.Context, xid transaction.XID
 			return fmt.Errorf("failed to reverse trade operation: %w", err)
 		}
 		delete(tsr.preparedTrades, xidStr)
+
+		// Notify frontend of rollback/failure with rich context
+		if tsr.EventPublisher != nil && op.Trade != nil {
+			event := crosspair.CrossPairOrderEvent{
+				OrderID:        op.Trade.OrderID,
+				UserID:         op.Trade.UserID,
+				Status:         "ROLLED_BACK",
+				Leg1TradeID:    op.Trade.ID, // If available, else leave zero
+				FillAmountLeg1: op.Trade.Quantity,
+				SyntheticRate:  op.Trade.ExecutedRate,
+				Fee:            op.Trade.Fees,
+				CreatedAt:      op.Trade.CreatedAt,
+				UpdatedAt:      time.Now(),
+				Error:          ptrString("Trade rollback executed"),
+			}
+			tsr.EventPublisher.PublishCrossPairOrderEvent(ctx, event)
+		}
 	}
 
 	return nil
@@ -472,3 +528,6 @@ func (tsr *TradeStoreResource) cleanup(xid transaction.XID) {
 	defer tsr.tradesMutex.Unlock()
 	delete(tsr.preparedTrades, xid.String())
 }
+
+// Helper for pointer to string
+func ptrString(s string) *string { return &s }

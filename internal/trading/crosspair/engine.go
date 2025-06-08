@@ -109,6 +109,8 @@ type EventPublisher interface {
 	PublishOrderUpdated(order *CrossPairOrder) error
 	PublishTradeExecuted(trade *CrossPairTrade) error
 	PublishExecutionFailed(orderID uuid.UUID, reason string) error
+	// Publish partial fill event for either leg
+	PublishPartialFill(order *CrossPairOrder, leg int, fillAmount decimal.Decimal, tradeID uuid.UUID, fees []CrossPairFee) error
 }
 
 // MetricsCollector interface for collecting metrics

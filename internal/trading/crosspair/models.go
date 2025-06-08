@@ -39,11 +39,12 @@ const (
 type CrossPairOrderStatus string
 
 const (
-	CrossPairOrderPending   CrossPairOrderStatus = "PENDING"
-	CrossPairOrderExecuting CrossPairOrderStatus = "EXECUTING"
-	CrossPairOrderCompleted CrossPairOrderStatus = "COMPLETED"
-	CrossPairOrderFailed    CrossPairOrderStatus = "FAILED"
-	CrossPairOrderCanceled  CrossPairOrderStatus = "CANCELED"
+	CrossPairOrderPending         CrossPairOrderStatus = "PENDING"
+	CrossPairOrderExecuting       CrossPairOrderStatus = "EXECUTING"
+	CrossPairOrderCompleted       CrossPairOrderStatus = "COMPLETED"
+	CrossPairOrderFailed          CrossPairOrderStatus = "FAILED"
+	CrossPairOrderCanceled        CrossPairOrderStatus = "CANCELED"
+	CrossPairOrderPartiallyFilled CrossPairOrderStatus = "PARTIALLY_FILLED" // Added for partial fill
 )
 
 // Alias for backwards compatibility with other files

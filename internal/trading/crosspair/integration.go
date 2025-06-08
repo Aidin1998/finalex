@@ -58,10 +58,9 @@ type FeeEngineInterface interface {
 
 // EventPublisherInterface defines the interface for event publishing
 type EventPublisherInterface interface {
-	PublishOrderEvent(ctx context.Context, event *OrderEvent) error
-	PublishTradeEvent(ctx context.Context, event *TradeEvent) error
 	PublishBalanceEvent(ctx context.Context, event *BalanceEvent) error
 	PublishErrorEvent(ctx context.Context, event *ErrorEvent) error
+	PublishCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent) error // Added for deduplication
 }
 
 // MetricsCollectorInterface defines the interface for metrics collection
@@ -138,23 +137,6 @@ type FeeSchedule struct {
 	TakerFee       float64            `json:"taker_fee"`
 	PairSpecific   map[string]float64 `json:"pair_specific"`
 	VolumeDiscount float64            `json:"volume_discount"`
-}
-
-type OrderEvent struct {
-	Type      string          `json:"type"`
-	OrderID   uuid.UUID       `json:"order_id"`
-	UserID    uuid.UUID       `json:"user_id"`
-	Order     *CrossPairOrder `json:"order"`
-	Timestamp time.Time       `json:"timestamp"`
-}
-
-type TradeEvent struct {
-	Type      string          `json:"type"`
-	TradeID   uuid.UUID       `json:"trade_id"`
-	OrderID   uuid.UUID       `json:"order_id"`
-	UserID    uuid.UUID       `json:"user_id"`
-	Trade     *CrossPairTrade `json:"trade"`
-	Timestamp time.Time       `json:"timestamp"`
 }
 
 type BalanceEvent struct {
@@ -277,59 +259,70 @@ func NewRealEventPublisher(eventPublisher EventPublisherInterface) *RealEventPub
 }
 
 func (p *RealEventPublisher) PublishOrderCreated(order *CrossPairOrder) error {
-	event := &OrderEvent{
-		Type:      "order_created",
+	event := CrossPairOrderEvent{
 		OrderID:   order.ID,
 		UserID:    order.UserID,
-		Order:     order,
-		Timestamp: time.Now(),
+		Status:    "CREATED",
+		CreatedAt: order.CreatedAt,
+		UpdatedAt: time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
 }
 
 func (p *RealEventPublisher) PublishOrderCompleted(order *CrossPairOrder) error {
-	event := &OrderEvent{
-		Type:      "order_completed",
-		OrderID:   order.ID,
-		UserID:    order.UserID,
-		Order:     order,
-		Timestamp: time.Now(),
+	event := CrossPairOrderEvent{
+		OrderID:        order.ID,
+		UserID:         order.UserID,
+		Status:         "COMPLETED",
+		FillAmountLeg1: order.ExecutedQuantity,
+		SyntheticRate:  order.EstimatedRate,
+		Fee:            order.Fees,
+		CreatedAt:      order.CreatedAt,
+		UpdatedAt:      time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
 }
 
 func (p *RealEventPublisher) PublishOrderCancelled(order *CrossPairOrder) error {
-	event := &OrderEvent{
-		Type:      "order_cancelled",
-		OrderID:   order.ID,
-		UserID:    order.UserID,
-		Order:     order,
-		Timestamp: time.Now(),
+	event := CrossPairOrderEvent{
+		OrderID:    order.ID,
+		UserID:     order.UserID,
+		Status:     "CANCELED",
+		CreatedAt:  order.CreatedAt,
+		UpdatedAt:  time.Now(),
+		CanceledAt: ptrTime(time.Now()),
 	}
-	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
 }
 
 func (p *RealEventPublisher) PublishTradeExecuted(trade *CrossPairTrade) error {
-	event := &TradeEvent{
-		Type:      "trade_executed",
-		TradeID:   trade.ID,
-		OrderID:   trade.OrderID,
-		UserID:    trade.UserID,
-		Trade:     trade,
-		Timestamp: time.Now(),
+	event := CrossPairOrderEvent{
+		OrderID:        trade.OrderID,
+		UserID:         trade.UserID,
+		Status:         "FILLED",
+		Leg1TradeID:    trade.ID,
+		FillAmountLeg1: trade.Quantity,
+		SyntheticRate:  trade.ExecutedRate,
+		Fee:            trade.Fees,
+		CreatedAt:      trade.CreatedAt,
+		UpdatedAt:      time.Now(),
+		FilledAt:       ptrTime(time.Now()),
 	}
-	return p.eventPublisher.PublishTradeEvent(context.Background(), event)
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
 }
 
 func (p *RealEventPublisher) PublishOrderUpdated(order *CrossPairOrder) error {
-	event := &OrderEvent{
-		Type:      "order_updated",
-		OrderID:   order.ID,
-		UserID:    order.UserID,
-		Order:     order,
-		Timestamp: time.Now(),
+	event := CrossPairOrderEvent{
+		OrderID:        order.ID,
+		UserID:         order.UserID,
+		Status:         string(order.Status),
+		FillAmountLeg1: order.ExecutedQuantity,
+		SyntheticRate:  order.EstimatedRate,
+		Fee:            order.Fees,
+		CreatedAt:      order.CreatedAt,
+		UpdatedAt:      time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
 }
 
 func (p *RealEventPublisher) PublishExecutionFailed(orderID uuid.UUID, reason string) error {
@@ -342,6 +335,28 @@ func (p *RealEventPublisher) PublishExecutionFailed(orderID uuid.UUID, reason st
 	}
 	return p.eventPublisher.PublishErrorEvent(context.Background(), event)
 }
+
+func (p *RealEventPublisher) PublishPartialFill(order *CrossPairOrder, leg int, fillAmount decimal.Decimal, tradeID uuid.UUID, fees []CrossPairFee) error {
+	event := CrossPairOrderEvent{
+		OrderID:   order.ID,
+		UserID:    order.UserID,
+		Status:    "PARTIALLY_FILLED",
+		CreatedAt: order.CreatedAt,
+		UpdatedAt: time.Now(),
+		Fee:       fees,
+	}
+	if leg == 1 {
+		event.Leg1TradeID = tradeID
+		event.FillAmountLeg1 = fillAmount
+	} else if leg == 2 {
+		event.Leg2TradeID = tradeID
+		event.FillAmountLeg2 = fillAmount
+	}
+	return p.eventPublisher.PublishCrossPairOrderEvent(context.Background(), event)
+}
+
+// Helper for pointer to time.Time
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // RealMetricsCollector implements MetricsCollector using the platform's metrics system
 type RealMetricsCollector struct {
