@@ -13,11 +13,13 @@ import (
 
 // CrossPairService is the main service that orchestrates all cross-pair trading components
 type CrossPairService struct {
-	config    *CrossPairConfig
-	engine    *CrossPairEngine
-	rateCalc  *SyntheticRateCalculator // updated type
-	wsManager *WebSocketManager
-	storage   Storage
+	config         *CrossPairConfig
+	engine         *CrossPairEngine
+	rateCalc       *SyntheticRateCalculator // updated type
+	wsManager      *WebSocketManager
+	storage        Storage
+	eventPublisher CrossPairEventPublisher // new field
+
 	// api         *CrossPairAPI // commented out undefined type
 	// adminAPI    *AdminAPI // commented out undefined type
 	integration *ServiceIntegration
@@ -62,13 +64,6 @@ func NewCrossPairService(opts *ServiceOptions) (*CrossPairService, error) {
 		cancel: cancel,
 	}
 
-	// Initialize storage
-	storage, err := service.initializeStorage(nil) // pass nil, since sqlx.DB is not available
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize storage: %w", err)
-	}
-	service.storage = storage
-
 	// Initialize components
 	if err := service.initializeComponents(opts.Integration); err != nil {
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
@@ -80,18 +75,6 @@ func NewCrossPairService(opts *ServiceOptions) (*CrossPairService, error) {
 	}
 
 	return service, nil
-}
-
-// initializeStorage sets up the storage layer
-func (s *CrossPairService) initializeStorage(_ interface{}) (Storage, error) {
-	switch s.config.Storage.Type {
-	case "postgres":
-		return nil, fmt.Errorf("database connection required for PostgreSQL storage")
-	case "memory":
-		return NewInMemoryStorage(), nil
-	default:
-		return nil, fmt.Errorf("unsupported storage type: %s", s.config.Storage.Type)
-	}
 }
 
 // initializeComponents sets up all the cross-pair trading components
@@ -143,6 +126,16 @@ func (s *CrossPairService) initializeComponents(integration *ServiceIntegration)
 	if s.config.WebSocket.Enabled {
 		s.wsManager = NewWebSocketManager(s.rateCalc, s.engine)
 	}
+
+	// Initialize the event publisher
+	s.eventPublisher = &CrossPairEventPublisherImpl{
+		WebSocketManager: s.wsManager,
+		// TODO: Wire up EventBus, ComplianceHooks, Metrics from integration or config
+	}
+
+	// Initialize storage
+	storage := NewPostgreSQLStorage(nil, s.eventPublisher) // pass nil for db if not available
+	s.storage = storage
 
 	// Initialize APIs
 	// s.api = NewCrossPairAPI(s.engine, s.storage, s.rateCalc, s.wsManager)

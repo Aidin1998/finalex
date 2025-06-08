@@ -11,6 +11,25 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Event publishing DTO for cross-pair order/trade events
+// (This should be moved to a shared DTO file if reused elsewhere)
+type CrossPairOrderEvent struct {
+	OrderID        uuid.UUID       `json:"order_id"`
+	UserID         uuid.UUID       `json:"user_id"`
+	Status         string          `json:"status"`
+	Leg1TradeID    uuid.UUID       `json:"leg1_trade_id,omitempty"`
+	Leg2TradeID    uuid.UUID       `json:"leg2_trade_id,omitempty"`
+	FillAmountLeg1 decimal.Decimal `json:"fill_amount_leg1"`
+	FillAmountLeg2 decimal.Decimal `json:"fill_amount_leg2"`
+	SyntheticRate  decimal.Decimal `json:"synthetic_rate"`
+	Fee            []CrossPairFee  `json:"fee"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	FilledAt       *time.Time      `json:"filled_at,omitempty"`
+	CanceledAt     *time.Time      `json:"canceled_at,omitempty"`
+	Error          *string         `json:"error,omitempty"`
+}
+
 // Storage defines the interface for cross-pair trading persistence
 type Storage interface {
 	// Order management
@@ -40,12 +59,13 @@ type Storage interface {
 
 // PostgreSQLStorage implements Storage using PostgreSQL
 type PostgreSQLStorage struct {
-	db *sql.DB
+	db             *sql.DB
+	EventPublisher CrossPairEventPublisher // new field
 }
 
 // NewPostgreSQLStorage creates a new PostgreSQL storage instance
-func NewPostgreSQLStorage(db *sql.DB) Storage {
-	return &PostgreSQLStorage{db: db}
+func NewPostgreSQLStorage(db *sql.DB, publisher CrossPairEventPublisher) Storage {
+	return &PostgreSQLStorage{db: db, EventPublisher: publisher}
 }
 
 // Order management
@@ -155,6 +175,14 @@ func (s *PostgreSQLStorage) GetOrdersByUser(ctx context.Context, userID uuid.UUI
 func (s *PostgreSQLStorage) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status OrderStatus) error {
 	query := `UPDATE crosspair_orders SET status = $1, updated_at = $2 WHERE id = $3`
 	_, err := s.db.ExecContext(ctx, query, status, time.Now(), orderID)
+	if err == nil && s.EventPublisher != nil {
+		event := CrossPairOrderEvent{
+			OrderID:   orderID,
+			Status:    string(status),
+			UpdatedAt: time.Now(),
+		}
+		s.EventPublisher.PublishCrossPairOrderEvent(ctx, event)
+	}
 	return err
 }
 
@@ -183,6 +211,20 @@ func (s *PostgreSQLStorage) CreateTrade(ctx context.Context, trade *CrossPairTra
 		trade.Quantity, trade.ExecutedRate, trade.TotalFeeUSD, trade.Slippage,
 		trade.ExecutionTimeMs, trade.CreatedAt,
 	)
+	if err == nil && s.EventPublisher != nil {
+		event := CrossPairOrderEvent{
+			OrderID:        trade.OrderID,
+			UserID:         trade.UserID,
+			Status:         "TRADE_EXECUTED",
+			Leg1TradeID:    trade.ID, // If available, else leave blank
+			SyntheticRate:  trade.ExecutedRate,
+			Fee:            trade.Fees,
+			FillAmountLeg1: trade.Quantity, // For single-leg, or sum for multi-leg
+			CreatedAt:      trade.CreatedAt,
+			UpdatedAt:      trade.CreatedAt,
+		}
+		s.EventPublisher.PublishCrossPairOrderEvent(ctx, event)
+	}
 	return err
 }
 
@@ -281,6 +323,38 @@ func (s *PostgreSQLStorage) GetRouteByPair(ctx context.Context, baseAsset, targe
 	err := s.db.QueryRowContext(ctx, query, baseAsset).Scan(
 		&route.BaseAsset, &route.FirstPair, &route.SecondPair,
 		&route.FirstRate, &route.SecondRate, &route.SyntheticRate,
+		&route.Confidence, &route.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrRouteNotFound
+		}
+		return nil, fmt.Errorf("failed to get route by pair: %w", err)
+	}
+
+	return &route, nil
+}
+
+// Analytics
+
+func (s *PostgreSQLStorage) GetOrderStats(ctx context.Context, userID *uuid.UUID, from, to time.Time) (*OrderStats, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_orders,
+			COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed_orders,
+			COUNT(CASE WHEN status = 'CANCELED' THEN 1 END) as cancelled_orders,
+			COALESCE(SUM(executed_quantity * COALESCE(executed_rate, estimated_rate)), 0) as total_volume,
+			COALESCE(SUM((
+				SELECT SUM(total_fee_usd) FROM crosspair_trades 
+				WHERE order_id = crosspair_orders.id
+			)), 0) as total_fees
+		FROM crosspair_orders 
+		WHERE created_at >= $1 AND created_at <= $2`
+
+	args := []interface{}{from, to}
+	if userID != nil {
+		query += " AND user_id = $3"
+		args = append(args, *userID)
 	}
 
 	var stats OrderStats
@@ -626,6 +700,12 @@ func (s *InMemoryStorage) CleanupExpiredOrders(ctx context.Context, before time.
 	}
 
 	return deletedCount, nil
+}
+
+// EventPublisher defines the interface for publishing cross-pair events
+// This allows wiring to real infra (WebSocket, EventBus, Compliance, etc.)
+type CrossPairEventPublisher interface {
+	PublishCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent)
 }
 
 // Migration SQL for database setup
