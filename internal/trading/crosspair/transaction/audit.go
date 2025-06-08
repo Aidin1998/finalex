@@ -449,7 +449,7 @@ func (tp *TransactionPool) Get() *CrossPairTransactionContext {
 }
 
 // Put returns a transaction context to the pool
-func (tp *TransactionPool) Put(ctx *CrossPairTransactionContext) {	// Clear sensitive data before returning to pool
+func (tp *TransactionPool) Put(ctx *CrossPairTransactionContext) { // Clear sensitive data before returning to pool
 	ctx.Order = nil
 	ctx.Trade = nil
 	ctx.Route = nil

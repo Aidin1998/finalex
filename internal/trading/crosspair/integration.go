@@ -211,8 +211,31 @@ func NewRealOrderbookProvider(spotEngine SpotEngineInterface) *RealOrderbookProv
 	return &RealOrderbookProvider{spotEngine: spotEngine}
 }
 
-func (p *RealOrderbookProvider) GetOrderbook(ctx context.Context, pair string) (*Orderbook, error) {
-	return p.spotEngine.GetOrderbook(ctx, pair)
+func (p *RealOrderbookProvider) GetOrderbook(ctx context.Context, pair string) (*OrderBookSnapshot, error) {
+	orderbook, err := p.spotEngine.GetOrderbook(ctx, pair)
+	if err != nil {
+		return nil, err
+	}
+	// Convert Orderbook to OrderBookSnapshot
+	return &OrderBookSnapshot{
+		Pair:      orderbook.Pair,
+		Timestamp: orderbook.Timestamp,
+		Bids:      convertOrderLevels(orderbook.Bids),
+		Asks:      convertOrderLevels(orderbook.Asks),
+		Sequence:  0, // Sequence not available
+	}, nil
+}
+
+func convertOrderLevels(levels []OrderLevel) []OrderBookLevel {
+	result := make([]OrderBookLevel, len(levels))
+	for i, lvl := range levels {
+		result[i] = OrderBookLevel{
+			Price:    decimal.NewFromFloat(lvl.Price),
+			Quantity: decimal.NewFromFloat(lvl.Quantity),
+			Orders:   0, // Not available
+		}
+	}
+	return result
 }
 
 func (p *RealOrderbookProvider) Subscribe(pair string, callback func(*Orderbook)) error {
@@ -556,7 +579,7 @@ func NewCrossPairIntegrationAdapter(services *ServiceIntegration) *CrossPairInte
 }
 
 // GetRealOrderbookProvider returns an orderbook provider using the spot engine
-func (a *CrossPairIntegrationAdapter) GetRealOrderbookProvider() OrderbookProvider {
+func (a *CrossPairIntegrationAdapter) GetRealOrderbookProvider() *RealOrderbookProvider {
 	return NewRealOrderbookProvider(a.services.spotEngine)
 }
 
@@ -571,7 +594,7 @@ func (a *CrossPairIntegrationAdapter) GetRealMetricsCollector() MetricsCollector
 }
 
 // GetRealAtomicExecutor returns an atomic executor using the platform's coordination service
-func (a *CrossPairIntegrationAdapter) GetRealAtomicExecutor() AtomicExecutor {
+func (a *CrossPairIntegrationAdapter) GetRealAtomicExecutor() *RealAtomicExecutor {
 	return NewRealAtomicExecutor(
 		a.services.balanceService,
 		a.services.spotEngine,
@@ -593,4 +616,13 @@ func (a *CrossPairIntegrationAdapter) GetRealStorage(config *StorageConfig) (Sto
 	default:
 		return nil, fmt.Errorf("unsupported storage type: %s", config.Type)
 	}
+}
+
+// Fix: Return *RealAtomicExecutor instead of AtomicExecutor
+func (a *ServiceIntegration) NewAtomicExecutor() *RealAtomicExecutor {
+	return NewRealAtomicExecutor(
+		a.balanceService,
+		a.spotEngine,
+		a.coordService,
+	)
 }

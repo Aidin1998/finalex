@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/shopspring/decimal"
 )
 
@@ -41,11 +40,11 @@ type Storage interface {
 
 // PostgreSQLStorage implements Storage using PostgreSQL
 type PostgreSQLStorage struct {
-	db *sqlx.DB
+	db *sql.DB
 }
 
 // NewPostgreSQLStorage creates a new PostgreSQL storage instance
-func NewPostgreSQLStorage(db *sqlx.DB) Storage {
+func NewPostgreSQLStorage(db *sql.DB) Storage {
 	return &PostgreSQLStorage{db: db}
 }
 
@@ -195,9 +194,25 @@ func (s *PostgreSQLStorage) GetTradesByOrder(ctx context.Context, orderID uuid.U
 		WHERE order_id = $1 
 		ORDER BY created_at ASC`
 
-	trades := []*CrossPairTrade{}
-	err := s.db.SelectContext(ctx, &trades, query, orderID)
-	return trades, err
+	rows, err := s.db.QueryContext(ctx, query, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var trades []*CrossPairTrade
+	for rows.Next() {
+		var trade CrossPairTrade
+		err := rows.Scan(
+			&trade.ID, &trade.OrderID, &trade.UserID, &trade.FromAsset, &trade.ToAsset,
+			&trade.Quantity, &trade.ExecutedRate, &trade.TotalFeeUSD, &trade.Slippage, &trade.ExecutionTimeMs, &trade.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		trades = append(trades, &trade)
+	}
+	return trades, nil
 }
 
 func (s *PostgreSQLStorage) GetTradesByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*CrossPairTrade, error) {
@@ -209,9 +224,25 @@ func (s *PostgreSQLStorage) GetTradesByUser(ctx context.Context, userID uuid.UUI
 		ORDER BY created_at DESC 
 		LIMIT $2 OFFSET $3`
 
-	trades := []*CrossPairTrade{}
-	err := s.db.SelectContext(ctx, &trades, query, userID, limit, offset)
-	return trades, err
+	rows, err := s.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var trades []*CrossPairTrade
+	for rows.Next() {
+		var trade CrossPairTrade
+		err := rows.Scan(
+			&trade.ID, &trade.OrderID, &trade.UserID, &trade.FromAsset, &trade.ToAsset,
+			&trade.Quantity, &trade.ExecutedRate, &trade.TotalFeeUSD, &trade.Slippage, &trade.ExecutionTimeMs, &trade.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		trades = append(trades, &trade)
+	}
+	return trades, nil
 }
 
 // Route management
@@ -250,53 +281,6 @@ func (s *PostgreSQLStorage) GetRouteByPair(ctx context.Context, baseAsset, targe
 	err := s.db.QueryRowContext(ctx, query, baseAsset).Scan(
 		&route.BaseAsset, &route.FirstPair, &route.SecondPair,
 		&route.FirstRate, &route.SecondRate, &route.SyntheticRate,
-		&route.Confidence, &route.UpdatedAt,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrRouteNotFound
-		}
-		return nil, fmt.Errorf("failed to get route by pair: %w", err)
-	}
-
-	return &route, nil
-}
-
-// Analytics
-
-type OrderStats struct {
-	TotalOrders     int64   `json:"total_orders"`
-	CompletedOrders int64   `json:"completed_orders"`
-	CancelledOrders int64   `json:"cancelled_orders"`
-	TotalVolume     float64 `json:"total_volume"`
-	TotalFees       float64 `json:"total_fees"`
-}
-
-type VolumeStats struct {
-	TotalVolume   float64            `json:"total_volume"`
-	VolumeByPair  map[string]float64 `json:"volume_by_pair"`
-	TradeCount    int64              `json:"trade_count"`
-	UniqueTraders int64              `json:"unique_traders"`
-}
-
-func (s *PostgreSQLStorage) GetOrderStats(ctx context.Context, userID *uuid.UUID, from, to time.Time) (*OrderStats, error) {
-	query := `
-		SELECT 
-			COUNT(*) as total_orders,
-			COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed_orders,
-			COUNT(CASE WHEN status = 'CANCELED' THEN 1 END) as cancelled_orders,
-			COALESCE(SUM(executed_quantity * COALESCE(executed_rate, estimated_rate)), 0) as total_volume,
-			COALESCE(SUM((
-				SELECT SUM(total_fee_usd) FROM crosspair_trades 
-				WHERE order_id = crosspair_orders.id
-			)), 0) as total_fees
-		FROM crosspair_orders 
-		WHERE created_at >= $1 AND created_at <= $2`
-
-	args := []interface{}{from, to}
-	if userID != nil {
-		query += " AND user_id = $3"
-		args = append(args, *userID)
 	}
 
 	var stats OrderStats

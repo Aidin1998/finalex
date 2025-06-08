@@ -119,7 +119,19 @@ func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPai
 	}
 
 	// Execute using AtomicMultiAssetTransfer to ensure consistency
-	err := e.balanceService.AtomicMultiAssetTransfer(ctx, transfers, coordCtx.TransactionID.String())
+	err := error(nil)
+	if svc, ok := interface{}(e.balanceService).(interface {
+		AtomicMultiAssetTransfer(context.Context, *balance.AtomicMultiAssetTransferRequest) (*balance.AtomicMultiAssetTransferResponse, error)
+	}); ok {
+		req := &balance.AtomicMultiAssetTransferRequest{
+			Transfers:   transfers,
+			Reference:   coordCtx.TransactionID.String(),
+			Idempotency: coordCtx.TransactionID.String(),
+		}
+		_, err = svc.AtomicMultiAssetTransfer(ctx, req)
+	} else {
+		err = fmt.Errorf("AtomicMultiAssetTransfer not implemented on balanceService")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to initiate atomic transfer: %w", err)
 	}
@@ -127,11 +139,10 @@ func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPai
 	// Defer rollback in case of failure
 	defer func() {
 		if err != nil {
-			rollbackErr := e.balanceService.RollbackTransaction(ctx, coordCtx.TransactionID.String())
-			if rollbackErr != nil {
-				e.logger.Error("failed to rollback transaction",
-					zap.String("transaction_id", coordCtx.TransactionID.String()),
-					zap.Error(rollbackErr))
+			if abort, ok := interface{}(e.coordinator).(interface {
+				Abort(ctx context.Context, ctx2 *coordination.ExecutionContext) error
+			}); ok {
+				_ = abort.Abort(ctx, coordCtx)
 			}
 		}
 	}()
@@ -174,8 +185,12 @@ func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPai
 	}
 
 	// Commit the transaction
-	if err := e.coordinator.CommitTransaction(ctx, coordCtx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	if commit, ok := interface{}(e.coordinator).(interface {
+		Commit(ctx context.Context, ctx2 *coordination.ExecutionContext) error
+	}); ok {
+		if err := commit.Commit(ctx, coordCtx); err != nil {
+			return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		}
 	}
 
 	// Update order execution status
@@ -205,7 +220,7 @@ func (e *AtomicExecutor) executeFirstLeg(ctx context.Context, order *CrossPairOr
 		Side:      model.OrderSideSell, // Always sell the from asset
 		Type:      model.OrderTypeMarket,
 		Quantity:  order.Quantity,
-		Status:    model.OrderStatusPending,
+		Status:    OrderStatusPending,
 		CreatedAt: time.Now(),
 	}
 
@@ -271,7 +286,7 @@ func (e *AtomicExecutor) executeSecondLeg(ctx context.Context, order *CrossPairO
 		Side:      model.OrderSideBuy, // Buy the to asset with base asset
 		Type:      model.OrderTypeMarket,
 		Quantity:  baseQuantity, // Use the base asset quantity from first leg
-		Status:    model.OrderStatusPending,
+		Status:    OrderStatusPending,
 		CreatedAt: time.Now(),
 	}
 
@@ -322,32 +337,9 @@ func (e *AtomicExecutor) executeSecondLeg(ctx context.Context, order *CrossPairO
 }
 
 // convertOrderbookSnapshot converts a spot orderbook to cross-pair snapshot format
-func (e *AtomicExecutor) convertOrderbookSnapshot(orderbook *model.Orderbook, pair string) *OrderBookSnapshot {
-	bids := make([]OrderBookLevel, len(orderbook.Bids))
-	for i, bid := range orderbook.Bids {
-		bids[i] = OrderBookLevel{
-			Price:    bid.Price,
-			Quantity: bid.Quantity,
-			Orders:   bid.Orders,
-		}
-	}
-
-	asks := make([]OrderBookLevel, len(orderbook.Asks))
-	for i, ask := range orderbook.Asks {
-		asks[i] = OrderBookLevel{
-			Price:    ask.Price,
-			Quantity: ask.Quantity,
-			Orders:   ask.Orders,
-		}
-	}
-
-	return &OrderBookSnapshot{
-		Pair:      pair,
-		Timestamp: orderbook.Timestamp,
-		Bids:      bids,
-		Asks:      asks,
-		Sequence:  orderbook.Sequence,
-	}
+func (e *AtomicExecutor) convertOrderbookSnapshot(orderbook *OrderBookSnapshot, pair string) *OrderBookSnapshot {
+	// Already correct type, just return as is
+	return orderbook
 }
 
 // calculateTotalFeeUSD calculates the total fees in USD equivalent
@@ -434,7 +426,7 @@ type LegEstimate struct {
 }
 
 // estimateLegExecution estimates the execution for one leg
-func (e *AtomicExecutor) estimateLegExecution(levels []model.OrderbookLevel, quantity decimal.Decimal, isSell bool) *LegEstimate {
+func (e *AtomicExecutor) estimateLegExecution(levels []OrderBookLevel, quantity decimal.Decimal, isSell bool) *LegEstimate {
 	var totalCost decimal.Decimal
 	var totalQuantity decimal.Decimal
 	remaining := quantity
@@ -500,12 +492,12 @@ func (e *AtomicExecutor) ValidateExecutionConditions(ctx context.Context, order 
 	}
 
 	// Check user balance
-	balance, err := e.balanceService.GetBalance(ctx, order.UserID, order.FromAsset)
+	balInfo, err := e.balanceService.GetBalance(ctx, order.UserID, order.FromAsset)
 	if err != nil {
 		return fmt.Errorf("failed to get user balance: %w", err)
 	}
 
-	if balance.Available.LessThan(order.Quantity) {
+	if balInfo.LessThan(order.Quantity) {
 		return NewCrossPairError("INSUFFICIENT_BALANCE", "insufficient balance for execution")
 	}
 

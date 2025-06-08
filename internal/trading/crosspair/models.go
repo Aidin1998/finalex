@@ -195,8 +195,9 @@ type TradeExecution struct {
 }
 
 // OrderbookProvider interface for getting orderbook data
+// Use local OrderBookSnapshot instead of model.OrderBook
 type OrderbookProvider interface {
-	GetOrderbook(ctx context.Context, pair string) (*model.OrderBook, error)
+	GetOrderbook(ctx context.Context, pair string) (*OrderBookSnapshot, error)
 	GetBestBidAsk(ctx context.Context, pair string) (bid, ask decimal.Decimal, err error)
 }
 
