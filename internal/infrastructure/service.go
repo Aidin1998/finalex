@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Aidin1998/finalex/internal/accounts"
+	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/internal/fiat"
 	"github.com/Aidin1998/finalex/internal/infrastructure/config"
 	"github.com/Aidin1998/finalex/internal/infrastructure/messaging"
@@ -17,7 +17,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/marketmaking"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/userauth"
-	"github.com/Aidin1998/finalex/internal/wallet"
+	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -26,10 +26,10 @@ type serviceImpl struct {
 	mu              sync.RWMutex
 	config          map[string]interface{}
 	userAuthSvc     userauth.Service
-	accountsSvc     accounts.Service
-	tradingSvc      trading.Service
-	fiatSvc         fiat.Service
-	walletSvc       wallet.Service
+	accountsSvc     bookkeeper.BookkeeperService
+	tradingSvc      *trading.Service
+	fiatSvc         *fiat.FiatService
+	walletSvc       interfaces.WalletService
 	marketMakingSvc marketmaking.Service
 	serverSvc       *server.Service
 	wsService       *ws.Service
@@ -47,10 +47,10 @@ type serviceImpl struct {
 func NewService(
 	logger *zap.Logger,
 	userAuthSvc userauth.Service,
-	accountsSvc accounts.Service,
-	tradingSvc trading.Service,
-	fiatSvc fiat.Service,
-	walletSvc wallet.Service,
+	accountsSvc bookkeeper.BookkeeperService,
+	tradingSvc *trading.Service,
+	fiatSvc *fiat.FiatService,
+	walletSvc interfaces.WalletService,
 	marketMakingSvc marketmaking.Service,
 ) (Service, error) {
 	// Initialize messaging configuration

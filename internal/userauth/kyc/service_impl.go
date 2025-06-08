@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Aidin1998/finalex/internal/userauth/models"
+	pkgmodels "github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -23,10 +24,39 @@ func NewService(logger *zap.Logger, db *gorm.DB) Service {
 	}
 }
 
+// convertKYCRequestToDocument converts pkgmodels.KYCRequest to models.KYCDocument
+func convertKYCRequestToDocument(req *pkgmodels.KYCRequest) *models.KYCDocument {
+	if req == nil {
+		return nil
+	}
+
+	return &models.KYCDocument{
+		ID:             req.ID,
+		UserID:         req.UserID,
+		DocumentStatus: req.Status,
+		CreatedAt:      req.CreatedAt,
+		UpdatedAt:      req.UpdatedAt,
+		// Map other fields as needed
+	}
+}
+
+// convertKYCRequestsToDocuments converts slice of pkgmodels.KYCRequest to slice of models.KYCDocument
+func convertKYCRequestsToDocuments(requests []pkgmodels.KYCRequest) []models.KYCDocument {
+	documents := make([]models.KYCDocument, len(requests))
+	for i, req := range requests {
+		documents[i] = *convertKYCRequestToDocument(&req)
+	}
+	return documents
+}
+
 // InitiateKYC starts the KYC process for a user
 func (s *ServiceImpl) InitiateKYC(ctx context.Context, userID uuid.UUID, targetLevel KYCLevel) (*models.KYCDocument, error) {
 	// Use the existing InitiateKYC function
-	return InitiateKYC(ctx, userID, targetLevel, s.db, s.logger)
+	kycRequest, err := InitiateKYC(ctx, userID, targetLevel, s.db, s.logger)
+	if err != nil {
+		return nil, err
+	}
+	return convertKYCRequestToDocument(kycRequest), nil
 }
 
 // SubmitDocument submits a KYC document
@@ -44,7 +74,11 @@ func (s *ServiceImpl) ReviewKYC(ctx context.Context, kycID uuid.UUID, reviewerID
 // GetKYCStatus gets the KYC status for a user
 func (s *ServiceImpl) GetKYCStatus(ctx context.Context, userID uuid.UUID) (*models.KYCDocument, error) {
 	// Use the existing GetKYCStatus function
-	return GetKYCStatus(ctx, userID, s.db)
+	kycRequest, err := GetKYCStatus(ctx, userID, s.db)
+	if err != nil {
+		return nil, err
+	}
+	return convertKYCRequestToDocument(kycRequest), nil
 }
 
 // GetKYCRequirements gets requirements for a KYC level
@@ -68,5 +102,9 @@ func (s *ServiceImpl) ExpireKYC(ctx context.Context) error {
 // GetPendingKYCs gets pending KYC submissions
 func (s *ServiceImpl) GetPendingKYCs(ctx context.Context, limit, offset int) ([]models.KYCDocument, error) {
 	// Use the existing GetPendingKYCs function
-	return GetPendingKYCs(ctx, limit, offset, s.db)
+	kycRequests, err := GetPendingKYCs(ctx, limit, offset, s.db, s.logger)
+	if err != nil {
+		return nil, err
+	}
+	return convertKYCRequestsToDocuments(kycRequests), nil
 }

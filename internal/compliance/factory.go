@@ -268,6 +268,15 @@ func (c *complianceServiceStub) GetActivePolicies(ctx context.Context, policyTyp
 func (c *complianceServiceStub) ProcessExternalReport(ctx context.Context, report *interfaces.ExternalComplianceReport) error {
 	return nil
 }
+func (c *complianceServiceStub) CheckTransaction(ctx context.Context, transactionID string) (*interfaces.ComplianceResult, error) {
+	return &interfaces.ComplianceResult{
+		Status:      interfaces.ComplianceStatusApproved,
+		RiskLevel:   interfaces.RiskLevelLow,
+		RiskScore:   decimal.NewFromInt(10),
+		Flags:       []string{},
+		ProcessedAt: time.Now(),
+	}, nil
+}
 func (c *complianceServiceStub) Start(ctx context.Context) error       { return nil }
 func (c *complianceServiceStub) Stop(ctx context.Context) error        { return nil }
 func (c *complianceServiceStub) HealthCheck(ctx context.Context) error { return nil }

@@ -258,9 +258,6 @@ func main() {
 	if err := bookkeeperSvc.Start(); err != nil {
 		zapLogger.Fatal("Failed to start bookkeeper service", zap.Error(err))
 	}
-	if err := fiatSvc.Start(); err != nil {
-		zapLogger.Fatal("Failed to start fiat service", zap.Error(err))
-	}
 	if err := marketfeedsSvc.Start(); err != nil {
 		zapLogger.Fatal("Failed to start market feeds service", zap.Error(err))
 	}
@@ -269,7 +266,7 @@ func main() {
 	}
 
 	// Start HTTP server
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := fmt.Sprintf(":%d", cfg.Server.HTTP.Port)
 	// Start server in a goroutine
 	go func() {
 		zapLogger.Info("Starting API server", zap.String("addr", addr))
@@ -304,9 +301,6 @@ func main() {
 	}
 	if err := marketfeedsSvc.Stop(); err != nil {
 		zapLogger.Error("Failed to stop market feeds service", zap.Error(err))
-	}
-	if err := fiatSvc.Stop(); err != nil {
-		zapLogger.Error("Failed to stop fiat service", zap.Error(err))
 	}
 	if err := bookkeeperSvc.Stop(); err != nil {
 		zapLogger.Error("Failed to stop bookkeeper service", zap.Error(err))

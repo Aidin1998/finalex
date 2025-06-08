@@ -9,7 +9,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
-	"github.com/Aidin1998/finalex/internal/wallet"
+	walletInterfaces "github.com/Aidin1998/finalex/internal/wallet/interfaces"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -18,13 +18,12 @@ import (
 
 // DistributedTransactionOrchestrator coordinates complex distributed transactions
 type DistributedTransactionOrchestrator struct {
-	xaManager   *XATransactionManager
-	lockManager *DistributedLockManager
-	logger      *zap.Logger
-	// Service dependencies
+	xaManager        *XATransactionManager
+	lockManager      *DistributedLockManager
+	logger           *zap.Logger // Service dependencies
 	bookkeeperSvc    bookkeeper.BookkeeperService
 	tradingSvc       trading.TradingService
-	walletSvc        wallet.WalletService
+	walletSvc        walletInterfaces.WalletService
 	settlementEngine *settlement.SettlementEngine
 	fiatSvc          interface{} // TODO: Replace interface{} with the correct FiatService type
 
@@ -42,7 +41,7 @@ func NewDistributedTransactionOrchestrator(
 	logger *zap.Logger,
 	bookkeeperSvc bookkeeper.BookkeeperService,
 	tradingSvc trading.TradingService,
-	walletSvc wallet.WalletService,
+	walletSvc walletInterfaces.WalletService,
 	settlementEngine *settlement.SettlementEngine,
 	fiatSvc interface{}, // TODO: Replace interface{} with the correct FiatService type
 ) *DistributedTransactionOrchestrator {

@@ -18,6 +18,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/userauth/kyc"
 	"github.com/Aidin1998/finalex/internal/userauth/password"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
@@ -282,6 +283,22 @@ func (s *Service) GetUserRateLimitStatus(ctx context.Context, userID string) (ma
 		return nil, fmt.Errorf("rate limiting not available")
 	}
 	return s.tieredRateLimiter.GetUserRateLimitStatus(ctx, userID)
+}
+
+// RateLimitMiddleware returns rate limiting middleware
+func (s *Service) RateLimitMiddleware() gin.HandlerFunc {
+	if s.tieredRateLimiter != nil {
+		return s.tieredRateLimiter.Middleware()
+	}
+	// Return no-op middleware if rate limiter is not available
+	return func(c *gin.Context) {
+		c.Next()
+	}
+}
+
+// IsAdmin checks if a user has admin privileges
+func (s *Service) IsAdmin(ctx context.Context, userID string) (bool, error) {
+	return s.identityService.IsAdmin(ctx, userID)
 }
 
 // Service lifecycle methods
