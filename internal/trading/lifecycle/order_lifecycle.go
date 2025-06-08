@@ -352,6 +352,23 @@ func (olm *OrderLifecycleManager) FillOrder(ctx context.Context, orderID string,
 			return fmt.Errorf("failed to record fill event: %w", err)
 		}
 
+		return olm.transitionState(ctx, tx, &order, currentState, newState, reason)
+	})
+}
+
+// CancelOrder cancels an order
+func (olm *OrderLifecycleManager) CancelOrder(ctx context.Context, orderID, userID, reason string) error {
+	return olm.db.Transaction(func(tx *gorm.DB) error {
+		var order model.Order
+		if err := tx.Where("id = ? AND user_id = ?", orderID, userID).First(&order).Error; err != nil {
+			return fmt.Errorf("order not found: %w", err)
+		}
+
+		currentState := OrderState(order.Status)
+
+		// Check if order can be canceled
+		cancelableStates := []OrderState{
+			OrderStateSubmitted, OrderStatePending, OrderStateValidated,
 			OrderStateAccepted, OrderStatePartiallyFilled,
 		}
 
@@ -416,8 +433,20 @@ func (olm *OrderLifecycleManager) transitionState(ctx context.Context, tx *gorm.
 
 	// Publish transition event asynchronously
 	go func() {
-		if err := olm.eventBus.PublishStateTransition(context.Background(), transition); err != nil {
-			olm.logger.Error("Failed to publish state transition", zap.Error(err))
+		if olm.eventBus != nil {
+			olm.eventBus.Publish(context.Background(), events.Event{
+				Topic:     events.TopicOrder,
+				Type:      "ORDER_STATE_TRANSITION",
+				Timestamp: time.Now(),
+				Payload: map[string]interface{}{
+					"order_id":   order.ID.String(),
+					"from_state": fromState,
+					"to_state":   toState,
+					"reason":     reason,
+					"user_id":    order.UserID.String(),
+					"timestamp":  time.Now(),
+				},
+			})
 		}
 	}()
 
