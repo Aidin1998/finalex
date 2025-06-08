@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/trading/events"
 	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -73,7 +74,7 @@ type IdempotencyKey struct {
 type OrderLifecycleManager struct {
 	db         *gorm.DB
 	logger     *zap.Logger
-	eventBus   EventBus
+	eventBus   events.EventBus // Use the unified event bus
 	validators []OrderValidator
 	hooks      map[OrderState][]StateHook
 	metrics    *LifecycleMetrics
@@ -106,7 +107,7 @@ type LifecycleMetrics struct {
 }
 
 // NewOrderLifecycleManager creates a new order lifecycle manager
-func NewOrderLifecycleManager(db *gorm.DB, logger *zap.Logger, eventBus EventBus) *OrderLifecycleManager {
+func NewOrderLifecycleManager(db *gorm.DB, logger *zap.Logger, eventBus events.EventBus) *OrderLifecycleManager {
 	manager := &OrderLifecycleManager{
 		db:       db,
 		logger:   logger,
@@ -250,8 +251,24 @@ func (olm *OrderLifecycleManager) SubmitOrder(ctx context.Context, order *model.
 
 	// Publish events asynchronously
 	go func() {
-		if err := olm.eventBus.PublishOrderEvent(ctx, event); err != nil {
-			olm.logger.Error("Failed to publish order event", zap.Error(err))
+		if olm.eventBus != nil {
+			olm.eventBus.Publish(context.Background(), events.Event{
+				Topic:     events.TopicOrder,
+				Type:      "ORDER_SUBMITTED",
+				Timestamp: time.Now(),
+				Payload: events.OrderEvent{
+					OrderID:   order.ID.String(),
+					UserID:    order.UserID.String(),
+					Type:      order.Type,
+					Status:    order.Status,
+					Pair:      order.Pair,
+					Side:      order.Side,
+					Price:     order.Price.String(),
+					Quantity:  order.Quantity.String(),
+					Timestamp: order.CreatedAt,
+					Meta:      map[string]interface{}{},
+				},
+			})
 		}
 	}()
 
@@ -335,23 +352,6 @@ func (olm *OrderLifecycleManager) FillOrder(ctx context.Context, orderID string,
 			return fmt.Errorf("failed to record fill event: %w", err)
 		}
 
-		return olm.transitionState(ctx, tx, &order, currentState, newState, reason)
-	})
-}
-
-// CancelOrder cancels an order
-func (olm *OrderLifecycleManager) CancelOrder(ctx context.Context, orderID, userID, reason string) error {
-	return olm.db.Transaction(func(tx *gorm.DB) error {
-		var order model.Order
-		if err := tx.Where("id = ? AND user_id = ?", orderID, userID).First(&order).Error; err != nil {
-			return fmt.Errorf("order not found: %w", err)
-		}
-
-		currentState := OrderState(order.Status)
-
-		// Check if order can be canceled
-		cancelableStates := []OrderState{
-			OrderStateSubmitted, OrderStatePending, OrderStateValidated,
 			OrderStateAccepted, OrderStatePartiallyFilled,
 		}
 
