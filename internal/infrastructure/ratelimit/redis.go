@@ -120,3 +120,102 @@ func (rc *RedisClient) PeekSlidingWindow(ctx context.Context, key string, window
 	reset = time.Unix(0, now+window.Nanoseconds())
 	return count, reset, nil
 }
+
+// --- Distributed Leaky Bucket ---
+// Uses Redis sorted set with leak simulation
+var leakyBucketScript = redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local capacity = tonumber(ARGV[2])
+local leak_rate = tonumber(ARGV[3])
+local window_ns = tonumber(ARGV[4])
+local requested = tonumber(ARGV[5])
+
+-- Remove leaked items (items older than leak rate allows)
+local leak_interval = window_ns / leak_rate
+redis.call('ZREMRANGEBYSCORE', key, 0, now - leak_interval)
+
+-- Get current queue size
+local queue_size = redis.call('ZCARD', key)
+
+-- Check if we can add the requested items
+if queue_size + requested > capacity then
+  return {0, queue_size}
+else
+  -- Add items to queue
+  for i=1,requested do
+    redis.call('ZADD', key, now + i, now + i)
+  end
+  redis.call('EXPIRE', key, math.ceil(window_ns/1000000000))
+  return {1, queue_size + requested}
+end
+`)
+
+// TakeLeakyBucket attempts to add items to the leaky bucket
+func (rc *RedisClient) TakeLeakyBucket(ctx context.Context, key string, capacity, leakRate int, window time.Duration, n int) (allowed bool, queueSize int64, err error) {
+	now := time.Now().UnixNano()
+	res, err := leakyBucketScript.Run(ctx, rc.Client, []string{key}, now, capacity, leakRate, window.Nanoseconds(), n).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("leaky bucket script error: %w", err)
+	}
+
+	vals, ok := res.([]interface{})
+	if !ok || len(vals) < 2 {
+		return false, 0, fmt.Errorf("unexpected redis script result: %v", res)
+	}
+
+	allowedInt, _ := vals[0].(int64)
+	queueSizeInt, _ := vals[1].(int64)
+	return allowedInt == 1, queueSizeInt, nil
+}
+
+// Enhanced error handling and connection monitoring
+func (rc *RedisClient) HealthCheck(ctx context.Context) error {
+	return rc.Client.Ping(ctx).Err()
+}
+
+// GetConnectionStats returns Redis connection statistics
+func (rc *RedisClient) GetConnectionStats() *redis.PoolStats {
+	return rc.Client.PoolStats()
+}
+
+// Bulk operations for better performance
+func (rc *RedisClient) BulkCheck(ctx context.Context, keys []string, algorithm string, config *RateLimitConfig) (map[string]bool, error) {
+	results := make(map[string]bool)
+
+	pipe := rc.Client.Pipeline()
+
+	var cmders []redis.Cmder
+
+	for _, key := range keys {
+		switch algorithm {
+		case LimiterTokenBucket:
+			now := time.Now().Unix()
+			refillRate := float64(config.Limit) / config.Window.Seconds()
+			cmd := tokenBucketScript.Run(ctx, pipe, []string{key}, config.Burst, refillRate, now, 1)
+			cmders = append(cmders, cmd)
+		case LimiterSlidingWindow:
+			now := time.Now().UnixNano()
+			cmd := slidingWindowScript.Run(ctx, pipe, []string{key}, now, config.Window.Nanoseconds(), config.Limit, 1)
+			cmders = append(cmders, cmd)
+		}
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("bulk check pipeline error: %w", err)
+	}
+
+	for i, key := range keys {
+		if i < len(cmders) {
+			res := cmders[i].(*redis.Cmd).Val()
+			if vals, ok := res.([]interface{}); ok && len(vals) > 0 {
+				if allowedInt, ok := vals[0].(int64); ok {
+					results[key] = allowedInt == 1
+				}
+			}
+		}
+	}
+
+	return results, nil
+}

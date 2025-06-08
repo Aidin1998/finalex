@@ -374,6 +374,14 @@ func (b *MessageBuffer) flush() error {
 		return nil
 	}
 
+	// Check circuit breaker before flushing
+	if !b.producer.circuitBreaker.AllowRequest() {
+		b.producer.logger.Warn("Circuit breaker is open, skipping buffer flush")
+		return fmt.Errorf("circuit breaker is open, buffer flush skipped")
+	}
+
+	startTime := time.Now()
+
 	// Group messages by topic
 	topicMessages := make(map[Topic][]kafka.Message)
 	for _, msg := range b.messages {
@@ -388,16 +396,28 @@ func (b *MessageBuffer) flush() error {
 	}
 
 	// Send messages for each topic
+	var totalMessages int64 = 0
 	for topic, messages := range topicMessages {
 		writer := b.producer.getWriter(topic)
 		if err := writer.WriteMessages(b.ctx, messages...); err != nil {
+			// Record failure with circuit breaker
+			b.producer.circuitBreaker.RecordFailure()
+			atomic.AddInt64(&b.producer.metrics.MessagesFailedToSend, int64(len(messages)))
+
 			b.producer.logger.Error("Failed to flush buffered messages",
 				zap.Error(err),
 				zap.String("topic", string(topic)),
 				zap.Int("count", len(messages)))
 			return err
 		}
+		totalMessages += int64(len(messages))
 	}
+
+	// Record success with circuit breaker
+	flushTime := time.Since(startTime)
+	b.producer.circuitBreaker.RecordSuccess(flushTime)
+	atomic.AddInt64(&b.producer.metrics.MessagesSent, totalMessages)
+	atomic.AddInt64(&b.producer.metrics.BatchesSent, 1)
 
 	// Clear buffer
 	b.messages = b.messages[:0]
@@ -524,7 +544,7 @@ func (c *KafkaConsumer) consumeFromTopic(ctx context.Context, reader *kafka.Read
 				c.logger.Error("Failed to read message",
 					zap.Error(err),
 					zap.String("topic", topic))
-				
+
 				// Add exponential backoff for retries
 				time.Sleep(time.Second)
 				continue
@@ -561,7 +581,7 @@ func (c *KafkaConsumer) consumeFromTopic(ctx context.Context, reader *kafka.Read
 				processingTime := time.Since(startTime)
 				c.circuitBreaker.RecordSuccess(processingTime)
 				atomic.AddInt64(&c.metrics.MessagesProcessed, 1)
-				
+
 				// Update average processing time
 				c.updateAverageProcessingTime(processingTime)
 			}
@@ -610,6 +630,33 @@ func (c *KafkaConsumer) Close() error {
 	}
 
 	return lastErr
+}
+
+// updateAverageProcessingTime updates the average processing time for the consumer
+func (c *KafkaConsumer) updateAverageProcessingTime(processingTime time.Duration) {
+	const alpha = 0.1 // Smoothing factor for exponential moving average
+
+	if c.metrics.AverageProcessingTime == 0 {
+		c.metrics.AverageProcessingTime = processingTime
+	} else {
+		c.metrics.AverageProcessingTime = time.Duration(
+			float64(c.metrics.AverageProcessingTime)*(1-alpha) + float64(processingTime)*alpha)
+	}
+}
+
+// GetMetrics returns current consumer metrics
+func (c *KafkaConsumer) GetMetrics() *ConsumerMetrics {
+	return c.metrics
+}
+
+// GetCircuitBreakerState returns the current circuit breaker state
+func (c *KafkaConsumer) GetCircuitBreakerState() CircuitBreakerState {
+	return c.circuitBreaker.GetState()
+}
+
+// IsHealthy returns true if the consumer is healthy (circuit breaker is closed)
+func (c *KafkaConsumer) IsHealthy() bool {
+	return c.circuitBreaker.GetState() == CircuitBreakerClosed
 }
 
 // KafkaAdminClient handles topic management operations
@@ -1428,4 +1475,197 @@ func (mrm *MessageReplayManager) GetMetrics() *ReplayManagerMetrics {
 
 	mrm.metrics.ActiveSessions = activeSessions
 	return mrm.metrics
+}
+
+// HealthStatus represents the health status of messaging components
+type HealthStatus struct {
+	Healthy               bool                   `json:"healthy"`
+	ProducerHealthy       bool                   `json:"producer_healthy"`
+	ConsumerHealthy       bool                   `json:"consumer_healthy"`
+	CircuitBreakerState   CircuitBreakerState    `json:"circuit_breaker_state"`
+	ProducerMetrics       *ProducerMetrics       `json:"producer_metrics,omitempty"`
+	ConsumerMetrics       *ConsumerMetrics       `json:"consumer_metrics,omitempty"`
+	CircuitBreakerMetrics *CircuitBreakerMetrics `json:"circuit_breaker_metrics,omitempty"`
+	LastHealthCheck       time.Time              `json:"last_health_check"`
+	Issues                []string               `json:"issues,omitempty"`
+}
+
+// KafkaMessagingService provides integrated Kafka messaging with circuit breaker protection
+type KafkaMessagingService struct {
+	producer         *KafkaProducer
+	consumer         *KafkaConsumer
+	adminClient      *KafkaAdminClient
+	config           *KafkaConfig
+	logger           *zap.Logger
+	metricsCollector *MetricsCollector
+	healthStatus     *HealthStatus
+	mu               sync.RWMutex
+}
+
+// NewKafkaMessagingService creates a new integrated Kafka messaging service
+func NewKafkaMessagingService(config *KafkaConfig, logger *zap.Logger) (*KafkaMessagingService, error) {
+	if config == nil {
+		config = DefaultKafkaConfig()
+	}
+
+	producer, err := NewKafkaProducer(config, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create producer: %w", err)
+	}
+
+	consumer, err := NewKafkaConsumer(config, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer: %w", err)
+	}
+
+	adminClient, err := NewKafkaAdminClient(config, logger)
+	if err != nil {
+		logger.Warn("Failed to create admin client", zap.Error(err))
+		// Admin client is optional, continue without it
+	}
+
+	metricsCollector := NewMetricsCollector(logger)
+	metricsCollector.SetCircuitBreaker(producer.circuitBreaker)
+
+	service := &KafkaMessagingService{
+		producer:         producer,
+		consumer:         consumer,
+		adminClient:      adminClient,
+		config:           config,
+		logger:           logger,
+		metricsCollector: metricsCollector,
+		healthStatus:     &HealthStatus{},
+	}
+
+	// Start periodic health checks
+	go service.periodicHealthCheck()
+
+	return service, nil
+}
+
+// PerformHealthCheck performs a comprehensive health check of all messaging components
+func (kms *KafkaMessagingService) PerformHealthCheck() *HealthStatus {
+	kms.mu.Lock()
+	defer kms.mu.Unlock()
+
+	status := &HealthStatus{
+		LastHealthCheck: time.Now(),
+		Issues:          make([]string, 0),
+	}
+
+	// Check producer health
+	status.ProducerHealthy = kms.producer.IsHealthy()
+	if !status.ProducerHealthy {
+		status.Issues = append(status.Issues, fmt.Sprintf("Producer circuit breaker is %s", kms.producer.GetCircuitBreakerState()))
+	}
+
+	// Check consumer health
+	status.ConsumerHealthy = kms.consumer.IsHealthy()
+	if !status.ConsumerHealthy {
+		status.Issues = append(status.Issues, fmt.Sprintf("Consumer circuit breaker is %s", kms.consumer.GetCircuitBreakerState()))
+	}
+
+	// Get circuit breaker state (use producer's circuit breaker as primary)
+	status.CircuitBreakerState = kms.producer.GetCircuitBreakerState()
+
+	// Overall health is true if both producer and consumer are healthy
+	status.Healthy = status.ProducerHealthy && status.ConsumerHealthy
+
+	// Collect metrics
+	status.ProducerMetrics = kms.producer.GetMetrics()
+	status.ConsumerMetrics = kms.consumer.GetMetrics()
+	status.CircuitBreakerMetrics = kms.producer.circuitBreaker.GetMetrics()
+
+	// Update internal health status
+	kms.healthStatus = status
+
+	return status
+}
+
+// periodicHealthCheck runs health checks periodically
+func (kms *KafkaMessagingService) periodicHealthCheck() {
+	ticker := time.NewTicker(30 * time.Second) // Health check every 30 seconds
+	defer ticker.Stop()
+
+	for range ticker.C {
+		status := kms.PerformHealthCheck()
+
+		if !status.Healthy {
+			kms.logger.Warn("Messaging service health check failed",
+				zap.Bool("producer_healthy", status.ProducerHealthy),
+				zap.Bool("consumer_healthy", status.ConsumerHealthy),
+				zap.String("circuit_breaker_state", status.CircuitBreakerState.String()),
+				zap.Strings("issues", status.Issues))
+		} else {
+			kms.logger.Debug("Messaging service health check passed",
+				zap.String("circuit_breaker_state", status.CircuitBreakerState.String()))
+		}
+	}
+}
+
+// GetProducer returns the Kafka producer
+func (kms *KafkaMessagingService) GetProducer() Producer {
+	return kms.producer
+}
+
+// GetConsumer returns the Kafka consumer
+func (kms *KafkaMessagingService) GetConsumer() Consumer {
+	return kms.consumer
+}
+
+// GetAdminClient returns the Kafka admin client
+func (kms *KafkaMessagingService) GetAdminClient() *KafkaAdminClient {
+	return kms.adminClient
+}
+
+// GetMetrics returns comprehensive messaging metrics
+func (kms *KafkaMessagingService) GetMetrics() *MessagingMetrics {
+	return kms.metricsCollector.GetMetrics()
+}
+
+// GetHealthStatus returns the current health status
+func (kms *KafkaMessagingService) GetHealthStatus() *HealthStatus {
+	kms.mu.RLock()
+	defer kms.mu.RUnlock()
+
+	// Return a copy to avoid race conditions
+	statusCopy := *kms.healthStatus
+	return &statusCopy
+}
+
+// ResetCircuitBreaker manually resets the circuit breakers
+func (kms *KafkaMessagingService) ResetCircuitBreaker() {
+	kms.producer.circuitBreaker.Reset()
+	kms.consumer.circuitBreaker.Reset()
+	kms.logger.Info("Circuit breakers manually reset")
+}
+
+// Close gracefully closes all messaging components
+func (kms *KafkaMessagingService) Close() error {
+	var lastErr error
+
+	if err := kms.producer.Close(); err != nil {
+		lastErr = err
+		kms.logger.Error("Failed to close producer", zap.Error(err))
+	}
+
+	if err := kms.consumer.Close(); err != nil {
+		lastErr = err
+		kms.logger.Error("Failed to close consumer", zap.Error(err))
+	}
+
+	if kms.adminClient != nil {
+		if err := kms.adminClient.Close(); err != nil {
+			lastErr = err
+			kms.logger.Error("Failed to close admin client", zap.Error(err))
+		}
+	}
+
+	kms.logger.Info("Kafka messaging service closed")
+	return lastErr
+}
+
+// ExecuteWithCircuitBreaker executes an operation with circuit breaker protection
+func (kms *KafkaMessagingService) ExecuteWithCircuitBreaker(operation func() error) error {
+	return kms.producer.circuitBreaker.ExecuteWithCircuitBreaker(operation)
 }

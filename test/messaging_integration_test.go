@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/infrastructure/messaging"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -45,6 +46,14 @@ func TestMessagingIntegration(t *testing.T) {
 
 	t.Run("HighVolumeMessageProcessing", func(t *testing.T) {
 		testHighVolumeMessageProcessing(t, ctx, logger)
+	})
+
+	t.Run("CircuitBreakerIntegration", func(t *testing.T) {
+		testCircuitBreakerIntegration(t, ctx, logger)
+	})
+
+	t.Run("MessagingServiceHealthChecks", func(t *testing.T) {
+		testMessagingServiceHealthChecks(t, ctx, logger)
 	})
 }
 
@@ -138,43 +147,70 @@ func testMessageBusEventPublishing(t *testing.T, ctx context.Context, logger *za
 	// Create message bus
 	messageBus, err := factory.CreateMessageBus()
 	require.NoError(t, err)
-	defer messageBus.Stop()
+	defer messageBus.Stop() // Test order event publishing
+	orderQuantity, _ := decimal.NewFromString("1.0")
+	orderPrice, _ := decimal.NewFromString("50000.00")
+	filledQty := decimal.NewFromFloat(0)
 
-	// Test order event publishing
 	orderEvent := &messaging.OrderEventMessage{
 		BaseMessage: messaging.NewBaseMessage(messaging.MsgOrderPlaced, "test-service", "user-123"),
-		OrderID:     "order-123",
 		UserID:      "user-123",
 		Symbol:      "BTC/USD",
 		Side:        "buy",
-		Quantity:    "1.0",
-		Price:       "50000.00",
+		Quantity:    orderQuantity,
+		Price:       orderPrice,
+		FilledQty:   filledQty,
+		Status:      "pending",
+		Type:        "limit",
+		TimeInForce: "GTC",
 	}
 
 	err = messageBus.PublishOrderEvent(ctx, orderEvent)
-	assert.NoError(t, err)
+	assert.NoError(t, err) // Test trade event publishing
+	quantity, _ := decimal.NewFromString("1.0")
+	price, _ := decimal.NewFromString("50000.00")
+	buyFee, _ := decimal.NewFromString("25.0")
+	sellFee, _ := decimal.NewFromString("25.0")
 
-	// Test trade event publishing
 	tradeEvent := &messaging.TradeEventMessage{
 		BaseMessage: messaging.NewBaseMessage(messaging.MsgTradeExecuted, "test-service", "user-123"),
 		TradeID:     "trade-123",
-		OrderID:     "order-123",
 		Symbol:      "BTC/USD",
-		Quantity:    "1.0",
-		Price:       "50000.00",
+		BuyOrderID:  "buy-order-123",
+		SellOrderID: "sell-order-123",
+		BuyUserID:   "buyer-123",
+		SellUserID:  "seller-123",
+		Quantity:    quantity,
+		Price:       price,
+		BuyFee:      buyFee,
+		SellFee:     sellFee,
+		FeeCurrency: "USD",
 	}
 
 	err = messageBus.PublishTradeEvent(ctx, tradeEvent)
 	assert.NoError(t, err)
-
 	// Test balance event publishing
+	oldBalance, _ := decimal.NewFromString("0.0")
+	newBalance, _ := decimal.NewFromString("1.0")
+	oldAvailable, _ := decimal.NewFromString("0.0")
+	newAvailable, _ := decimal.NewFromString("1.0")
+	oldLocked, _ := decimal.NewFromString("0.0")
+	newLocked, _ := decimal.NewFromString("0.0")
+	amount, _ := decimal.NewFromString("1.0")
+
 	balanceEvent := &messaging.BalanceEventMessage{
-		BaseMessage: messaging.NewBaseMessage(messaging.MsgBalanceUpdated, "test-service", "user-123"),
-		UserID:      "user-123",
-		Currency:    "BTC",
-		Balance:     "1.0",
-		Available:   "1.0",
-		Locked:      "0.0",
+		BaseMessage:  messaging.NewBaseMessage(messaging.MsgBalanceUpdated, "test-service", "user-123"),
+		UserID:       "user-123",
+		Currency:     "BTC",
+		OldBalance:   oldBalance,
+		NewBalance:   newBalance,
+		OldAvailable: oldAvailable,
+		NewAvailable: newAvailable,
+		OldLocked:    oldLocked,
+		NewLocked:    newLocked,
+		Amount:       amount,
+		Reference:    "test-deposit",
+		Description:  "Test balance update",
 	}
 
 	err = messageBus.PublishBalanceEvent(ctx, balanceEvent)
@@ -406,4 +442,181 @@ func BenchmarkMessagePublishing(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// TestCircuitBreakerIntegration tests circuit breaker functionality in the messaging system
+func testCircuitBreakerIntegration(t *testing.T, ctx context.Context, logger *zap.Logger) {
+	// Setup Kafka configuration with circuit breaker enabled
+	config := &messaging.KafkaConfig{
+		Brokers:             []string{"localhost:9092"},
+		ReadTimeout:         5 * time.Second,
+		WriteTimeout:        5 * time.Second,
+		BatchSize:           100,
+		BatchTimeout:        10 * time.Millisecond,
+		RequiredAcks:        1,
+		Compression:         "snappy",
+		RetryMax:            3,
+		ConsumerGroupPrefix: "test-circuit-breaker",
+		EnableBuffering:     false,
+		MaxMessageBytes:     1048576,
+		CircuitBreaker: messaging.EnhancedCircuitBreakerConfig{
+			Enabled:             true,
+			FailureThreshold:    3,
+			SuccessThreshold:    2,
+			Timeout:             5 * time.Second,
+			MaxHalfOpenRequests: 2,
+			FailureWindow:       1 * time.Minute,
+			MonitoringInterval:  1 * time.Second,
+		},
+	}
+
+	// Create messaging service
+	messagingService, err := messaging.NewKafkaMessagingService(config, logger)
+	require.NoError(t, err)
+	defer messagingService.Close()
+	producer := messagingService.GetProducer()
+
+	// Test topic
+	testTopic := messaging.Topic("test-circuit-breaker-topic")
+
+	// Test 1: Normal operation - circuit breaker should be closed
+	t.Log("Testing normal operation")
+	status := messagingService.GetHealthStatus()
+	assert.True(t, status.Healthy, "Service should be healthy initially")
+	assert.Equal(t, messaging.CircuitBreakerClosed, status.CircuitBreakerState, "Circuit breaker should be closed initially")
+
+	// Test 2: Simulate failures to trigger circuit breaker
+	t.Log("Simulating failures to trigger circuit breaker")
+
+	// Try to publish to a topic that will fail (using invalid broker)
+	invalidConfig := *config
+	invalidConfig.Brokers = []string{"invalid-broker:9092"}
+
+	failingProducer, err := messaging.NewKafkaProducer(&invalidConfig, logger)
+	require.NoError(t, err)
+	defer failingProducer.Close()
+
+	// Generate failures to trip the circuit breaker
+	for i := 0; i < 5; i++ {
+		err := failingProducer.Publish(ctx, testTopic, fmt.Sprintf("key-%d", i), map[string]interface{}{
+			"test": "failure",
+			"id":   i,
+		})
+		// We expect these to fail
+		assert.Error(t, err, "Expected publish to fail with invalid broker")
+	}
+
+	// Check if circuit breaker opened
+	time.Sleep(2 * time.Second) // Give time for circuit breaker to process failures
+	cbState := failingProducer.GetCircuitBreakerState()
+	t.Logf("Circuit breaker state after failures: %s", cbState)
+
+	// Test 3: Verify circuit breaker is blocking requests
+	if cbState == messaging.CircuitBreakerOpen {
+		t.Log("Testing circuit breaker blocking requests")
+		err := failingProducer.Publish(ctx, testTopic, "blocked-key", map[string]interface{}{
+			"test": "should be blocked",
+		})
+		assert.Error(t, err, "Expected publish to be blocked by circuit breaker")
+		assert.Contains(t, err.Error(), "circuit breaker is open", "Error should mention circuit breaker")
+	}
+
+	// Test 4: Test successful operations with working producer
+	t.Log("Testing successful operations")
+	testMessage := map[string]interface{}{
+		"test":      "circuit-breaker-success",
+		"timestamp": time.Now().Unix(),
+	}
+
+	err = producer.Publish(ctx, testTopic, "success-key", testMessage)
+	assert.NoError(t, err, "Publish to working producer should succeed")
+
+	// Verify the working producer's circuit breaker remains closed
+	workingCBState := messagingService.GetProducer().(*messaging.KafkaProducer).GetCircuitBreakerState()
+	assert.Equal(t, messaging.CircuitBreakerClosed, workingCBState, "Working producer circuit breaker should remain closed")
+
+	// Test 5: Verify metrics collection
+	t.Log("Testing metrics collection")
+	metrics := messagingService.GetMetrics()
+	assert.NotNil(t, metrics, "Metrics should be available")
+	assert.NotNil(t, metrics.ProducerMetrics, "Producer metrics should be available")
+	assert.NotNil(t, metrics.CircuitBreakerMetrics, "Circuit breaker metrics should be available")
+
+	t.Logf("Producer messages published: %d", metrics.ProducerMetrics.MessagesPublished)
+	t.Logf("Circuit breaker total failures: %d", metrics.CircuitBreakerMetrics.TotalFailures)
+	t.Logf("Circuit breaker state transitions: %d", metrics.CircuitBreakerMetrics.StateTransitions)
+}
+
+// TestMessagingServiceHealthChecks tests the health check functionality
+func testMessagingServiceHealthChecks(t *testing.T, ctx context.Context, logger *zap.Logger) {
+	config := &messaging.KafkaConfig{
+		Brokers:             []string{"localhost:9092"},
+		ReadTimeout:         5 * time.Second,
+		WriteTimeout:        5 * time.Second,
+		BatchSize:           100,
+		BatchTimeout:        10 * time.Millisecond,
+		RequiredAcks:        1,
+		Compression:         "snappy",
+		RetryMax:            3,
+		ConsumerGroupPrefix: "test-health",
+		EnableBuffering:     false,
+		MaxMessageBytes:     1048576,
+		CircuitBreaker: messaging.EnhancedCircuitBreakerConfig{
+			Enabled:             true,
+			FailureThreshold:    3,
+			SuccessThreshold:    2,
+			Timeout:             5 * time.Second,
+			MaxHalfOpenRequests: 2,
+			FailureWindow:       1 * time.Minute,
+			MonitoringInterval:  1 * time.Second,
+		},
+	}
+
+	// Create messaging service
+	messagingService, err := messaging.NewKafkaMessagingService(config, logger)
+	require.NoError(t, err)
+	defer messagingService.Close()
+
+	// Test 1: Initial health check
+	t.Log("Testing initial health status")
+	status := messagingService.PerformHealthCheck()
+	assert.NotNil(t, status, "Health status should not be nil")
+	assert.True(t, status.Healthy, "Service should be healthy initially")
+	assert.True(t, status.ProducerHealthy, "Producer should be healthy")
+	assert.True(t, status.ConsumerHealthy, "Consumer should be healthy")
+	assert.Equal(t, messaging.CircuitBreakerClosed, status.CircuitBreakerState, "Circuit breaker should be closed")
+	assert.Empty(t, status.Issues, "There should be no issues initially")
+
+	// Test 2: Verify metrics are populated
+	t.Log("Testing health check metrics")
+	assert.NotNil(t, status.ProducerMetrics, "Producer metrics should be available")
+	assert.NotNil(t, status.ConsumerMetrics, "Consumer metrics should be available")
+	assert.NotNil(t, status.CircuitBreakerMetrics, "Circuit breaker metrics should be available")
+
+	// Test 3: Test manual circuit breaker reset
+	t.Log("Testing manual circuit breaker reset")
+	messagingService.ResetCircuitBreaker()
+
+	status = messagingService.PerformHealthCheck()
+	assert.Equal(t, messaging.CircuitBreakerClosed, status.CircuitBreakerState, "Circuit breaker should be closed after reset")
+
+	// Test 4: Test ExecuteWithCircuitBreaker method
+	t.Log("Testing ExecuteWithCircuitBreaker functionality")
+
+	successfulOperation := func() error {
+		return nil
+	}
+
+	err = messagingService.ExecuteWithCircuitBreaker(successfulOperation)
+	assert.NoError(t, err, "Successful operation should execute without error")
+
+	failingOperation := func() error {
+		return fmt.Errorf("simulated operation failure")
+	}
+
+	err = messagingService.ExecuteWithCircuitBreaker(failingOperation)
+	assert.Error(t, err, "Failing operation should return error")
+	assert.Contains(t, err.Error(), "simulated operation failure", "Error should contain original failure message")
+
+	t.Log("Circuit breaker integration tests completed successfully")
 }
