@@ -9,129 +9,98 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/infrastructure/ratelimit"
-	"github.com/Aidin1998/finalex/pkg/logger"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	"go.uber.org/zap"
 )
 
-var (
-	tracer = otel.Tracer("middleware")
-
-	// Prometheus metrics
-	httpRequestsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "orbit",
-			Subsystem: "http",
-			Name:      "requests_total",
-			Help:      "Total number of HTTP requests",
-		},
-		[]string{"method", "path", "status_code", "user_tier"},
-	)
-
-	httpRequestDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "orbit",
-			Subsystem: "http",
-			Name:      "request_duration_seconds",
-			Help:      "HTTP request duration in seconds",
-			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
-		},
-		[]string{"method", "path", "status_code"},
-	)
-
-	httpRequestSize = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "orbit",
-			Subsystem: "http",
-			Name:      "request_size_bytes",
-			Help:      "HTTP request size in bytes",
-			Buckets:   prometheus.ExponentialBuckets(100, 10, 8),
-		},
-		[]string{"method", "path"},
-	)
-
-	httpResponseSize = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "orbit",
-			Subsystem: "http",
-			Name:      "response_size_bytes",
-			Help:      "HTTP response size in bytes",
-			Buckets:   prometheus.ExponentialBuckets(100, 10, 8),
-		},
-		[]string{"method", "path", "status_code"},
-	)
-
-	httpActiveConnections = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "orbit",
-			Subsystem: "http",
-			Name:      "active_connections",
-			Help:      "Number of active HTTP connections",
-		},
-	)
-
-	authenticationAttempts = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "orbit",
-			Subsystem: "auth",
-			Name:      "attempts_total",
-			Help:      "Total number of authentication attempts",
-		},
-		[]string{"method", "status"},
-	)
-
-	securityViolations = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "orbit",
-			Subsystem: "security",
-			Name:      "violations_total",
-			Help:      "Total number of security violations",
-		},
-		[]string{"type", "severity"},
-	)
-
-	validationErrors = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "orbit",
-			Subsystem: "validation",
-			Name:      "errors_total",
-			Help:      "Total number of validation errors",
-		},
-		[]string{"type", "field"},
-	)
-
-	panicRecoveries = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "orbit",
-			Subsystem: "recovery",
-			Name:      "panics_total",
-			Help:      "Total number of recovered panics",
-		},
-		[]string{"endpoint", "type"},
-	)
-)
+// Note: Metrics variables are declared in middleware_helpers.go to avoid redeclaration
 
 // UnifiedMiddleware provides comprehensive middleware functionality
 type UnifiedMiddleware struct {
-	config      *UnifiedMiddlewareConfig
-	rateLimiter *ratelimit.EnhancedRateLimiter
-	logger      logger.Logger
-	propagator  propagation.TextMapPropagator
+	config            *UnifiedMiddlewareConfig
+	rateLimitManager  *ratelimit.RateLimitManager
+	logger            *zap.Logger
+	propagator        propagation.TextMapPropagator
+	redis             *redis.Client
+	activeConnections *sync.Map
+	requestRegistry   *sync.Map
+}
+
+// Note: UserInfo struct is defined in middleware_helpers.go
+
+// RequestContext contains information about the current request
+type RequestContext struct {
+	ID              string                 `json:"id"`
+	StartTime       time.Time              `json:"start_time"`
+	Method          string                 `json:"method"`
+	Path            string                 `json:"path"`
+	UserAgent       string                 `json:"user_agent"`
+	ClientIP        string                 `json:"client_ip"`
+	User            *UserInfo              `json:"user,omitempty"`
+	TraceID         string                 `json:"trace_id"`
+	SpanID          string                 `json:"span_id"`
+	Metadata        map[string]interface{} `json:"metadata"`
+	SecurityContext map[string]interface{} `json:"security_context"`
+}
+
+// ResponseWriter wraps http.ResponseWriter to capture response information
+type ResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	size       int64
+	written    bool
+}
+
+func (rw *ResponseWriter) WriteHeader(code int) {
+	if !rw.written {
+		rw.statusCode = code
+		rw.written = true
+		rw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (rw *ResponseWriter) Write(data []byte) (int, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	n, err := rw.ResponseWriter.Write(data)
+	rw.size += int64(n)
+	return n, err
+}
+
+func (rw *ResponseWriter) StatusCode() int {
+	if rw.statusCode == 0 {
+		return http.StatusOK
+	}
+	return rw.statusCode
+}
+
+func (rw *ResponseWriter) Size() int64 {
+	return rw.size
 }
 
 // NewUnifiedMiddleware creates a new unified middleware instance
-func NewUnifiedMiddleware(config *UnifiedMiddlewareConfig, rateLimiter *ratelimit.EnhancedRateLimiter, log logger.Logger) *UnifiedMiddleware {
+func NewUnifiedMiddleware(
+	config *UnifiedMiddlewareConfig,
+	rateLimitManager *ratelimit.RateLimitManager,
+	logger *zap.Logger,
+	redis *redis.Client,
+) *UnifiedMiddleware {
 	return &UnifiedMiddleware{
-		config:      config,
-		rateLimiter: rateLimiter,
-		logger:      log,
-		propagator:  otel.GetTextMapPropagator(),
+		config:            config,
+		rateLimitManager:  rateLimitManager,
+		logger:            logger,
+		propagator:        otel.GetTextMapPropagator(),
+		redis:             redis,
+		activeConnections: &sync.Map{},
+		requestRegistry:   &sync.Map{},
 	}
 }
 
@@ -251,15 +220,13 @@ func (um *UnifiedMiddleware) authenticationMiddleware(next http.Handler) http.Ha
 		// Add user headers for downstream middleware
 		r.Header.Set("X-User-ID", userInfo.ID)
 		r.Header.Set("X-User-Tier", string(userInfo.Tier))
-		r.Header.Set("X-User-Role", userInfo.Role)
-
-		// Log authentication
+		r.Header.Set("X-User-Role", userInfo.Role) // Log authentication
 		if um.config.Logging.Enabled {
 			um.logger.Info("User authenticated",
-				"user_id", userInfo.ID,
-				"tier", userInfo.Tier,
-				"role", userInfo.Role,
-				"duration", time.Since(authStart),
+				zap.String("user_id", userInfo.ID),
+				zap.String("tier", string(userInfo.Tier)),
+				zap.String("role", userInfo.Role),
+				zap.Duration("duration", time.Since(authStart)),
 			)
 		}
 
@@ -281,10 +248,10 @@ func (um *UnifiedMiddleware) rbacMiddleware(next http.Handler) http.Handler {
 		if !um.hasPermission(userInfo, r.Method, r.URL.Path) {
 			if um.config.RBAC.LogDeniedRequests {
 				um.logger.Warn("Access denied",
-					"user_id", userInfo.ID,
-					"role", userInfo.Role,
-					"method", r.Method,
-					"path", r.URL.Path,
+					zap.String("user_id", userInfo.ID),
+					zap.String("role", userInfo.Role),
+					zap.String("method", r.Method),
+					zap.String("path", r.URL.Path),
 				)
 			}
 
@@ -293,13 +260,12 @@ func (um *UnifiedMiddleware) rbacMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "Insufficient permissions", um.config.RBAC.PermissionDeniedCode)
 			return
 		}
-
 		if um.config.RBAC.LogAccessAttempts {
 			um.logger.Debug("Access granted",
-				"user_id", userInfo.ID,
-				"role", userInfo.Role,
-				"method", r.Method,
-				"path", r.URL.Path,
+				zap.String("user_id", userInfo.ID),
+				zap.String("role", userInfo.Role),
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
 			)
 		}
 
@@ -310,27 +276,25 @@ func (um *UnifiedMiddleware) rbacMiddleware(next http.Handler) http.Handler {
 // rateLimitMiddleware handles rate limiting
 func (um *UnifiedMiddleware) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if um.rateLimiter == nil {
+		if um.rateLimitManager == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		allowed, retryAfter, headers, err := um.rateLimiter.Check(r.Context(), r)
-
+		result, err := um.rateLimitManager.Check(r.Context(), r)
 		// Set rate limit headers
-		for k, v := range headers {
+		for k, v := range result.Headers {
 			w.Header().Set(k, v)
 		}
 
 		if err != nil {
-			um.logger.Error("Rate limit check failed", "error", err)
+			um.logger.Error("Rate limit check failed", zap.Error(err))
 			if um.config.RateLimit.FailureMode == "deny" {
 				http.Error(w, "Rate limit service unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			// Continue with request in "allow" failure mode
-		} else if !allowed {
-			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		} else if !result.Allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())))
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}

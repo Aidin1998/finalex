@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"go.uber.org/zap"
@@ -101,15 +100,15 @@ func (cm *ConfigManager) GetConfig(key string) *RateLimitConfig {
 func (cm *ConfigManager) SetConfig(key string, cfg *RateLimitConfig) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	old := cm.configs[key]
 	cm.configs[key] = cfg
-	
+
 	// Notify callbacks
 	for _, callback := range cm.callbacks {
 		go callback(key, old, cfg)
 	}
-	
+
 	if cm.logger != nil {
 		cm.logger.Debug("rate limit config updated",
 			zap.String("key", key),
@@ -123,33 +122,126 @@ func (cm *ConfigManager) SetConfig(key string, cfg *RateLimitConfig) {
 func (cm *ConfigManager) LoadFromFile(path string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open config file: %w", err)
 	}
 	defer f.Close()
+
 	data, err := ioutil.ReadAll(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
+
 	var configs map[string]*RateLimitConfig
-	if yaml.Unmarshal(data, &configs) == nil {
-		cm.configs = configs
-		return nil
+
+	// Try YAML first, then JSON
+	ext := filepath.Ext(path)
+	if ext == ".yaml" || ext == ".yml" {
+		if err := yaml.Unmarshal(data, &configs); err != nil {
+			return fmt.Errorf("failed to parse YAML config: %w", err)
+		}
+	} else if ext == ".json" {
+		if err := json.Unmarshal(data, &configs); err != nil {
+			return fmt.Errorf("failed to parse JSON config: %w", err)
+		}
+	} else {
+		// Try both formats
+		if yaml.Unmarshal(data, &configs) != nil {
+			if json.Unmarshal(data, &configs) != nil {
+				return fmt.Errorf("config file format not supported")
+			}
+		}
 	}
-	if json.Unmarshal(data, &configs) == nil {
-		cm.configs = configs
-		return nil
+
+	// Validate configurations
+	for key, cfg := range configs {
+		if err := cm.validateConfig(cfg); err != nil {
+			return fmt.Errorf("invalid config for key %s: %w", key, err)
+		}
 	}
-	return err
+
+	// Update configurations
+	oldConfigs := cm.configs
+	cm.configs = configs
+
+	// Notify callbacks of changes
+	for key, newCfg := range configs {
+		oldCfg := oldConfigs[key]
+		for _, callback := range cm.callbacks {
+			go callback(key, oldCfg, newCfg)
+		}
+	}
+
+	if cm.logger != nil {
+		cm.logger.Info("loaded rate limit configuration",
+			zap.String("file", path),
+			zap.Int("configs", len(configs)))
+	}
+
+	return nil
+}
+
+// validateConfig validates a rate limit configuration
+func (cm *ConfigManager) validateConfig(cfg *RateLimitConfig) error {
+	if cfg.Limit <= 0 {
+		return fmt.Errorf("limit must be positive")
+	}
+	if cfg.Window <= 0 {
+		return fmt.Errorf("window must be positive")
+	}
+	if cfg.Type != LimiterTokenBucket && cfg.Type != LimiterSlidingWindow && cfg.Type != "leaky_bucket" {
+		return fmt.Errorf("unsupported limiter type: %s", cfg.Type)
+	}
+	return nil
+}
+
+// LoadFromDirectory loads all config files from a directory
+func (cm *ConfigManager) LoadFromDirectory(dirPath string) error {
+	files, err := ioutil.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config directory: %w", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		ext := filepath.Ext(file.Name())
+		if ext == ".yaml" || ext == ".yml" || ext == ".json" {
+			filePath := filepath.Join(dirPath, file.Name())
+			if err := cm.LoadFromFile(filePath); err != nil {
+				if cm.logger != nil {
+					cm.logger.Error("failed to load config file",
+						zap.String("file", filePath),
+						zap.Error(err))
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // Admin override: whitelist a key (disable rate limit)
 func (cm *ConfigManager) Whitelist(key string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
 	if cfg, ok := cm.configs[key]; ok {
+		old := *cfg // Copy old config
 		cfg.Enabled = false
+
+		// Notify callbacks
+		for _, callback := range cm.callbacks {
+			go callback(key, &old, cfg)
+		}
+
+		if cm.logger != nil {
+			cm.logger.Info("whitelisted rate limit key", zap.String("key", key))
+		}
 	}
 }
 
@@ -157,10 +249,94 @@ func (cm *ConfigManager) Whitelist(key string) {
 func (cm *ConfigManager) Blacklist(key string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
 	if cfg, ok := cm.configs[key]; ok {
+		old := *cfg // Copy old config
 		cfg.Enabled = true
 		cfg.Limit = 0
+
+		// Notify callbacks
+		for _, callback := range cm.callbacks {
+			go callback(key, &old, cfg)
+		}
+
+		if cm.logger != nil {
+			cm.logger.Info("blacklisted rate limit key", zap.String("key", key))
+		}
 	}
 }
 
-// TODO: Add live reload (fsnotify) and admin API integration
+// GetAllConfigs returns a copy of all configurations
+func (cm *ConfigManager) GetAllConfigs() map[string]*RateLimitConfig {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	configs := make(map[string]*RateLimitConfig)
+	for key, cfg := range cm.configs {
+		// Deep copy
+		configCopy := *cfg
+		configs[key] = &configCopy
+	}
+	return configs
+}
+
+// DeleteConfig removes a configuration
+func (cm *ConfigManager) DeleteConfig(key string) bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	if old, exists := cm.configs[key]; exists {
+		delete(cm.configs, key)
+
+		// Notify callbacks
+		for _, callback := range cm.callbacks {
+			go callback(key, old, nil)
+		}
+
+		if cm.logger != nil {
+			cm.logger.Info("deleted rate limit config", zap.String("key", key))
+		}
+		return true
+	}
+	return false
+}
+
+// SaveToFile saves current configurations to a file
+func (cm *ConfigManager) SaveToFile(path string) error {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	ext := filepath.Ext(path)
+	var data []byte
+	var err error
+
+	if ext == ".yaml" || ext == ".yml" {
+		data, err = yaml.Marshal(cm.configs)
+	} else {
+		data, err = json.MarshalIndent(cm.configs, "", "  ")
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to marshal configs: %w", err)
+	}
+
+	if err := ioutil.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	if cm.logger != nil {
+		cm.logger.Info("saved rate limit configuration",
+			zap.String("file", path),
+			zap.Int("configs", len(cm.configs)))
+	}
+
+	return nil
+}
+
+// Close cleanly shuts down the configuration manager
+func (cm *ConfigManager) Close() error {
+	if cm.watcher != nil {
+		return cm.watcher.Close()
+	}
+	return nil
+}

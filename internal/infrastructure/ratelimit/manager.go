@@ -87,19 +87,19 @@ type ManagerConfig struct {
 
 // CircuitBreakerConfig holds circuit breaker configuration
 type CircuitBreakerConfig struct {
-	Enabled           bool          `yaml:"enabled" json:"enabled"`
-	FailureThreshold  int           `yaml:"failure_threshold" json:"failure_threshold"`
-	RecoveryTimeout   time.Duration `yaml:"recovery_timeout" json:"recovery_timeout"`
-	HalfOpenRequests  int           `yaml:"half_open_requests" json:"half_open_requests"`
+	Enabled          bool          `yaml:"enabled" json:"enabled"`
+	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
+	RecoveryTimeout  time.Duration `yaml:"recovery_timeout" json:"recovery_timeout"`
+	HalfOpenRequests int           `yaml:"half_open_requests" json:"half_open_requests"`
 }
 
 // ManagerMetrics tracks manager-level metrics
 type ManagerMetrics struct {
-	RequestCount      map[string]int64
-	ErrorCount        map[string]int64
-	AverageLatency    map[string]time.Duration
+	RequestCount        map[string]int64
+	ErrorCount          map[string]int64
+	AverageLatency      map[string]time.Duration
 	CircuitBreakerState map[string]string
-	mu                sync.RWMutex
+	mu                  sync.RWMutex
 }
 
 // NewRateLimitManager creates a new rate limit manager
@@ -142,7 +142,7 @@ func (m *RateLimitManager) RegisterStrategy(strategy RateLimitStrategy) error {
 // Check performs rate limiting check using the appropriate strategy
 func (m *RateLimitManager) Check(ctx context.Context, r *http.Request) (RateLimitResult, error) {
 	start := time.Now()
-	
+
 	strategy := m.selectStrategy(r)
 	strategyName := strategy.Name()
 
@@ -153,23 +153,23 @@ func (m *RateLimitManager) Check(ctx context.Context, r *http.Request) (RateLimi
 	}()
 
 	result, err := strategy.Check(ctx, r)
-	
+
 	// Update metrics
 	status := "allowed"
 	if !result.Allowed {
 		status = "denied"
 	}
-	
+
 	managerRequests.WithLabelValues(status, strategyName).Inc()
 	m.metrics.UpdateRequestCount(strategyName, status == "allowed")
 
 	if err != nil {
 		m.metrics.UpdateErrorCount(strategyName)
-		
+
 		// Apply failure mode
 		if m.config.FailureMode == "deny" {
 			return RateLimitResult{
-				Allowed: false,
+				Allowed:    false,
 				RetryAfter: time.Minute,
 				Headers: map[string]string{
 					"X-RateLimit-Error": "rate limiting service error",
@@ -177,7 +177,7 @@ func (m *RateLimitManager) Check(ctx context.Context, r *http.Request) (RateLimi
 				Reason: "service_error",
 			}, err
 		}
-		
+
 		// Allow on failure
 		return RateLimitResult{
 			Allowed: true,
@@ -236,7 +236,7 @@ func (m *RateLimitManager) selectStrategy(r *http.Request) RateLimitStrategy {
 func (m *RateLimitManager) GetStrategy(name string) (RateLimitStrategy, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	strategy, exists := m.strategies[name]
 	return strategy, exists
 }
@@ -245,7 +245,7 @@ func (m *RateLimitManager) GetStrategy(name string) (RateLimitStrategy, bool) {
 func (m *RateLimitManager) ListStrategies() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(m.strategies))
 	for name := range m.strategies {
 		names = append(names, name)
@@ -258,7 +258,7 @@ func (m *RateLimitManager) ConfigureStrategy(name string, config map[string]inte
 	m.mu.RLock()
 	strategy, exists := m.strategies[name]
 	m.mu.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("strategy %s not found", name)
 	}
@@ -318,7 +318,7 @@ func (m *RateLimitManager) GetMetrics() *ManagerMetrics {
 // Close cleanly shuts down the manager
 func (m *RateLimitManager) Close() error {
 	m.logger.Info("shutting down rate limit manager")
-	
+
 	// Close all strategies if they implement io.Closer
 	for name, strategy := range m.strategies {
 		if closer, ok := strategy.(interface{ Close() error }); ok {
@@ -347,7 +347,7 @@ func NewManagerMetrics() *ManagerMetrics {
 func (mm *ManagerMetrics) UpdateRequestCount(strategy string, allowed bool) {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
-	
+
 	mm.RequestCount[strategy]++
 }
 
@@ -355,7 +355,7 @@ func (mm *ManagerMetrics) UpdateRequestCount(strategy string, allowed bool) {
 func (mm *ManagerMetrics) UpdateErrorCount(strategy string) {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
-	
+
 	mm.ErrorCount[strategy]++
 }
 
@@ -363,7 +363,7 @@ func (mm *ManagerMetrics) UpdateErrorCount(strategy string) {
 func (mm *ManagerMetrics) UpdateLatency(strategy string, latency time.Duration) {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
-	
+
 	// Simple moving average (could be improved with exponential smoothing)
 	current := mm.AverageLatency[strategy]
 	mm.AverageLatency[strategy] = (current + latency) / 2
@@ -373,6 +373,6 @@ func (mm *ManagerMetrics) UpdateLatency(strategy string, latency time.Duration) 
 func (mm *ManagerMetrics) GetRequestCount(strategy string) int64 {
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
-	
+
 	return mm.RequestCount[strategy]
 }
