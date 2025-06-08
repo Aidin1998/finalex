@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/trading/balance"
+	"github.com/Aidin1998/finalex/internal/trading/coordination"
 	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -95,23 +97,24 @@ func (e *AtomicExecutor) ExecuteOrder(ctx context.Context, order *CrossPairOrder
 }
 
 // executeAtomicTrade executes the atomic two-leg trade
-func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPairOrder, route *CrossPairRoute) (*AtomicExecutionResult, error) {
-	// Create coordination context for atomic execution
+func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPairOrder, route *CrossPairRoute) (*AtomicExecutionResult, error) { // Create coordination context for atomic execution
 	coordCtx := &coordination.ExecutionContext{
-		TransactionID: uuid.New(),
-		UserID:        order.UserID,
-		Operations:    make([]coordination.Operation, 0),
-		Timeout:       30 * time.Second,
-	}
-
-	// Prepare balance transfers for atomic execution
-	transfers := []balance.Transfer{
+		TransactionID:     uuid.New(),
+		InitiatedAt:       time.Now(),
+		ExpiresAt:         time.Now().Add(30 * time.Second),
+		Operations:        make([]coordination.Operation, 0),
+		Metadata:          make(map[string]interface{}),
+		Priority:          1,
+		RequiresConsensus: false,
+	} // Prepare balance transfers for atomic execution
+	transfers := []balance.MultiAssetTransfer{
 		{
-			FromUserID: order.UserID,
-			FromAsset:  order.FromAsset,
-			ToUserID:   uuid.Nil, // System account for intermediate holding
-			ToAsset:    order.FromAsset,
-			Amount:     order.Quantity,
+			FromUserID:  order.UserID.String(),
+			ToUserID:    uuid.Nil.String(), // System account for intermediate holding
+			Currency:    order.FromAsset,
+			Amount:      order.Quantity,
+			Reference:   "crosspair_execution",
+			Description: "Cross-pair trade execution",
 		},
 	}
 

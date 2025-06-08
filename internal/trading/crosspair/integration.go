@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // ServiceIntegration provides integration with existing platform services
@@ -228,6 +229,21 @@ func (p *RealOrderbookProvider) Unsubscribe(pair string) error {
 	return p.spotEngine.UnsubscribeFromTrades(pair)
 }
 
+func (p *RealOrderbookProvider) GetBestBidAsk(ctx context.Context, pair string) (bid, ask decimal.Decimal, err error) {
+	orderbook, err := p.spotEngine.GetOrderbook(ctx, pair)
+	if err != nil {
+		return decimal.Zero, decimal.Zero, err
+	}
+
+	if len(orderbook.Bids) == 0 || len(orderbook.Asks) == 0 {
+		return decimal.Zero, decimal.Zero, fmt.Errorf("no liquidity available for pair %s", pair)
+	}
+
+	bid = decimal.NewFromFloat(orderbook.Bids[0].Price)
+	ask = decimal.NewFromFloat(orderbook.Asks[0].Price)
+	return bid, ask, nil
+}
+
 // RealEventPublisher implements EventPublisher using the platform's event system
 type RealEventPublisher struct {
 	eventPublisher EventPublisherInterface
@@ -329,10 +345,11 @@ func (m *RealMetricsCollector) RecordOrderCompleted(pair string, executionTime t
 	})
 }
 
-func (m *RealMetricsCollector) RecordOrderFailed(pair string, reason string) {
+func (m *RealMetricsCollector) RecordOrderFailed(fromAsset, toAsset string, reason string) {
 	m.metricsCollector.IncrementCounter("crosspair_orders_failed_total", map[string]string{
-		"pair":   pair,
-		"reason": reason,
+		"from_asset": fromAsset,
+		"to_asset":   toAsset,
+		"reason":     reason,
 	})
 }
 
@@ -353,6 +370,33 @@ func (m *RealMetricsCollector) RecordRateCalculation(pair string, duration time.
 
 func (m *RealMetricsCollector) RecordActiveConnections(count int) {
 	m.metricsCollector.RecordGauge("crosspair_websocket_connections", float64(count), nil)
+}
+
+func (m *RealMetricsCollector) RecordOrderExecuted(fromAsset, toAsset string, executionTime time.Duration) {
+	m.metricsCollector.IncrementCounter("crosspair_orders_executed_total", map[string]string{
+		"from_asset": fromAsset,
+		"to_asset":   toAsset,
+	})
+	m.metricsCollector.RecordTimer("crosspair_order_execution_duration", executionTime, map[string]string{
+		"from_asset": fromAsset,
+		"to_asset":   toAsset,
+	})
+}
+
+func (m *RealMetricsCollector) RecordSlippage(fromAsset, toAsset string, slippage decimal.Decimal) {
+	slippageFloat, _ := slippage.Float64()
+	m.metricsCollector.RecordHistogram("crosspair_slippage", slippageFloat, map[string]string{
+		"from_asset": fromAsset,
+		"to_asset":   toAsset,
+	})
+}
+
+func (m *RealMetricsCollector) RecordVolume(fromAsset, toAsset string, volume decimal.Decimal) {
+	volumeFloat, _ := volume.Float64()
+	m.metricsCollector.RecordHistogram("crosspair_volume", volumeFloat, map[string]string{
+		"from_asset": fromAsset,
+		"to_asset":   toAsset,
+	})
 }
 
 // RealAtomicExecutor implements AtomicExecutor using the platform's coordination service
@@ -438,16 +482,17 @@ func (e *RealAtomicExecutor) EstimateExecution(ctx context.Context, plan *Execut
 	if err != nil {
 		return nil, fmt.Errorf("failed to get leg2 orderbook: %w", err)
 	}
-
 	// Calculate estimated prices and slippage
-	leg1Price, leg1Slippage := e.estimatePrice(leg1Orderbook, plan.Leg1.Side, plan.Leg1.Quantity)
-	leg2Price, leg2Slippage := e.estimatePrice(leg2Orderbook, plan.Leg2.Side, plan.Leg2.Quantity)
+	leg1Qty, _ := plan.Leg1.Quantity.Float64()
+	leg2Qty, _ := plan.Leg2.Quantity.Float64()
+	leg1Price, leg1Slippage := e.estimatePrice(leg1Orderbook, plan.Leg1.Side, leg1Qty)
+	leg2Price, leg2Slippage := e.estimatePrice(leg2Orderbook, plan.Leg2.Side, leg2Qty)
 
 	estimate := &ExecutionEstimate{
-		EstimatedPrice:    (leg1Price + leg2Price) / 2, // Simplified
-		EstimatedSlippage: (leg1Slippage + leg2Slippage) / 2,
+		EstimatedPrice:    decimal.NewFromFloat((leg1Price + leg2Price) / 2), // Simplified
+		EstimatedSlippage: decimal.NewFromFloat((leg1Slippage + leg2Slippage) / 2),
 		EstimatedFee:      plan.EstimatedFee,
-		Confidence:        0.9, // TODO: Calculate based on orderbook depth
+		Confidence:        decimal.NewFromFloat(0.9), // TODO: Calculate based on orderbook depth
 		CanExecute:        true,
 	}
 
