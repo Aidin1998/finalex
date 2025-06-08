@@ -241,9 +241,12 @@ func (s *NotificationService) handleSystemAlert(ctx context.Context, msg *Receiv
 func (f *MessagingFactory) CreateTopics(ctx context.Context) error {
 	f.logger.Info("Creating Kafka topics with configuration")
 
-	// This is a placeholder for topic creation
-	// In a real implementation, you would use Kafka admin client to create topics
-	// with the configurations specified in f.config.TopicConfig
+	// Create admin client for topic management
+	adminClient, err := NewKafkaAdminClient(&f.config.Kafka, f.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create Kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
 
 	topics := []Topic{
 		TopicOrderEvents,
@@ -255,24 +258,26 @@ func (f *MessagingFactory) CreateTopics(ctx context.Context) error {
 		TopicFundsOps,
 	}
 
+	// Convert string-keyed config to Topic-keyed config
+	topicConfigs := make(map[Topic]TopicConfig)
 	for _, topic := range topics {
-		topicConfig, exists := f.config.GetTopicConfig(topic)
-		if !exists {
-			f.logger.Warn("No configuration found for topic", zap.String("topic", string(topic)))
-			continue
+		if config, exists := f.config.GetTopicConfig(topic); exists {
+			topicConfigs[topic] = config
+		} else {
+			f.logger.Warn("No configuration found for topic, using defaults", zap.String("topic", string(topic)))
+			topicConfigs[topic] = TopicConfig{
+				Partitions:        12,
+				ReplicationFactor: 3,
+				RetentionMs:       7 * 24 * 60 * 60 * 1000, // 7 days
+				CleanupPolicy:     "delete",
+				CompressionType:   "snappy",
+				MaxMessageBytes:   1048576,
+			}
 		}
-
-		f.logger.Info("Would create topic",
-			zap.String("name", string(topic)),
-			zap.Int("partitions", topicConfig.Partitions),
-			zap.Int("replication_factor", topicConfig.ReplicationFactor),
-			zap.String("compression", topicConfig.CompressionType))
-
-		// TODO: Implement actual topic creation using kafka-go admin client
-		// This would require adding kafka admin functionality
 	}
 
-	return nil
+	// Create topics if they don't exist
+	return adminClient.CreateTopicsIfNotExist(ctx, topics, topicConfigs)
 }
 
 // GetMetrics returns metrics for all services

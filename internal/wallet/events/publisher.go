@@ -2,12 +2,16 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
@@ -187,6 +191,7 @@ func (p *EventPublisher) PublishWithdrawalEvent(
 // KafkaPublisher implements Publisher for Apache Kafka
 type KafkaPublisher struct {
 	brokers []string
+	writer  *kafka.Writer
 	log     logger.Logger
 }
 
@@ -210,23 +215,52 @@ func (k *KafkaPublisher) PublishEvent(ctx context.Context, topic string, event i
 		zap.Int("event_size", len(eventData)),
 	)
 
-	// TODO: Implement actual Kafka publishing
-	// This would use a Kafka client library like Sarama or Confluent Kafka Go
+	// Create Kafka writer if not exists
+	if k.writer == nil {
+		k.writer = &kafka.Writer{
+			Addr:         kafka.TCP(k.brokers...),
+			Topic:        topic,
+			Balancer:     &kafka.CRC32Balancer{},
+			BatchSize:    100,
+			BatchTimeout: 10 * time.Millisecond,
+			RequiredAcks: kafka.RequireOne,
+			MaxAttempts:  3,
+		}
+	}
 
-	return nil
+	// Generate event key for partitioning
+	eventKey := fmt.Sprintf("%s-%d", topic, time.Now().UnixNano())
+
+	msg := kafka.Message{
+		Key:   []byte(eventKey),
+		Value: eventData,
+		Time:  time.Now(),
+		Headers: []kafka.Header{
+			{Key: "event-type", Value: []byte(topic)},
+			{Key: "timestamp", Value: []byte(time.Now().Format(time.RFC3339))},
+		},
+	}
+
+	return k.writer.WriteMessages(ctx, msg)
 }
 
 // RedisPublisher implements Publisher for Redis Streams
 type RedisPublisher struct {
-	addr string
-	log  logger.Logger
+	addr   string
+	client *redis.Client
+	log    logger.Logger
 }
 
 // NewRedisPublisher creates a new Redis publisher
 func NewRedisPublisher(addr string, log logger.Logger) *RedisPublisher {
+	client := redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
+
 	return &RedisPublisher{
-		addr: addr,
-		log:  log,
+		addr:   addr,
+		client: client,
+		log:    log,
 	}
 }
 
@@ -242,8 +276,34 @@ func (r *RedisPublisher) PublishEvent(ctx context.Context, topic string, event i
 		zap.Int("event_size", len(eventData)),
 	)
 
-	// TODO: Implement actual Redis Streams publishing
-	// This would use a Redis client library like go-redis
+	// Create stream entry
+	streamKey := fmt.Sprintf("wallet.events.%s", topic)
+	eventID := fmt.Sprintf("%d-*", time.Now().UnixMilli())
+
+	fields := map[string]interface{}{
+		"event_type": topic,
+		"data":       string(eventData),
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"source":     "wallet-service",
+	}
+
+	// Add to Redis Stream with automatic ID generation
+	result := r.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamKey,
+		ID:     eventID,
+		Values: fields,
+	})
+
+	if err := result.Err(); err != nil {
+		r.log.Error("failed to publish event to redis stream",
+			zap.String("stream", streamKey),
+			zap.Error(err))
+		return fmt.Errorf("failed to publish to redis stream: %w", err)
+	}
+
+	r.log.Debug("successfully published event to redis stream",
+		zap.String("stream", streamKey),
+		zap.String("message_id", result.Val()))
 
 	return nil
 }
@@ -275,8 +335,53 @@ func (w *WebhookPublisher) PublishEvent(ctx context.Context, topic string, event
 		zap.Int("event_size", len(eventData)),
 	)
 
-	// TODO: Implement actual HTTP webhook publishing
-	// This would use http.Client to POST the event data
+	// Create webhook payload
+	payload := map[string]interface{}{
+		"topic":     topic,
+		"event":     event,
+		"timestamp": time.Now().Format(time.RFC3339),
+		"source":    "wallet-service",
+	}
+
+	payloadData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook payload: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", w.webhookURL, bytes.NewBuffer(payloadData))
+	if err != nil {
+		return fmt.Errorf("failed to create webhook request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Event-Type", topic)
+	req.Header.Set("X-Source", "wallet-service")
+
+	// Send request with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		w.log.Error("failed to send webhook",
+			zap.String("url", w.webhookURL),
+			zap.Error(err))
+		return fmt.Errorf("failed to send webhook: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		w.log.Error("webhook returned error status",
+			zap.String("url", w.webhookURL),
+			zap.Int("status_code", resp.StatusCode))
+		return fmt.Errorf("webhook returned status code: %d", resp.StatusCode)
+	}
+
+	w.log.Debug("successfully sent webhook",
+		zap.String("url", w.webhookURL),
+		zap.Int("status_code", resp.StatusCode))
 
 	return nil
 }

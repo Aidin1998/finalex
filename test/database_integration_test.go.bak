@@ -1,0 +1,415 @@
+// Database submodule integration tests
+package test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"github.com/Aidin1998/finalex/internal/infrastructure/database"
+)
+
+// TestDatabaseIntegration tests the complete database submodule integration
+func TestDatabaseIntegration(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	ctx := context.Background()
+
+	// Create temporary directory for test databases
+	tempDir := t.TempDir()
+
+	t.Run("MigrationIntegration", func(t *testing.T) {
+		testMigrationIntegration(t, ctx, logger, tempDir)
+	})
+
+	t.Run("BackupRestoreIntegration", func(t *testing.T) {
+		testBackupRestoreIntegration(t, ctx, logger, tempDir)
+	})
+
+	t.Run("TestDatabaseIntegration", func(t *testing.T) {
+		testTestDatabaseIntegration(t, ctx, logger, tempDir)
+	})
+
+	t.Run("ComprehensiveManagerIntegration", func(t *testing.T) {
+		testComprehensiveManagerIntegration(t, ctx, logger, tempDir)
+	})
+}
+
+// testMigrationIntegration tests migration interface with actual migrations
+func testMigrationIntegration(t *testing.T, ctx context.Context, logger *zap.Logger, tempDir string) {
+	// Create test database
+	dbPath := filepath.Join(tempDir, "migration_test.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	require.NoError(t, err)
+
+	// Create migration manager
+	migrationManager := database.NewMigrationManager(db, logger, &database.MigrationOptions{
+		TableName:   "test_migrations",
+		LockTimeout: 30 * time.Second,
+	})
+
+	// Initialize migration schema
+	err = migrationManager.InitializeSchema(ctx)
+	require.NoError(t, err)
+
+	// Register a test migration that mimics the pattern from /migrations/postgres
+	testMigration := database.MigrationScript{
+		Version:     "001_test_migration",
+		Description: "Test migration for integration testing",
+		UpSQL: `
+			CREATE TABLE IF NOT EXISTS test_table (
+				id INTEGER PRIMARY KEY,
+				name TEXT NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_test_table_name ON test_table(name);
+		`,
+		DownSQL: `
+			DROP INDEX IF EXISTS idx_test_table_name;
+			DROP TABLE IF EXISTS test_table;
+		`,
+		Checksum: "test_checksum_001",
+	}
+
+	err = migrationManager.RegisterMigration(testMigration)
+	require.NoError(t, err)
+
+	// Test getting pending migrations
+	pending, err := migrationManager.GetPendingMigrations(ctx)
+	require.NoError(t, err)
+	assert.Len(t, pending, 1)
+	assert.Equal(t, "001_test_migration", pending[0].Version)
+
+	// Apply migrations
+	err = migrationManager.Migrate(ctx)
+	require.NoError(t, err)
+
+	// Verify migration was applied
+	pending, err = migrationManager.GetPendingMigrations(ctx)
+	require.NoError(t, err)
+	assert.Len(t, pending, 0)
+
+	// Verify table was created
+	var tableExists bool
+	err = db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'").Row().Scan(&tableExists)
+	require.NoError(t, err)
+
+	// Test rollback
+	err = migrationManager.RollbackTo(ctx, "000_initial")
+	require.NoError(t, err)
+
+	// Verify table was dropped
+	var count int
+	err = db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='test_table'").Row().Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+// testBackupRestoreIntegration tests backup and restore functionality
+func testBackupRestoreIntegration(t *testing.T, ctx context.Context, logger *zap.Logger, tempDir string) {
+	// Create source database with test data
+	sourcePath := filepath.Join(tempDir, "backup_source.db")
+	sourceDB, err := gorm.Open(sqlite.Open(sourcePath), &gorm.Config{})
+	require.NoError(t, err)
+
+	// Create test table and data
+	err = sourceDB.Exec(`
+		CREATE TABLE backup_test (
+			id INTEGER PRIMARY KEY,
+			data TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`).Error
+	require.NoError(t, err)
+
+	err = sourceDB.Exec(`
+		INSERT INTO backup_test (data) VALUES 
+		('test data 1'),
+		('test data 2'),
+		('test data 3')
+	`).Error
+	require.NoError(t, err)
+	// Create backup manager
+	backupManager := database.NewBackupManager(sourceDB, logger, &database.BackupConfig{
+		DefaultBackupPath: tempDir,
+		RetentionPeriod:   7 * 24 * time.Hour,
+		EnableEncryption:  false,
+	})
+
+	// Test backup creation
+	backupPath := filepath.Join(tempDir, "test_backup.sql")
+	backupOptions := &database.BackupOptions{
+		OutputPath:  backupPath,
+		Format:      "sql",
+		Compression: false,
+		SchemaOnly:  false,
+		DataOnly:    false,
+		Metadata: map[string]interface{}{
+			"test_name":  "integration_test",
+			"created_by": "automated_test",
+		},
+	}
+	backupInfo, err := backupManager.CreateBackup(ctx, backupOptions)
+	require.NoError(t, err)
+	assert.NotNil(t, backupInfo)
+	assert.Equal(t, "test_backup.sql", filepath.Base(backupInfo.Path))
+
+	// Verify backup file exists
+	_, err = os.Stat(backupPath)
+	require.NoError(t, err)
+
+	// Create target database for restore
+	targetPath := filepath.Join(tempDir, "backup_target.db")
+	targetDB, err := gorm.Open(sqlite.Open(targetPath), &gorm.Config{})
+	require.NoError(t, err)
+	// Create restore manager
+	restoreManager := database.NewBackupManager(targetDB, logger, &database.BackupConfig{
+		DefaultBackupPath: tempDir,
+	})
+
+	// Test restore
+	restoreOptions := &database.RestoreOptions{
+		BackupPath: backupPath,
+		CleanFirst: true,
+		IfExists:   "replace",
+	}
+
+	err = restoreManager.RestoreBackup(ctx, restoreOptions)
+	require.NoError(t, err)
+
+	// Verify restored data
+	var count int64
+	err = targetDB.Raw("SELECT COUNT(*) FROM backup_test").Row().Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), count)
+	// Test backup listing
+	backups, err := backupManager.ListBackups(ctx)
+	require.NoError(t, err)
+	assert.Len(t, backups, 1)
+	assert.Equal(t, "test_backup.sql", filepath.Base(backups[0].Path))
+}
+
+// testTestDatabaseIntegration tests the test database support
+func testTestDatabaseIntegration(t *testing.T, ctx context.Context, logger *zap.Logger, tempDir string) {
+	// Create test database config
+	config := &database.TestDatabaseConfig{
+		Driver:             "sqlite",
+		DSN:                ":memory:",
+		IsolateTests:       true,
+		TransactionalTests: true,
+		CleanupPolicy:      "always",
+		LogSQL:             false,
+		EnableFK:           true,
+		FixturePath:        filepath.Join(tempDir, "fixtures"),
+	}
+	// Create test database manager
+	testDBManager := database.NewTestDatabaseManager(config, logger)
+
+	// Create fixtures directory and test fixture
+	fixturesDir := filepath.Join(tempDir, "fixtures")
+	err = os.MkdirAll(fixturesDir, 0755)
+	require.NoError(t, err)
+
+	// Create test fixture
+	fixtureContent := `{
+		"table": "test_users",
+		"rows": [
+			{"id": 1, "name": "Test User 1", "email": "test1@example.com"},
+			{"id": 2, "name": "Test User 2", "email": "test2@example.com"}
+		]
+	}`
+
+	err = os.WriteFile(filepath.Join(fixturesDir, "users.json"), []byte(fixtureContent), 0644)
+	require.NoError(t, err)
+	// Test database creation
+	testDB, cleanup, err := testDBManager.CreateTestDatabase("test_integration")
+	require.NoError(t, err)
+	defer cleanup()
+
+	// Create test table
+	err = testDB.Exec(`
+		CREATE TABLE test_users (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT UNIQUE NOT NULL
+		)
+	`).Error
+	require.NoError(t, err)
+
+	// Test fixture loading
+	err = testDBManager.LoadFixtures(ctx, testDB, []string{"users.json"})
+	require.NoError(t, err)
+
+	// Verify fixture data
+	var count int64
+	err = testDB.Raw("SELECT COUNT(*) FROM test_users").Row().Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+
+	// Test transactional isolation
+	tx, rollback, err := testDBManager.BeginTestTransaction(ctx, testDB)
+	require.NoError(t, err)
+
+	// Insert data in transaction
+	err = tx.Exec("INSERT INTO test_users (name, email) VALUES (?, ?)", "Test User 3", "test3@example.com").Error
+	require.NoError(t, err)
+
+	// Verify data exists in transaction
+	var txCount int64
+	err = tx.Raw("SELECT COUNT(*) FROM test_users").Row().Scan(&txCount)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), txCount)
+
+	// Rollback transaction
+	rollback()
+
+	// Verify data was rolled back
+	var finalCount int64
+	err = testDB.Raw("SELECT COUNT(*) FROM test_users").Row().Scan(&finalCount)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), finalCount)
+}
+
+// testComprehensiveManagerIntegration tests the comprehensive database manager
+func testComprehensiveManagerIntegration(t *testing.T, ctx context.Context, logger *zap.Logger, tempDir string) {
+	// Create database config
+	config := &database.DatabaseConfig{
+		Driver: "sqlite",
+		Master: database.ConnectionConfig{
+			DSN:         filepath.Join(tempDir, "comprehensive_test.db"),
+			MaxOpen:     10,
+			MaxIdle:     5,
+			MaxLifetime: 30 * time.Minute,
+		},
+		HealthCheck: database.HealthCheckConfig{
+			Enabled:  true,
+			Interval: 30 * time.Second,
+			Timeout:  5 * time.Second,
+		},
+		Encryption: database.EncryptionConfig{
+			Enabled: false, // Disable for testing
+		},
+		Metrics: database.MetricsConfig{
+			Enabled: true,
+		},
+	}
+
+	// Create comprehensive database manager
+	dbManager, err := database.NewDatabaseManager(config, logger)
+	require.NoError(t, err)
+
+	// Test connection
+	err = dbManager.Connect(ctx)
+	require.NoError(t, err)
+	defer dbManager.Close()
+
+	// Test health check
+	health := dbManager.HealthCheck(ctx)
+	assert.True(t, health.Healthy)
+	assert.True(t, health.Master)
+
+	// Test transaction
+	db := dbManager.GetDB()
+	require.NotNil(t, db)
+
+	// Create test table
+	err = db.Exec(`
+		CREATE TABLE comprehensive_test (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			value INTEGER
+		)
+	`).Error
+	require.NoError(t, err)
+
+	// Test with transaction
+	tx, commit, err := dbManager.WithTransaction(ctx)
+	require.NoError(t, err)
+
+	err = tx.Exec("INSERT INTO comprehensive_test (name, value) VALUES (?, ?)", "test1", 100).Error
+	require.NoError(t, err)
+
+	commit()
+
+	// Verify data
+	var count int64
+	err = db.Raw("SELECT COUNT(*) FROM comprehensive_test").Row().Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	// Test metrics
+	metrics := dbManager.GetMetrics()
+	assert.True(t, metrics.QueryCount > 0)
+	assert.True(t, metrics.ConnectionPoolStats.OpenConnections > 0)
+}
+
+// TestDatabaseSubmoduleWithRealMigrations tests integration with actual migrations from /migrations folder
+func TestDatabaseSubmoduleWithRealMigrations(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	// Create test database
+	dbPath := filepath.Join(tempDir, "real_migration_test.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	require.NoError(t, err)
+
+	// Create migration manager
+	migrationManager := database.NewMigrationManager(db, logger, nil)
+
+	// Initialize schema
+	err = migrationManager.InitializeSchema(ctx)
+	require.NoError(t, err)
+	// Test integration with a real migration pattern
+	// This simulates how the database submodule would coordinate with /migrations/postgres
+
+	// Register equivalent migration through database submodule
+	equivalentMigration := database.MigrationScript{
+		Version:     "001_add_hash_metadata",
+		Description: "Add hash metadata columns to support hybrid hashing",
+		UpSQL: `
+			CREATE TABLE IF NOT EXISTS api_keys (
+				id INTEGER PRIMARY KEY,
+				key_hash TEXT NOT NULL,
+				hash_data TEXT
+			);
+			CREATE INDEX IF NOT EXISTS idx_api_keys_hash_data 
+			ON api_keys (hash_data) 
+			WHERE hash_data IS NOT NULL;
+		`,
+		DownSQL: `
+			DROP INDEX IF EXISTS idx_api_keys_hash_data;
+			DROP TABLE IF EXISTS api_keys;
+		`,
+		Checksum: "real_migration_001",
+	}
+
+	err = migrationManager.RegisterMigration(equivalentMigration)
+	require.NoError(t, err)
+
+	// Apply migration through database submodule
+	err = migrationManager.Migrate(ctx)
+	require.NoError(t, err)
+
+	// Verify the migration coordination worked
+	applied, err := migrationManager.GetAppliedMigrations(ctx)
+	require.NoError(t, err)
+	assert.Len(t, applied, 1)
+	assert.Equal(t, "001_add_hash_metadata", applied[0].Version)
+
+	// Verify table structure
+	var tableExists bool
+	err = db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND name='api_keys'").Row().Scan(&tableExists)
+	require.NoError(t, err)
+
+	t.Log("Real migration integration test completed successfully")
+	t.Logf("Database submodule successfully coordinated with migration pattern from /migrations/postgres")
+}

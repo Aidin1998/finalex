@@ -60,23 +60,23 @@ func InitializeGlobalConfig(logger *zap.Logger, configPaths ...string) error {
 	if GlobalConfigManager != nil {
 		return fmt.Errorf("global configuration already initialized")
 	}
-	
+
 	builder := NewConfigBuilder(logger)
 	if len(configPaths) > 0 {
 		builder = builder.WithConfigPaths(configPaths...)
 	}
-	
+
 	// Create secret provider based on environment
 	secretProvider := CreateDefaultSecretProvider(logger)
 	if secretProvider != nil {
 		builder = builder.WithSecretProvider(secretProvider)
 	}
-	
+
 	manager, err := builder.Build()
 	if err != nil {
 		return fmt.Errorf("failed to initialize global configuration: %w", err)
 	}
-	
+
 	GlobalConfigManager = manager
 	return nil
 }
@@ -107,7 +107,7 @@ func CreateDefaultSecretProvider(logger *zap.Logger) SecretProvider {
 				Token:   vaultToken,
 				Path:    getEnvWithDefault("VAULT_PATH", "secret/finalex"),
 			}
-			
+
 			provider, err := NewVaultSecretProvider(vaultConfig, logger)
 			if err != nil {
 				logger.Warn("Failed to create Vault secret provider, falling back to env", zap.Error(err))
@@ -116,7 +116,7 @@ func CreateDefaultSecretProvider(logger *zap.Logger) SecretProvider {
 			return provider
 		}
 	}
-	
+
 	// Check for AWS Secrets Manager configuration
 	if awsRegion := os.Getenv("AWS_REGION"); awsRegion != "" {
 		awsConfig := AWSSecretsConfig{
@@ -125,7 +125,7 @@ func CreateDefaultSecretProvider(logger *zap.Logger) SecretProvider {
 			SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 			SessionToken:    os.Getenv("AWS_SESSION_TOKEN"),
 		}
-		
+
 		provider, err := NewAWSSecretsProvider(awsConfig, logger)
 		if err != nil {
 			logger.Warn("Failed to create AWS Secrets Manager provider, falling back to env", zap.Error(err))
@@ -133,7 +133,7 @@ func CreateDefaultSecretProvider(logger *zap.Logger) SecretProvider {
 		}
 		return provider
 	}
-	
+
 	// Default to environment variables
 	return NewEnvSecretProvider(logger)
 }
@@ -151,13 +151,13 @@ func ValidateConfigFile(filePath string, logger *zap.Logger) error {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("configuration file not found: %s", filePath)
 	}
-	
+
 	// Create temporary config manager for validation
 	manager := NewConfigManager(logger)
 	if err := manager.LoadConfig(filePath); err != nil {
 		return fmt.Errorf("failed to load configuration file: %w", err)
 	}
-	
+
 	logger.Info("Configuration file is valid", zap.String("file", filePath))
 	return nil
 }
@@ -336,11 +336,11 @@ logging:
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	
+
 	if err := os.WriteFile(outputPath, []byte(template), 0644); err != nil {
 		return fmt.Errorf("failed to write template file: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -354,10 +354,10 @@ type ConfigDiff struct {
 // CompareConfigs compares two configurations and returns differences
 func CompareConfigs(oldConfig, newConfig *PlatformConfig) []ConfigDiff {
 	var diffs []ConfigDiff
-	
+
 	// This is a simplified implementation
 	// In a real scenario, you'd use reflection to compare all fields
-	
+
 	if oldConfig.Environment != newConfig.Environment {
 		diffs = append(diffs, ConfigDiff{
 			Path:     "environment",
@@ -365,7 +365,7 @@ func CompareConfigs(oldConfig, newConfig *PlatformConfig) []ConfigDiff {
 			NewValue: newConfig.Environment,
 		})
 	}
-	
+
 	if oldConfig.Server.Port != newConfig.Server.Port {
 		diffs = append(diffs, ConfigDiff{
 			Path:     "server.port",
@@ -373,9 +373,9 @@ func CompareConfigs(oldConfig, newConfig *PlatformConfig) []ConfigDiff {
 			NewValue: newConfig.Server.Port,
 		})
 	}
-	
+
 	// Add more comparisons as needed...
-	
+
 	return diffs
 }
 
@@ -396,7 +396,7 @@ func GetConfigHealth() ConfigHealth {
 			Issues:  []string{"Configuration manager not initialized"},
 		}
 	}
-	
+
 	config := GlobalConfigManager.GetConfig()
 	health := ConfigHealth{
 		Healthy:     true,
@@ -405,23 +405,23 @@ func GetConfigHealth() ConfigHealth {
 		Environment: config.Environment,
 		Issues:      []string{},
 	}
-	
+
 	// Check for potential issues
 	if time.Since(health.LastReload) > 24*time.Hour {
 		health.Issues = append(health.Issues, "Configuration hasn't been reloaded in over 24 hours")
 	}
-	
+
 	if config.Environment == "production" {
 		if strings.Contains(config.JWT.Secret, "change-this") {
 			health.Healthy = false
 			health.Issues = append(health.Issues, "Production environment with insecure JWT secret")
 		}
-		
+
 		if !config.Server.TLSEnabled {
 			health.Issues = append(health.Issues, "Production environment without TLS enabled")
 		}
 	}
-	
+
 	return health
 }
 
@@ -430,9 +430,9 @@ func ExportConfig() map[string]interface{} {
 	if GlobalConfigManager == nil {
 		return nil
 	}
-	
+
 	config := GlobalConfigManager.GetConfig()
-	
+
 	// Convert to map and mask secrets
 	// This is a simplified implementation
 	exported := map[string]interface{}{
@@ -443,10 +443,10 @@ func ExportConfig() map[string]interface{} {
 			"port": config.Server.Port,
 		},
 		"database": map[string]interface{}{
-			"driver":           config.Database.Driver,
-			"dsn":              maskSecret(config.Database.DSN),
-			"max_open_conns":   config.Database.MaxOpenConns,
-			"max_idle_conns":   config.Database.MaxIdleConns,
+			"driver":         config.Database.Driver,
+			"dsn":            maskSecret(config.Database.DSN),
+			"max_open_conns": config.Database.MaxOpenConns,
+			"max_idle_conns": config.Database.MaxIdleConns,
 		},
 		"redis": map[string]interface{}{
 			"address":  config.Redis.Address,
@@ -454,7 +454,7 @@ func ExportConfig() map[string]interface{} {
 			"db":       config.Redis.DB,
 		},
 	}
-	
+
 	return exported
 }
 

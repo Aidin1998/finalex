@@ -207,6 +207,11 @@ func (mb *MessageBus) StartConsumers(groupID string) error {
 	return mb.consumer.Subscribe(mb.ctx, topics, groupID, mb.handleMessage)
 }
 
+// parseJSON parses JSON data into the provided interface
+func parseJSON(data []byte, v interface{}) error {
+	return json.Unmarshal(data, v)
+}
+
 // handleMessage processes incoming messages and routes them to registered handlers
 func (mb *MessageBus) handleMessage(ctx context.Context, msg *ReceivedMessage) error {
 	start := time.Now()
@@ -220,55 +225,64 @@ func (mb *MessageBus) handleMessage(ctx context.Context, msg *ReceivedMessage) e
 		return err
 	}
 
+	msgType := baseMsg.Type
+
 	mb.mu.RLock()
-	handlers, exists := mb.handlers[baseMsg.Type]
+	handlers := mb.handlers[msgType]
 	mb.mu.RUnlock()
 
-	if !exists {
+	if len(handlers) == 0 {
 		mb.logger.Debug("No handlers registered for message type",
-			zap.String("type", string(baseMsg.Type)))
+			zap.String("type", string(msgType)),
+			zap.String("topic", msg.Topic))
 		return nil
 	}
 
-	// Execute all handlers for this message type
-	var lastErr error
+	// Process message with all registered handlers
 	for _, handler := range handlers {
-		if err := handler(ctx, msg); err != nil {
-			lastErr = err
-			mb.logger.Error("Message handler failed",
-				zap.Error(err),
-				zap.String("type", string(baseMsg.Type)),
-				zap.String("topic", msg.Topic))
+		go func(h MessageHandler) {
+			if err := h(ctx, msg); err != nil {
+				mb.logger.Error("Handler failed to process message",
+					zap.Error(err),
+					zap.String("type", string(msgType)),
+					zap.String("topic", msg.Topic),
+					zap.String("key", msg.Key))
+			}
+		}(handler)
+	}
+
+	mb.logger.Debug("Message processed",
+		zap.String("type", string(msgType)),
+		zap.String("topic", msg.Topic),
+		zap.Duration("processing_time", time.Since(start)))
+
+	return nil
+}
+
+// Stop gracefully shuts down the message bus
+func (mb *MessageBus) Stop() error {
+	mb.cancel()
+
+	var errs []error
+
+	if mb.producer != nil {
+		if err := mb.producer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close producer: %w", err))
 		}
 	}
 
-	duration := time.Since(start)
-	mb.logger.Debug("Message processed",
-		zap.String("type", string(baseMsg.Type)),
-		zap.Duration("duration", duration),
-		zap.Bool("success", lastErr == nil))
-
-	return lastErr
-}
-
-// Stop gracefully stops the message bus
-func (mb *MessageBus) Stop() error {
-	mb.logger.Info("Stopping message bus")
-
-	mb.cancel()
-
-	var producerErr, consumerErr error
-	if mb.producer != nil {
-		producerErr = mb.producer.Close()
-	}
 	if mb.consumer != nil {
-		consumerErr = mb.consumer.Close()
+		if err := mb.consumer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close consumer: %w", err))
+		}
 	}
 
-	if producerErr != nil {
-		return producerErr
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during shutdown: %v", errs)
 	}
-	return consumerErr
+
+	mb.logger.Info("Message bus stopped successfully")
+	return nil
 }
 
 // Health check methods
@@ -292,12 +306,4 @@ func (mb *MessageBus) GetMetrics() map[string]interface{} {
 		"status":              "running",
 		"uptime":              time.Since(time.Now()), // This would need proper tracking
 	}
-}
-
-// Helper function to parse JSON with better error handling
-func parseJSON(data []byte, v interface{}) error {
-	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("json unmarshal failed: %w", err)
-	}
-	return nil
 }
