@@ -5,27 +5,24 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
-
-	"github.com/orbit-cex/finalex/internal/trading/balance"
-	"github.com/orbit-cex/finalex/internal/trading/coordination"
-	"github.com/orbit-cex/finalex/internal/trading/model"
 )
 
 // AtomicExecutor handles atomic execution of cross-pair trades
 type AtomicExecutor struct {
 	logger          *zap.Logger
-	balanceService  *balance.Service
-	coordinator     *coordination.TradeCoordinator
-	rateCalculator  *SyntheticRateCalculator
+	balanceService  *BalanceService
+	coordinator     *TradeCoordinator
+	rateCalculator  RateCalculator
 	matchingEngines map[string]MatchingEngine
 	tradeStore      CrossPairTradeStore
 }
 
-// ExecutionResult represents the result of an atomic execution
-type ExecutionResult struct {
+// AtomicExecutionResult represents the result of an atomic execution
+type AtomicExecutionResult struct {
 	Trade         *CrossPairTrade
 	ActualRate    decimal.Decimal
 	Slippage      decimal.Decimal
@@ -36,9 +33,9 @@ type ExecutionResult struct {
 // NewAtomicExecutor creates a new atomic executor
 func NewAtomicExecutor(
 	logger *zap.Logger,
-	balanceService *balance.Service,
-	coordinator *coordination.TradeCoordinator,
-	rateCalculator *SyntheticRateCalculator,
+	balanceService *BalanceService,
+	coordinator *TradeCoordinator,
+	rateCalculator RateCalculator,
 	matchingEngines map[string]MatchingEngine,
 	tradeStore CrossPairTradeStore,
 ) *AtomicExecutor {
@@ -53,7 +50,7 @@ func NewAtomicExecutor(
 }
 
 // ExecuteOrder executes a cross-pair order atomically
-func (e *AtomicExecutor) ExecuteOrder(ctx context.Context, order *CrossPairOrder) (*ExecutionResult, error) {
+func (e *AtomicExecutor) ExecuteOrder(ctx context.Context, order *CrossPairOrder) (*AtomicExecutionResult, error) {
 	startTime := time.Now()
 
 	// Validate order is ready for execution
@@ -98,7 +95,7 @@ func (e *AtomicExecutor) ExecuteOrder(ctx context.Context, order *CrossPairOrder
 }
 
 // executeAtomicTrade executes the atomic two-leg trade
-func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPairOrder, route *CrossPairRoute) (*ExecutionResult, error) {
+func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPairOrder, route *CrossPairRoute) (*AtomicExecutionResult, error) {
 	// Create coordination context for atomic execution
 	coordCtx := &coordination.ExecutionContext{
 		TransactionID: uuid.New(),
@@ -181,8 +178,7 @@ func (e *AtomicExecutor) executeAtomicTrade(ctx context.Context, order *CrossPai
 	// Update order execution status
 	order.ExecutedQuantity = order.ExecutedQuantity.Add(order.Quantity)
 	order.ExecutedRate = &actualRate
-
-	return &ExecutionResult{
+	return &AtomicExecutionResult{
 		Trade:      trade,
 		ActualRate: actualRate,
 		Slippage:   slippage,
@@ -369,7 +365,7 @@ func (e *AtomicExecutor) calculateTotalFeeUSD(fees []CrossPairFee) decimal.Decim
 }
 
 // EstimateExecution provides an estimate of execution without actually executing
-func (e *AtomicExecutor) EstimateExecution(ctx context.Context, order *CrossPairOrder) (*ExecutionEstimate, error) {
+func (e *AtomicExecutor) EstimateExecution(ctx context.Context, order *CrossPairOrder) (*AtomicEstimate, error) {
 	// Get current rate
 	rateResult, err := e.rateCalculator.CalculateRate(order.FromAsset, order.ToAsset, order.Quantity)
 	if err != nil {
@@ -403,8 +399,7 @@ func (e *AtomicExecutor) EstimateExecution(ctx context.Context, order *CrossPair
 
 	actualRate := secondLegEstimate.OutputQuantity.Div(order.Quantity)
 	slippage := actualRate.Sub(rateResult.Route.SyntheticRate).Div(rateResult.Route.SyntheticRate).Abs()
-
-	return &ExecutionEstimate{
+	return &AtomicEstimate{
 		EstimatedRate:     actualRate,
 		EstimatedOutput:   secondLegEstimate.OutputQuantity,
 		EstimatedSlippage: slippage,
@@ -415,8 +410,8 @@ func (e *AtomicExecutor) EstimateExecution(ctx context.Context, order *CrossPair
 	}, nil
 }
 
-// ExecutionEstimate represents an estimated execution result
-type ExecutionEstimate struct {
+// AtomicEstimate represents an estimated execution result from AtomicExecutor
+type AtomicEstimate struct {
 	EstimatedRate     decimal.Decimal `json:"estimated_rate"`
 	EstimatedOutput   decimal.Decimal `json:"estimated_output"`
 	EstimatedSlippage decimal.Decimal `json:"estimated_slippage"`

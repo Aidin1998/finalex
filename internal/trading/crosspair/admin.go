@@ -221,9 +221,22 @@ func (a *AdminAPI) CancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get userID from query params or headers - for admin operations, we might use a system userID
+	userIDStr := r.URL.Query().Get("userID")
+	if userIDStr == "" {
+		// Use system/admin userID for admin operations
+		userIDStr = "00000000-0000-0000-0000-000000000000"
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
 	// TODO: Implement order cancellation
 	if a.engine != nil {
-		err := a.engine.CancelOrder(r.Context(), orderID)
+		err := a.engine.CancelOrder(r.Context(), orderID, userID)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to cancel order: %v", err), http.StatusInternalServerError)
 			return

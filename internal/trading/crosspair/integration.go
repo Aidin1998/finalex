@@ -237,7 +237,7 @@ func NewRealEventPublisher(eventPublisher EventPublisherInterface) *RealEventPub
 	return &RealEventPublisher{eventPublisher: eventPublisher}
 }
 
-func (p *RealEventPublisher) PublishOrderCreated(ctx context.Context, order *CrossPairOrder) error {
+func (p *RealEventPublisher) PublishOrderCreated(order *CrossPairOrder) error {
 	event := &OrderEvent{
 		Type:      "order_created",
 		OrderID:   order.ID,
@@ -245,10 +245,10 @@ func (p *RealEventPublisher) PublishOrderCreated(ctx context.Context, order *Cro
 		Order:     order,
 		Timestamp: time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(ctx, event)
+	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
 }
 
-func (p *RealEventPublisher) PublishOrderCompleted(ctx context.Context, order *CrossPairOrder) error {
+func (p *RealEventPublisher) PublishOrderCompleted(order *CrossPairOrder) error {
 	event := &OrderEvent{
 		Type:      "order_completed",
 		OrderID:   order.ID,
@@ -256,10 +256,10 @@ func (p *RealEventPublisher) PublishOrderCompleted(ctx context.Context, order *C
 		Order:     order,
 		Timestamp: time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(ctx, event)
+	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
 }
 
-func (p *RealEventPublisher) PublishOrderCancelled(ctx context.Context, order *CrossPairOrder) error {
+func (p *RealEventPublisher) PublishOrderCancelled(order *CrossPairOrder) error {
 	event := &OrderEvent{
 		Type:      "order_cancelled",
 		OrderID:   order.ID,
@@ -267,10 +267,10 @@ func (p *RealEventPublisher) PublishOrderCancelled(ctx context.Context, order *C
 		Order:     order,
 		Timestamp: time.Now(),
 	}
-	return p.eventPublisher.PublishOrderEvent(ctx, event)
+	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
 }
 
-func (p *RealEventPublisher) PublishTradeExecuted(ctx context.Context, trade *CrossPairTrade) error {
+func (p *RealEventPublisher) PublishTradeExecuted(trade *CrossPairTrade) error {
 	event := &TradeEvent{
 		Type:      "trade_executed",
 		TradeID:   trade.ID,
@@ -279,7 +279,29 @@ func (p *RealEventPublisher) PublishTradeExecuted(ctx context.Context, trade *Cr
 		Trade:     trade,
 		Timestamp: time.Now(),
 	}
-	return p.eventPublisher.PublishTradeEvent(ctx, event)
+	return p.eventPublisher.PublishTradeEvent(context.Background(), event)
+}
+
+func (p *RealEventPublisher) PublishOrderUpdated(order *CrossPairOrder) error {
+	event := &OrderEvent{
+		Type:      "order_updated",
+		OrderID:   order.ID,
+		UserID:    order.UserID,
+		Order:     order,
+		Timestamp: time.Now(),
+	}
+	return p.eventPublisher.PublishOrderEvent(context.Background(), event)
+}
+
+func (p *RealEventPublisher) PublishExecutionFailed(orderID uuid.UUID, reason string) error {
+	event := &ErrorEvent{
+		Type:      "execution_failed",
+		Error:     reason,
+		Context:   "cross_pair_order",
+		OrderID:   &orderID,
+		Timestamp: time.Now(),
+	}
+	return p.eventPublisher.PublishErrorEvent(context.Background(), event)
 }
 
 // RealMetricsCollector implements MetricsCollector using the platform's metrics system
@@ -360,7 +382,6 @@ func (e *RealAtomicExecutor) ExecuteAtomic(ctx context.Context, execution *Execu
 		return nil, fmt.Errorf("failed to acquire execution lock: %w", err)
 	}
 	defer e.coordService.ReleaseLock(ctx, lock)
-
 	// Execute the two legs atomically
 	leg1Order := &SpotOrder{
 		ID:       uuid.New(),
@@ -368,7 +389,7 @@ func (e *RealAtomicExecutor) ExecuteAtomic(ctx context.Context, execution *Execu
 		Pair:     execution.Leg1.Pair,
 		Side:     execution.Leg1.Side,
 		Type:     "market", // Force market orders for atomic execution
-		Quantity: execution.Leg1.Quantity,
+		Quantity: execution.Leg1.Quantity.InexactFloat64(),
 	}
 
 	leg2Order := &SpotOrder{
@@ -377,7 +398,7 @@ func (e *RealAtomicExecutor) ExecuteAtomic(ctx context.Context, execution *Execu
 		Pair:     execution.Leg2.Pair,
 		Side:     execution.Leg2.Side,
 		Type:     "market",
-		Quantity: execution.Leg2.Quantity,
+		Quantity: execution.Leg2.Quantity.InexactFloat64(),
 	}
 
 	// Execute leg 1

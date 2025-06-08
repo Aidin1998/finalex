@@ -9,44 +9,44 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"github.com/orbit-cex/finalex/internal/trading/orderbook"
+	"github.com/Aidin1998/finalex/internal/trading/orderbook"
 )
 
 // OrderbookAdapter adapts existing orderbook implementations to the CrossPair interface
 type OrderbookAdapter struct {
 	mu               sync.RWMutex
 	orderbookManager OrderbookManager
-	subscriptions    map[string][]func(orderbook.Orderbook)
+	subscriptions    map[string][]func(orderbook.OrderBookInterface)
 }
 
 // OrderbookManager interface for managing orderbooks
 type OrderbookManager interface {
-	GetOrderbook(pair string) (orderbook.Orderbook, error)
-	Subscribe(pair string, callback func(orderbook.Orderbook)) error
-	Unsubscribe(pair string, callback func(orderbook.Orderbook)) error
+	GetOrderbook(pair string) (orderbook.OrderBookInterface, error)
+	Subscribe(pair string, callback func(orderbook.OrderBookInterface)) error
+	Unsubscribe(pair string, callback func(orderbook.OrderBookInterface)) error
 }
 
 // NewOrderbookAdapter creates a new orderbook adapter
 func NewOrderbookAdapter(manager OrderbookManager) *OrderbookAdapter {
 	return &OrderbookAdapter{
 		orderbookManager: manager,
-		subscriptions:    make(map[string][]func(orderbook.Orderbook)),
+		subscriptions:    make(map[string][]func(orderbook.OrderBookInterface)),
 	}
 }
 
 // GetOrderbook implements OrderbookProvider interface
-func (a *OrderbookAdapter) GetOrderbook(pair string) (orderbook.Orderbook, error) {
+func (a *OrderbookAdapter) GetOrderbook(pair string) (orderbook.OrderBookInterface, error) {
 	return a.orderbookManager.GetOrderbook(pair)
 }
 
 // SubscribeToUpdates implements OrderbookProvider interface
-func (a *OrderbookAdapter) SubscribeToUpdates(pair string, callback func(orderbook.Orderbook)) error {
+func (a *OrderbookAdapter) SubscribeToUpdates(pair string, callback func(orderbook.OrderBookInterface)) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	// Add to our subscription list
 	if _, exists := a.subscriptions[pair]; !exists {
-		a.subscriptions[pair] = make([]func(orderbook.Orderbook), 0)
+		a.subscriptions[pair] = make([]func(orderbook.OrderBookInterface), 0)
 	}
 	a.subscriptions[pair] = append(a.subscriptions[pair], callback)
 
@@ -94,21 +94,21 @@ func NewMatchingEngineAdapter(engine interface{}) *MatchingEngineAdapter {
 
 // MockOrderbookProvider provides a mock implementation for testing
 type MockOrderbookProvider struct {
-	orderbooks map[string]orderbook.Orderbook
-	callbacks  map[string][]func(orderbook.Orderbook)
+	orderbooks map[string]orderbook.OrderBookInterface
+	callbacks  map[string][]func(orderbook.OrderBookInterface)
 	mu         sync.RWMutex
 }
 
 // NewMockOrderbookProvider creates a new mock orderbook provider
 func NewMockOrderbookProvider() *MockOrderbookProvider {
 	return &MockOrderbookProvider{
-		orderbooks: make(map[string]orderbook.Orderbook),
-		callbacks:  make(map[string][]func(orderbook.Orderbook)),
+		orderbooks: make(map[string]orderbook.OrderBookInterface),
+		callbacks:  make(map[string][]func(orderbook.OrderBookInterface)),
 	}
 }
 
 // GetOrderbook returns a mock orderbook
-func (m *MockOrderbookProvider) GetOrderbook(pair string) (orderbook.Orderbook, error) {
+func (m *MockOrderbookProvider) GetOrderbook(pair string) (orderbook.OrderBookInterface, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -120,12 +120,12 @@ func (m *MockOrderbookProvider) GetOrderbook(pair string) (orderbook.Orderbook, 
 }
 
 // SubscribeToUpdates adds a callback for orderbook updates
-func (m *MockOrderbookProvider) SubscribeToUpdates(pair string, callback func(orderbook.Orderbook)) error {
+func (m *MockOrderbookProvider) SubscribeToUpdates(pair string, callback func(orderbook.OrderBookInterface)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, exists := m.callbacks[pair]; !exists {
-		m.callbacks[pair] = make([]func(orderbook.Orderbook), 0)
+		m.callbacks[pair] = make([]func(orderbook.OrderBookInterface), 0)
 	}
 	m.callbacks[pair] = append(m.callbacks[pair], callback)
 	return nil
@@ -141,7 +141,7 @@ func (m *MockOrderbookProvider) UnsubscribeFromUpdates(pair string) error {
 }
 
 // SetOrderbook sets a mock orderbook for testing
-func (m *MockOrderbookProvider) SetOrderbook(pair string, ob orderbook.Orderbook) {
+func (m *MockOrderbookProvider) SetOrderbook(pair string, ob orderbook.OrderBookInterface) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

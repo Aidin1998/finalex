@@ -5,9 +5,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/trading/model"
 	"github.com/google/uuid"
-	"github.com/orbit-cex/finalex/internal/trading/model"
 	"github.com/shopspring/decimal"
+)
+
+// Status constants for model compatibility
+const (
+	OrderStatusPending   = "PENDING"
+	OrderStatusFilled    = "FILLED"
+	OrderStatusCanceled  = "CANCELED"
+	OrderStatusRejected  = "REJECTED"
+	OrderStatusPartially = "PARTIALLY_FILLED"
 )
 
 // CrossPairOrderType represents the type of cross-pair order
@@ -65,6 +74,7 @@ type CrossPairOrder struct {
 
 // CrossPairRoute represents the execution route for a cross-pair trade
 type CrossPairRoute struct {
+	ID            uuid.UUID       `json:"id" db:"id"`
 	BaseAsset     string          `json:"base_asset"`
 	FirstPair     string          `json:"first_pair"`     // e.g., "BTC-USDT"
 	SecondPair    string          `json:"second_pair"`    // e.g., "ETH-USDT"
@@ -72,7 +82,9 @@ type CrossPairRoute struct {
 	SecondRate    decimal.Decimal `json:"second_rate"`    // Rate for second leg
 	SyntheticRate decimal.Decimal `json:"synthetic_rate"` // Combined rate
 	Confidence    decimal.Decimal `json:"confidence"`     // Confidence score (0-1)
-	UpdatedAt     time.Time       `json:"updated_at"`
+	Active        bool            `json:"active" db:"active"`
+	CreatedAt     time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at" db:"updated_at"`
 }
 
 // CrossPairFee represents fees for cross-pair trading
@@ -111,6 +123,7 @@ type CrossPairTradeLeg struct {
 	CommissionAsset   string             `json:"commission_asset"`
 	TradeID           uuid.UUID          `json:"trade_id"` // Reference to underlying spot trade
 	ExecutedAt        time.Time          `json:"executed_at"`
+	Fees              []CrossPairFee     `json:"fees"` // Added missing Fees field
 	OrderBookSnapshot *OrderBookSnapshot `json:"orderbook_snapshot,omitempty"`
 }
 
@@ -139,6 +152,52 @@ type CrossPairMetrics struct {
 	Volume24h        decimal.Decimal `json:"volume_24h"`
 	TradeCount24h    int64           `json:"trade_count_24h"`
 	LastUpdate       time.Time       `json:"last_update"`
+}
+
+// ExecutionPlan represents a plan for executing a cross-pair order
+type ExecutionPlan struct {
+	OrderID      uuid.UUID       `json:"order_id"`
+	UserID       uuid.UUID       `json:"user_id"`
+	Leg1         *TradeExecution `json:"leg1"`
+	Leg2         *TradeExecution `json:"leg2"`
+	EstimatedFee decimal.Decimal `json:"estimated_fee"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ExecutionResult represents the result of executing a cross-pair order
+type ExecutionResult struct {
+	OrderID     uuid.UUID       `json:"order_id"`
+	Success     bool            `json:"success"`
+	Leg1TradeID uuid.UUID       `json:"leg1_trade_id"`
+	Leg2TradeID uuid.UUID       `json:"leg2_trade_id"`
+	ExecutedAt  time.Time       `json:"executed_at"`
+	TotalFee    decimal.Decimal `json:"total_fee"`
+	Error       string          `json:"error,omitempty"`
+}
+
+// ExecutionEstimate represents an estimate for executing a cross-pair order
+type ExecutionEstimate struct {
+	EstimatedPrice    decimal.Decimal `json:"estimated_price"`
+	EstimatedSlippage decimal.Decimal `json:"estimated_slippage"`
+	EstimatedFee      decimal.Decimal `json:"estimated_fee"`
+	Confidence        decimal.Decimal `json:"confidence"`
+	CanExecute        bool            `json:"can_execute"`
+	Timestamp         time.Time       `json:"timestamp"`
+}
+
+// TradeExecution represents a trade execution for a single leg
+type TradeExecution struct {
+	Pair     string          `json:"pair"`
+	Side     string          `json:"side"`
+	Quantity decimal.Decimal `json:"quantity"`
+	Price    decimal.Decimal `json:"price"`
+	Fee      decimal.Decimal `json:"fee"`
+}
+
+// OrderbookProvider interface for getting orderbook data
+type OrderbookProvider interface {
+	GetOrderbook(ctx context.Context, pair string) (*model.OrderBook, error)
+	GetBestBidAsk(ctx context.Context, pair string) (bid, ask decimal.Decimal, err error)
 }
 
 // Validation methods
@@ -179,6 +238,32 @@ func (o *CrossPairOrder) CanExecute() bool {
 // GetRemainingQuantity returns the remaining quantity to be executed
 func (o *CrossPairOrder) GetRemainingQuantity() decimal.Decimal {
 	return o.Quantity.Sub(o.ExecutedQuantity)
+}
+
+// Validate validates a CrossPairRoute
+func (r *CrossPairRoute) Validate() error {
+	if r.BaseAsset == "" {
+		return NewCrossPairError("INVALID_BASE_ASSET", "base asset is required")
+	}
+	if r.FirstPair == "" {
+		return NewCrossPairError("INVALID_FIRST_PAIR", "first pair is required")
+	}
+	if r.SecondPair == "" {
+		return NewCrossPairError("INVALID_SECOND_PAIR", "second pair is required")
+	}
+	if r.FirstRate.LessThanOrEqual(decimal.Zero) {
+		return NewCrossPairError("INVALID_FIRST_RATE", "first rate must be greater than zero")
+	}
+	if r.SecondRate.LessThanOrEqual(decimal.Zero) {
+		return NewCrossPairError("INVALID_SECOND_RATE", "second rate must be greater than zero")
+	}
+	if r.SyntheticRate.LessThanOrEqual(decimal.Zero) {
+		return NewCrossPairError("INVALID_SYNTHETIC_RATE", "synthetic rate must be greater than zero")
+	}
+	if r.Confidence.LessThan(decimal.Zero) || r.Confidence.GreaterThan(decimal.NewFromFloat(1.0)) {
+		return NewCrossPairError("INVALID_CONFIDENCE", "confidence must be between 0 and 1")
+	}
+	return nil
 }
 
 // Error definitions
@@ -222,7 +307,7 @@ type RateCalculationResult struct {
 
 // RateCalculator interface for calculating synthetic rates
 type RateCalculator interface {
-	CalculateRate(fromAsset, toAsset string) (decimal.Decimal, error)
+	CalculateRate(fromAsset, toAsset string, quantity decimal.Decimal) (*RateCalculationResult, error)
 	CalculateRateWithDetails(fromAsset, toAsset string, quantity decimal.Decimal) (*RateCalculationResult, error)
 	GetBestRoute(fromAsset, toAsset string) (*CrossPairRoute, error)
 	Subscribe(callback func(pair string, buyRate, sellRate float64, confidence float64, route interface{}))
@@ -242,17 +327,34 @@ func NewSyntheticRateCalculator() *SyntheticRateCalculator {
 }
 
 // CalculateRate calculates the synthetic rate between two assets
-func (src *SyntheticRateCalculator) CalculateRate(fromAsset, toAsset string) (decimal.Decimal, error) {
+func (src *SyntheticRateCalculator) CalculateRate(fromAsset, toAsset string, quantity decimal.Decimal) (*RateCalculationResult, error) {
 	src.mutex.RLock()
 	defer src.mutex.RUnlock()
 
 	routeKey := fromAsset + "-" + toAsset
 	route, exists := src.routes[routeKey]
 	if !exists {
-		return decimal.Zero, ErrRouteNotFound
+		return nil, ErrRouteNotFound
 	}
 
-	return route.SyntheticRate, nil
+	// Calculate estimated slippage based on quantity
+	estimatedSlippage := decimal.NewFromFloat(0.001) // 0.1% default slippage
+	if quantity.GreaterThan(decimal.NewFromFloat(10000)) {
+		estimatedSlippage = decimal.NewFromFloat(0.005) // 0.5% for large orders
+	}
+
+	// Estimate liquidity in USD (simplified)
+	liquidityUSD := decimal.NewFromFloat(100000) // $100k default liquidity
+
+	result := &RateCalculationResult{
+		Route:             route,
+		EstimatedSlippage: estimatedSlippage,
+		Confidence:        route.Confidence,
+		LiquidityUSD:      liquidityUSD,
+		EstimatedFees:     []CrossPairFee{}, // Empty for now
+	}
+
+	return result, nil
 }
 
 // GetBestRoute returns the best route for trading between two assets
@@ -309,6 +411,18 @@ func (src *SyntheticRateCalculator) UpdateRoute(route *CrossPairRoute) {
 	src.routes[routeKey] = route
 }
 
+// GetCacheStats returns cache statistics
+func (src *SyntheticRateCalculator) GetCacheStats() map[string]interface{} {
+	src.mutex.RLock()
+	defer src.mutex.RUnlock()
+
+	return map[string]interface{}{
+		"total_routes": len(src.routes),
+		"cache_hits":   0, // placeholder
+		"cache_misses": 0, // placeholder
+	}
+}
+
 // Subscribe subscribes to rate updates (placeholder implementation)
 func (src *SyntheticRateCalculator) Subscribe(callback func(pair string, buyRate, sellRate float64, confidence float64, route interface{})) {
 	// Placeholder implementation - in a real implementation, this would
@@ -320,7 +434,7 @@ func (src *SyntheticRateCalculator) Subscribe(callback func(pair string, buyRate
 type MatchingEngine interface {
 	ExecuteMarketOrder(ctx context.Context, order *model.Order) (*model.Trade, error)
 	ExecuteLimitOrder(ctx context.Context, order *model.Order) (*model.Trade, error)
-	GetOrderbook(ctx context.Context) (*model.Orderbook, error)
+	GetOrderbook(ctx context.Context) (*OrderBookSnapshot, error)
 }
 
 // CrossPairEngineConfig contains configuration for the cross-pair engine
@@ -336,4 +450,22 @@ type CrossPairEngineConfig struct {
 	MaxConcurrentOrders     int
 	OrderTimeout            time.Duration
 	QueueSize               int
+}
+
+// OrderStats contains statistics about orders
+type OrderStats struct {
+	TotalOrders     int64              `json:"total_orders"`
+	CompletedOrders int64              `json:"completed_orders"`
+	CancelledOrders int64              `json:"cancelled_orders"`
+	TotalVolume     float64            `json:"total_volume"`
+	TotalFees       float64            `json:"total_fees"`
+	VolumeByPair    map[string]float64 `json:"volume_by_pair"`
+}
+
+// VolumeStats contains statistics about trading volume
+type VolumeStats struct {
+	TotalVolume   float64            `json:"total_volume"`
+	VolumeByPair  map[string]float64 `json:"volume_by_pair"`
+	TradeCount    int64              `json:"trade_count"`
+	UniqueTraders int64              `json:"unique_traders"`
 }

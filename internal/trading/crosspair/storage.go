@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -365,6 +366,282 @@ func (s *PostgreSQLStorage) CleanupExpiredOrders(ctx context.Context, before tim
 
 	rowsAffected, err := result.RowsAffected()
 	return rowsAffected, err
+}
+
+// InMemoryStorage implements Storage using in-memory data structures for testing
+type InMemoryStorage struct {
+	orders map[uuid.UUID]*CrossPairOrder
+	trades map[uuid.UUID]*CrossPairTrade
+	routes map[uuid.UUID]*CrossPairRoute
+	mutex  sync.RWMutex
+}
+
+// NewInMemoryStorage creates a new in-memory storage instance
+func NewInMemoryStorage() Storage {
+	return &InMemoryStorage{
+		orders: make(map[uuid.UUID]*CrossPairOrder),
+		trades: make(map[uuid.UUID]*CrossPairTrade),
+		routes: make(map[uuid.UUID]*CrossPairRoute),
+	}
+}
+
+// Order management
+func (s *InMemoryStorage) CreateOrder(ctx context.Context, order *CrossPairOrder) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if order.ID == uuid.Nil {
+		order.ID = uuid.New()
+	}
+	order.CreatedAt = time.Now()
+	order.UpdatedAt = time.Now()
+
+	s.orders[order.ID] = order
+	return nil
+}
+
+func (s *InMemoryStorage) GetOrder(ctx context.Context, orderID uuid.UUID) (*CrossPairOrder, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	order, exists := s.orders[orderID]
+	if !exists {
+		return nil, ErrOrderNotFound
+	}
+	return order, nil
+}
+
+func (s *InMemoryStorage) GetOrdersByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*CrossPairOrder, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var orders []*CrossPairOrder
+	count := 0
+	skipped := 0
+
+	for _, order := range s.orders {
+		if order.UserID == userID {
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			if count >= limit {
+				break
+			}
+			orders = append(orders, order)
+			count++
+		}
+	}
+
+	return orders, nil
+}
+
+func (s *InMemoryStorage) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status OrderStatus) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	order, exists := s.orders[orderID]
+	if !exists {
+		return ErrOrderNotFound
+	}
+
+	order.Status = status
+	order.UpdatedAt = time.Now()
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateOrderExecution(ctx context.Context, orderID uuid.UUID, executedQuantity float64, avgPrice float64) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	order, exists := s.orders[orderID]
+	if !exists {
+		return ErrOrderNotFound
+	}
+
+	order.ExecutedQuantity = decimal.NewFromFloat(executedQuantity)
+	if avgPrice > 0 {
+		price := decimal.NewFromFloat(avgPrice)
+		order.ExecutedRate = &price
+	}
+	order.UpdatedAt = time.Now()
+	return nil
+}
+
+// Trade management
+func (s *InMemoryStorage) CreateTrade(ctx context.Context, trade *CrossPairTrade) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if trade.ID == uuid.Nil {
+		trade.ID = uuid.New()
+	}
+	trade.CreatedAt = time.Now()
+
+	s.trades[trade.ID] = trade
+	return nil
+}
+
+func (s *InMemoryStorage) GetTradesByOrder(ctx context.Context, orderID uuid.UUID) ([]*CrossPairTrade, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var trades []*CrossPairTrade
+	for _, trade := range s.trades {
+		if trade.OrderID == orderID {
+			trades = append(trades, trade)
+		}
+	}
+
+	return trades, nil
+}
+
+func (s *InMemoryStorage) GetTradesByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*CrossPairTrade, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var trades []*CrossPairTrade
+	count := 0
+	skipped := 0
+
+	for _, trade := range s.trades {
+		if trade.UserID == userID {
+			if skipped < offset {
+				skipped++
+				continue
+			}
+			if count >= limit {
+				break
+			}
+			trades = append(trades, trade)
+			count++
+		}
+	}
+
+	return trades, nil
+}
+
+// Route management
+func (s *InMemoryStorage) CreateRoute(ctx context.Context, route *CrossPairRoute) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if route.ID == uuid.Nil {
+		route.ID = uuid.New()
+	}
+	route.CreatedAt = time.Now()
+	route.UpdatedAt = time.Now()
+
+	s.routes[route.ID] = route
+	return nil
+}
+
+func (s *InMemoryStorage) GetRoute(ctx context.Context, routeID uuid.UUID) (*CrossPairRoute, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	route, exists := s.routes[routeID]
+	if !exists {
+		return nil, ErrRouteNotFound
+	}
+	return route, nil
+}
+
+func (s *InMemoryStorage) GetRouteByPair(ctx context.Context, baseCurrency, quoteCurrency string) (*CrossPairRoute, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, route := range s.routes {
+		if route.FirstPair == baseCurrency+"-"+route.BaseAsset &&
+			route.SecondPair == route.BaseAsset+"-"+quoteCurrency {
+			return route, nil
+		}
+	}
+
+	return nil, ErrRouteNotFound
+}
+
+// Analytics
+func (s *InMemoryStorage) GetOrderStats(ctx context.Context, userID *uuid.UUID, from, to time.Time) (*OrderStats, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	stats := &OrderStats{
+		VolumeByPair: make(map[string]float64),
+	}
+
+	for _, order := range s.orders {
+		if userID != nil && order.UserID != *userID {
+			continue
+		}
+		if order.CreatedAt.Before(from) || order.CreatedAt.After(to) {
+			continue
+		}
+
+		stats.TotalOrders++
+
+		switch order.Status {
+		case CrossPairOrderCompleted:
+			stats.CompletedOrders++
+		case CrossPairOrderCanceled:
+			stats.CancelledOrders++
+		}
+
+		if order.ExecutedQuantity.GreaterThan(decimal.Zero) && order.ExecutedRate != nil {
+			volume := order.ExecutedQuantity.Mul(*order.ExecutedRate)
+			stats.TotalVolume += volume.InexactFloat64()
+		}
+	}
+
+	return stats, nil
+}
+
+func (s *InMemoryStorage) GetVolumeStats(ctx context.Context, from, to time.Time) (*VolumeStats, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	stats := &VolumeStats{
+		VolumeByPair: make(map[string]float64),
+	}
+
+	uniqueTraders := make(map[uuid.UUID]bool)
+
+	for _, trade := range s.trades {
+		if trade.CreatedAt.Before(from) || trade.CreatedAt.After(to) {
+			continue
+		}
+
+		stats.TradeCount++
+		uniqueTraders[trade.UserID] = true
+
+		volume := trade.Quantity.Mul(trade.ExecutedRate)
+		stats.TotalVolume += volume.InexactFloat64()
+
+		pair := trade.FromAsset + "/" + trade.ToAsset
+		stats.VolumeByPair[pair] += volume.InexactFloat64()
+	}
+
+	stats.UniqueTraders = int64(len(uniqueTraders))
+
+	return stats, nil
+}
+
+// Cleanup
+func (s *InMemoryStorage) CleanupExpiredOrders(ctx context.Context, before time.Time) (int64, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	var deletedCount int64
+
+	for orderID, order := range s.orders {
+		if (order.Status == CrossPairOrderPending || order.Status == CrossPairOrderExecuting) &&
+			order.ExpiresAt != nil && order.ExpiresAt.Before(before) {
+			delete(s.orders, orderID)
+			deletedCount++
+		}
+	}
+
+	return deletedCount, nil
 }
 
 // Migration SQL for database setup
