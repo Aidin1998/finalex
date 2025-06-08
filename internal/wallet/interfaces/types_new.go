@@ -390,6 +390,16 @@ type FireblocksAssetBalance struct {
 	Total     decimal.Decimal `json:"total"`
 }
 
+// VaultAccountBalance is a stub for Fireblocks vault account balance
+// Add fields as needed for your use case
+// This is just a placeholder to allow compilation
+type VaultAccountBalance struct {
+	Asset     string `json:"asset"`
+	Total     string `json:"total"`
+	Locked    string `json:"locked"`
+	Available string `json:"available"`
+}
+
 // Additional Fireblocks types for interfaces
 
 // FireblocksVault represents a Fireblocks vault account

@@ -333,3 +333,5 @@ func (sm *TransactionStateMachine) GetAllowedTransitions(ctx context.Context, tx
 	}
 	return sm.GetValidTransitions(tx.Status), nil
 }
+
+// Remove duplicate type/function declarations below this line if present

@@ -388,3 +388,40 @@ func (c *DatabaseConfig) GetDSN() string {
 func (c *RedisConfig) GetRedisAddresses() []string {
 	return c.Addresses
 }
+
+// LoadConfigFromFile loads wallet configuration from a file
+func LoadConfigFromFile(configPath string) (*WalletConfig, error) {
+	// For now, return a default configuration
+	// TODO: Implement actual file loading with YAML/JSON parsing
+	return &WalletConfig{
+		Database: DatabaseConfig{
+			Host:            "localhost",
+			Port:            5432,
+			Username:        "wallet",
+			Password:        "password",
+			Database:        "wallet_db",
+			SSLMode:         "disable",
+			MaxConnections:  100,
+			MaxIdleConns:    10,
+			ConnMaxLifetime: 30 * time.Minute,
+			Timeout:         30 * time.Second,
+		},
+		Redis: RedisConfig{
+			Addresses:    []string{"localhost:6379"},
+			Password:     "",
+			Database:     0,
+			PoolSize:     100,
+			MinIdleConns: 10,
+			DialTimeout:  5 * time.Second,
+			ReadTimeout:  3 * time.Second,
+			WriteTimeout: 3 * time.Second,
+			MaxRetries:   3,
+		},
+		Cache: CacheConfig{
+			TTL:       10 * time.Minute,
+			KeyPrefix: "wallet:",
+		},
+		Assets:   make(map[string]AssetConfig),
+		Networks: make(map[string]NetworkConfig),
+	}, nil
+}

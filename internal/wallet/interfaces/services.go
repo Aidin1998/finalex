@@ -154,8 +154,13 @@ type WalletRepository interface { // Transaction operations
 	GetTransactionByFireblocksID(ctx context.Context, fireblocksID string) (*WalletTransaction, error)
 	GetTransactionByTxHash(ctx context.Context, txHash string) (*WalletTransaction, error)
 	GetTransactionsByStatus(ctx context.Context, status TxStatus, limit int) ([]*WalletTransaction, error)
+	GetTransactionsByStatuses(ctx context.Context, statuses []TxStatus, limit int) ([]*WalletTransaction, error)
+	UpdateTransactionConfirmations(ctx context.Context, txID uuid.UUID, confirmations int) error
+	UpdateTransactionHash(ctx context.Context, txID uuid.UUID, txHash string) error
 	CountPendingDeposits(ctx context.Context, userID uuid.UUID) (int, error)
 	GetDailyWithdrawalTotal(ctx context.Context, userID uuid.UUID, asset string, date time.Time) (decimal.Decimal, error)
+	GetTotalUserBalance(ctx context.Context, asset string) (decimal.Decimal, error)
+	ArchiveOldTransactions(ctx context.Context, cutoff time.Time) (int, error)
 
 	// Balance operations
 	GetBalance(ctx context.Context, userID uuid.UUID, asset string) (*WalletBalance, error)
@@ -183,7 +188,7 @@ type WalletRepository interface { // Transaction operations
 	DeleteFundLockInTx(ctx context.Context, tx *gorm.DB, lockID uuid.UUID) error
 	GetUserFundLocks(ctx context.Context, userID uuid.UUID, asset string) ([]*FundLock, error)
 	GetExpiredFundLocks(ctx context.Context, expiredBefore time.Time) ([]*FundLock, error)
-	CleanupExpiredLocks(ctx context.Context) error
+	CleanupExpiredLocks(ctx context.Context) (int, error)
 	CountUserLocks(ctx context.Context, userID uuid.UUID) (int, error)
 
 	// Balance operations for state machine
@@ -270,9 +275,9 @@ type NotificationService interface {
 }
 
 // FireblocksClient handles communication with Fireblocks API
-type FireblocksClient interface {
-	// Vault operations
+type FireblocksClient interface { // Vault operations
 	GetVaultAccounts(ctx context.Context) ([]*FireblocksVault, error)
+	GetVaultAccountBalances(ctx context.Context, vaultAccountID string) ([]*VaultAccountBalance, error)
 	GetAssetBalance(ctx context.Context, vaultID, assetID string) (*FireblocksBalance, error)
 
 	// Address operations

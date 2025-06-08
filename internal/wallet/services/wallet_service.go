@@ -13,13 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 // WalletService implements the main wallet functionality
 type WalletService struct {
 	// Core dependencies
-	db     *gorm.DB
 	logger *zap.Logger
 	config *config.WalletConfig
 
@@ -261,6 +259,23 @@ func (w *WalletService) GetUserTransactions(ctx context.Context, userID uuid.UUI
 	return w.repository.GetUserTransactions(ctx, userID, limit, offset)
 }
 
+// ListTransactions returns user transactions for asset, direction, limit, offset
+func (w *WalletService) ListTransactions(ctx context.Context, userID uuid.UUID, asset string, direction string, limit, offset int) ([]*interfaces.WalletTransaction, int64, error) {
+	// This is a stub implementation. You may want to implement filtering by asset and direction in repository.
+	txs, err := w.repository.GetUserTransactions(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Optionally filter by asset and direction
+	var filtered []*interfaces.WalletTransaction
+	for _, tx := range txs {
+		if (asset == "" || tx.Asset == asset) && (direction == "" || string(tx.Direction) == direction) {
+			filtered = append(filtered, tx)
+		}
+	}
+	return filtered, int64(len(filtered)), nil
+}
+
 // Address operations
 
 // GenerateAddress generates new deposit address
@@ -276,6 +291,21 @@ func (w *WalletService) GenerateAddress(ctx context.Context, userID uuid.UUID, a
 // GetUserAddresses gets user addresses
 func (w *WalletService) GetUserAddresses(ctx context.Context, userID uuid.UUID, asset string) ([]*interfaces.DepositAddress, error) {
 	return w.addressManager.GetUserAddresses(ctx, userID, asset)
+}
+
+// GetDepositAddress gets deposit address for user/asset/network
+func (w *WalletService) GetDepositAddress(ctx context.Context, userID uuid.UUID, asset, network string) (*interfaces.DepositAddress, error) {
+	// There is no direct GetDepositAddress on AddressManager, so use GetUserAddresses and filter
+	addresses, err := w.addressManager.GetUserAddresses(ctx, userID, asset)
+	if err != nil {
+		return nil, err
+	}
+	for _, addr := range addresses {
+		if addr.Network == network {
+			return addr, nil
+		}
+	}
+	return nil, fmt.Errorf("no deposit address found for asset %s on network %s", asset, network)
 }
 
 // ValidateAddress validates address format and requirements

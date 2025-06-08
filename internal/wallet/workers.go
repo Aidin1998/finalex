@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shopspring/decimal"
+	"go.uber.org/zap"
+
 	"github.com/Aidin1998/finalex/internal/wallet/config"
 	"github.com/Aidin1998/finalex/internal/wallet/interfaces"
 	"github.com/Aidin1998/finalex/internal/wallet/state"
@@ -57,19 +60,18 @@ func (w *ConfirmationWorker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.processConfirmations(ctx); err != nil {
-				w.log.Error("failed to process confirmations", "error", err)
+				w.log.Error("failed to process confirmations", zap.Error(err))
 			}
 		}
 	}
 }
 
 // processConfirmations processes pending transactions for confirmations
-func (w *ConfirmationWorker) processConfirmations(ctx context.Context) error {
-	// Get pending transactions
-	transactions, err := w.repository.GetTransactionsByStatus(ctx, []interfaces.TxStatus{
+func (w *ConfirmationWorker) processConfirmations(ctx context.Context) error { // Get pending transactions
+	transactions, err := w.repository.GetTransactionsByStatuses(ctx, []interfaces.TxStatus{
 		interfaces.TxStatusPending,
 		interfaces.TxStatusConfirming,
-	})
+	}, 100)
 	if err != nil {
 		return fmt.Errorf("failed to get pending transactions: %w", err)
 	}
@@ -77,8 +79,8 @@ func (w *ConfirmationWorker) processConfirmations(ctx context.Context) error {
 	for _, tx := range transactions {
 		if err := w.processTransaction(ctx, tx); err != nil {
 			w.log.Error("failed to process transaction confirmation",
-				"tx_id", tx.ID,
-				"error", err,
+				zap.String("tx_id", tx.ID.String()),
+				zap.Error(err),
 			)
 		}
 	}
@@ -110,7 +112,9 @@ func (w *ConfirmationWorker) processTransaction(ctx context.Context, tx *interfa
 	// Update transaction hash if available
 	if fbTx.TxHash != "" && fbTx.TxHash != tx.TxHash {
 		if err := w.repository.UpdateTransactionHash(ctx, tx.ID, fbTx.TxHash); err != nil {
-			w.log.Warn("failed to update transaction hash", "tx_id", tx.ID, "error", err)
+			w.log.Warn("failed to update transaction hash",
+				zap.String("tx_id", tx.ID.String()),
+				zap.Error(err))
 		}
 		tx.TxHash = fbTx.TxHash
 	}
@@ -230,7 +234,7 @@ func (w *CleanupWorker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.performCleanup(ctx); err != nil {
-				w.log.Error("failed to perform cleanup", "error", err)
+				w.log.Error("failed to perform cleanup", zap.Error(err))
 			}
 		}
 	}
@@ -240,12 +244,12 @@ func (w *CleanupWorker) run(ctx context.Context) {
 func (w *CleanupWorker) performCleanup(ctx context.Context) error {
 	// Clean up expired fund locks
 	if err := w.cleanupExpiredLocks(ctx); err != nil {
-		w.log.Error("failed to cleanup expired locks", "error", err)
+		w.log.Error("failed to cleanup expired locks", zap.Error(err))
 	}
 
 	// Clean up old transaction data (optional)
 	if err := w.cleanupOldTransactions(ctx); err != nil {
-		w.log.Error("failed to cleanup old transactions", "error", err)
+		w.log.Error("failed to cleanup old transactions", zap.Error(err))
 	}
 
 	return nil
@@ -259,7 +263,7 @@ func (w *CleanupWorker) cleanupExpiredLocks(ctx context.Context) error {
 	}
 
 	if count > 0 {
-		w.log.Info("cleaned up expired fund locks", "count", count)
+		w.log.Info("cleaned up expired fund locks", zap.Int("count", count))
 	}
 
 	return nil
@@ -276,7 +280,7 @@ func (w *CleanupWorker) cleanupOldTransactions(ctx context.Context) error {
 	}
 
 	if count > 0 {
-		w.log.Info("archived old transactions", "count", count, "cutoff", cutoff)
+		w.log.Info("archived old transactions", zap.Int("count", count), zap.Time("cutoff", cutoff))
 	}
 
 	return nil
@@ -327,7 +331,7 @@ func (w *BalanceSyncWorker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.synchronizeBalances(ctx); err != nil {
-				w.log.Error("failed to synchronize balances", "error", err)
+				w.log.Error("failed to synchronize balances", zap.Error(err))
 			}
 		}
 	}
@@ -343,15 +347,15 @@ func (w *BalanceSyncWorker) synchronizeBalances(ctx context.Context) error {
 
 	// Process each asset balance
 	for _, fbBalance := range fbBalances {
-		assetConfig, exists := w.config.GetAssetConfig(fbBalance.AssetID)
+		assetConfig, exists := w.config.GetAssetConfig(fbBalance.Asset)
 		if !exists {
 			continue // Skip unconfigured assets
 		}
 
 		if err := w.syncAssetBalance(ctx, assetConfig.Symbol, fbBalance); err != nil {
 			w.log.Error("failed to sync asset balance",
-				"asset", assetConfig.Symbol,
-				"error", err,
+				zap.String("asset", assetConfig.Symbol),
+				zap.Error(err),
 			)
 		}
 	}
@@ -366,16 +370,18 @@ func (w *BalanceSyncWorker) syncAssetBalance(ctx context.Context, asset string, 
 	if err != nil {
 		return fmt.Errorf("failed to get total user balance: %w", err)
 	}
-
 	// Compare with Fireblocks balance
-	fbTotal := fbBalance.Available.Add(fbBalance.Pending)
+	fbTotal, err := decimal.NewFromString(fbBalance.Total)
+	if err != nil {
+		return fmt.Errorf("failed to parse Fireblocks total balance: %w", err)
+	}
 
 	if !totalUserBalance.Equal(fbTotal) {
 		w.log.Warn("balance mismatch detected",
-			"asset", asset,
-			"user_total", totalUserBalance,
-			"fireblocks_total", fbTotal,
-			"difference", fbTotal.Sub(totalUserBalance),
+			zap.String("asset", asset),
+			zap.String("user_total", totalUserBalance.String()),
+			zap.String("fireblocks_total", fbTotal.String()),
+			zap.String("difference", fbTotal.Sub(totalUserBalance).String()),
 		)
 
 		// TODO: Implement balance reconciliation logic
@@ -429,7 +435,7 @@ func (w *WebhookWorker) ProcessWebhook(webhook interfaces.FireblocksWebhook) {
 	select {
 	case w.webhookCh <- webhook:
 	default:
-		w.log.Warn("webhook queue full, dropping webhook", "webhook_id", webhook.Data.ID)
+		w.log.Warn("webhook queue full, dropping webhook", zap.String("webhook_id", webhook.Data.ID))
 	}
 }
 
@@ -444,8 +450,8 @@ func (w *WebhookWorker) run(ctx context.Context) {
 		case webhook := <-w.webhookCh:
 			if err := w.processWebhook(ctx, webhook); err != nil {
 				w.log.Error("failed to process webhook",
-					"webhook_id", webhook.Data.ID,
-					"error", err,
+					zap.String("webhook_id", webhook.Data.ID),
+					zap.Error(err),
 				)
 			}
 		}
@@ -460,7 +466,7 @@ func (w *WebhookWorker) processWebhook(ctx context.Context, webhook interfaces.F
 	case "TRANSACTION_CREATED":
 		return w.processTransactionCreated(ctx, webhook.Data)
 	default:
-		w.log.Debug("ignoring webhook type", "type", webhook.Type)
+		w.log.Debug("ignoring webhook type", zap.String("type", webhook.Type))
 		return nil
 	}
 }
@@ -471,7 +477,7 @@ func (w *WebhookWorker) processTransactionUpdate(ctx context.Context, data inter
 	tx, err := w.repository.GetTransactionByFireblocksID(ctx, data.ID)
 	if err != nil {
 		// Transaction might not exist in our system (external transaction)
-		w.log.Debug("transaction not found for webhook", "fireblocks_id", data.ID)
+		w.log.Debug("transaction not found for webhook", zap.String("fireblocks_id", data.ID))
 		return nil
 	}
 
@@ -485,7 +491,7 @@ func (w *WebhookWorker) processTransactionUpdate(ctx context.Context, data inter
 	// Update transaction hash
 	if data.TxHash != "" && data.TxHash != tx.TxHash {
 		if err := w.repository.UpdateTransactionHash(ctx, tx.ID, data.TxHash); err != nil {
-			w.log.Warn("failed to update transaction hash", "tx_id", tx.ID, "error", err)
+			w.log.Warn("failed to update transaction hash", zap.String("tx_id", tx.ID.String()), zap.Error(err))
 		}
 	}
 
@@ -574,12 +580,11 @@ func (w *WebhookWorker) createExternalDeposit(ctx context.Context, data interfac
 	// 2. Creating a new deposit transaction
 	// 3. Crediting the user's balance
 	// 4. Sending notifications
-
 	w.log.Info("external deposit detected",
-		"fireblocks_id", data.ID,
-		"asset", data.AssetID,
-		"amount", data.Amount,
-		"destination", data.Destination.ID,
+		zap.String("fireblocks_id", data.ID),
+		zap.String("asset", data.AssetID),
+		zap.String("amount", data.Amount),
+		zap.String("destination", data.Destination.ID),
 	)
 
 	return nil

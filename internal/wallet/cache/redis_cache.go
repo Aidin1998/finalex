@@ -423,6 +423,21 @@ func (c *RedisWalletCache) FlushUserCache(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
+// Delete removes a key from the cache (required by WalletCache interface)
+func (c *RedisWalletCache) Delete(ctx context.Context, key string) error {
+	if err := c.client.Del(ctx, key).Err(); err != nil {
+		c.log.Error("failed to delete key from cache", zap.Error(err), zap.String("key", key))
+		return err
+	}
+	return nil
+}
+
+// Clear is a stub method to satisfy the WalletCache interface
+func (c *RedisWalletCache) Clear(ctx context.Context) error {
+	// No-op stub
+	return nil
+}
+
 // Key generation helpers
 func (c *RedisWalletCache) balanceKey(userID uuid.UUID, asset string) string {
 	return fmt.Sprintf("%s:balance:%s:%s", c.prefix, userID.String(), asset)
@@ -454,4 +469,65 @@ func (c *RedisWalletCache) lockKey(lockKey string) string {
 
 func (c *RedisWalletCache) addressValidationKey(address string) string {
 	return fmt.Sprintf("%s:validation:%s", c.prefix, address)
+}
+
+// Get implements a generic get for the WalletCache interface
+func (c *RedisWalletCache) Get(ctx context.Context, key string) (interface{}, error) {
+	data, err := c.client.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, ErrCacheMiss
+		}
+		c.log.Error("failed to get key from cache", zap.Error(err), zap.String("key", key))
+		return nil, err
+	}
+	return data, nil
+}
+
+// GetTransactionStatus is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) GetTransactionStatus(ctx context.Context, txID uuid.UUID) (*interfaces.TransactionStatus, error) {
+	// Not implemented: return nil for now
+	return nil, nil
+}
+
+// GetUserAddresses is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) GetUserAddresses(ctx context.Context, userID uuid.UUID, asset string) ([]*interfaces.DepositAddress, error) {
+	// Not implemented: return nil for now
+	return nil, nil
+}
+
+// InvalidateTransactionStatus is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) InvalidateTransactionStatus(ctx context.Context, txID uuid.UUID) error {
+	// Not implemented: return nil for now
+	return nil
+}
+
+// InvalidateUserAddresses is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) InvalidateUserAddresses(ctx context.Context, userID uuid.UUID, asset string) error {
+	// Not implemented: return nil for now
+	return nil
+}
+
+// InvalidateUserBalances is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) InvalidateUserBalances(ctx context.Context, userID uuid.UUID) error {
+	// Not implemented: return nil for now
+	return nil
+}
+
+// Set is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	// Not implemented: return nil for now
+	return nil
+}
+
+// SetTransactionStatus is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) SetTransactionStatus(ctx context.Context, txID uuid.UUID, status *interfaces.TransactionStatus, ttl time.Duration) error {
+	// Not implemented: return nil for now
+	return nil
+}
+
+// SetUserAddresses is a stub to satisfy the WalletCache interface
+func (c *RedisWalletCache) SetUserAddresses(ctx context.Context, userID uuid.UUID, asset string, addresses []*interfaces.DepositAddress, ttl time.Duration) error {
+	// Not implemented: return nil for now
+	return nil
 }

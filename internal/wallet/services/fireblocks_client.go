@@ -37,6 +37,47 @@ func (f *FireblocksClientImpl) GetAddresses(ctx context.Context, asset, network 
 	return nil, nil
 }
 
-func (f *FireblocksClientImpl) GetAssetBalance(ctx context.Context, asset, network string) (*interfaces.FireblocksAssetBalance, error) {
-	return nil, nil
+func (f *FireblocksClientImpl) GetAssetBalance(ctx context.Context, vaultID, assetID string) (*interfaces.FireblocksBalance, error) {
+	// Stub implementation
+	return &interfaces.FireblocksBalance{}, nil
+}
+
+func (f *FireblocksClientImpl) GetNetworkFee(ctx context.Context, assetID string) (*interfaces.FireblocksNetworkFee, error) {
+	// Stub implementation
+	return &interfaces.FireblocksNetworkFee{}, nil
+}
+
+func (f *FireblocksClientImpl) GetSupportedAssets(ctx context.Context) ([]*interfaces.FireblocksAsset, error) {
+	// Stub implementation
+	return []*interfaces.FireblocksAsset{}, nil
+}
+
+func (f *FireblocksClientImpl) GetTransaction(ctx context.Context, txID string) (*interfaces.FireblocksTransaction, error) {
+	// Stub implementation
+	return &interfaces.FireblocksTransaction{}, nil
+}
+
+func (f *FireblocksClientImpl) GetTransactions(ctx context.Context, filters *interfaces.FireblocksTransactionFilters) ([]*interfaces.FireblocksTransaction, error) {
+	// Stub implementation
+	return []*interfaces.FireblocksTransaction{}, nil
+}
+
+func (f *FireblocksClientImpl) GetVaultAccounts(ctx context.Context) ([]*interfaces.FireblocksVault, error) {
+	// Stub implementation
+	return []*interfaces.FireblocksVault{}, nil
+}
+
+func (f *FireblocksClientImpl) GetVaultAccountBalances(ctx context.Context, vaultAccountID string) ([]*interfaces.VaultAccountBalance, error) {
+	// Stub implementation
+	return []*interfaces.VaultAccountBalance{}, nil
+}
+
+func (f *FireblocksClientImpl) ValidateAddress(ctx context.Context, req *interfaces.FireblocksAddressValidationRequest) (*interfaces.FireblocksAddressValidationResult, error) {
+	// Stub implementation
+	return &interfaces.FireblocksAddressValidationResult{}, nil
+}
+
+func (f *FireblocksClientImpl) VerifyWebhook(ctx context.Context, signature, body string) (*interfaces.FireblocksWebhookData, error) {
+	// Stub implementation
+	return &interfaces.FireblocksWebhookData{}, nil
 }

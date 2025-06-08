@@ -79,9 +79,11 @@ func (f *FundLockServiceImpl) GetLockByTxRef(ctx context.Context, txRef string) 
 }
 
 func (f *FundLockServiceImpl) CleanupExpiredLocks(ctx context.Context) error {
-	return f.repository.CleanupExpiredLocks(ctx)
+	_, err := f.repository.CleanupExpiredLocks(ctx)
+	return err
 }
 
 func (f *FundLockServiceImpl) CleanExpiredLocks(ctx context.Context) error {
-	return f.repository.CleanupExpiredLocks(ctx)
+	_, err := f.repository.CleanupExpiredLocks(ctx)
+	return err
 }
