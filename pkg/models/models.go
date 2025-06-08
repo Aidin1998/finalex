@@ -33,6 +33,14 @@ const (
 	SideSell OrderSide = "SELL"
 )
 
+// Trading status constants
+type TradingStatus string
+
+const (
+	TradingStatusActive   TradingStatus = "active"
+	TradingStatusInactive TradingStatus = "inactive"
+)
+
 // Order status constants
 const (
 	OrderStatusNew             = "NEW"
@@ -182,19 +190,19 @@ type Trade struct {
 
 // TradingPair represents a trading pair in the system
 type TradingPair struct {
-	ID               uuid.UUID `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	Symbol           string    `json:"symbol" gorm:"uniqueIndex" validate:"required,trading_pair"`
-	BaseCurrency     string    `json:"base_currency" validate:"required,currency_code"`
-	QuoteCurrency    string    `json:"quote_currency" validate:"required,currency_code"`
-	PriceDecimals    int       `json:"price_decimals" validate:"min=0,max=18"`
-	QuantityDecimals int       `json:"quantity_decimals" validate:"min=0,max=18"`
-	MinQuantity      float64   `json:"min_quantity" validate:"gt=0"`
-	MaxQuantity      float64   `json:"max_quantity" validate:"gt=0"`
-	MinPrice         float64   `json:"min_price" validate:"gt=0"`
-	MaxPrice         float64   `json:"max_price" validate:"gt=0"`
-	Status           string    `json:"status" validate:"required,oneof=active inactive"` // active, inactive
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               uuid.UUID     `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	Symbol           string        `json:"symbol" gorm:"uniqueIndex" validate:"required,trading_pair"`
+	BaseCurrency     string        `json:"base_currency" validate:"required,currency_code"`
+	QuoteCurrency    string        `json:"quote_currency" validate:"required,currency_code"`
+	PriceDecimals    int           `json:"price_decimals" validate:"min=0,max=18"`
+	QuantityDecimals int           `json:"quantity_decimals" validate:"min=0,max=18"`
+	MinQuantity      float64       `json:"min_quantity" validate:"gt=0"`
+	MaxQuantity      float64       `json:"max_quantity" validate:"gt=0"`
+	MinPrice         float64       `json:"min_price" validate:"gt=0"`
+	MaxPrice         float64       `json:"max_price" validate:"gt=0"`
+	Status           TradingStatus `json:"status" validate:"required,oneof=active inactive"` // active, inactive
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
 }
 
 // MarketPrice represents a market price for a trading pair

@@ -14,6 +14,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/trading/config"
 	"github.com/Aidin1998/finalex/internal/trading/engine"
 	model2 "github.com/Aidin1998/finalex/internal/trading/model"
+	"github.com/Aidin1998/finalex/internal/trading/registry"
 	"github.com/Aidin1998/finalex/internal/trading/repository"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/Aidin1998/finalex/internal/trading/trigger"
@@ -78,8 +79,10 @@ type Service struct {
 	db             *gorm.DB
 	engine         *engine.MatchingEngine
 	bookkeeperSvc  bookkeeper.BookkeeperService
-	riskConfig     *risk.RiskConfig // Add this field for admin API
+	feeEngine      *engine.FeeEngine // Centralized fee calculation engine
+	riskConfig     *risk.RiskConfig  // Add this field for admin API
 	triggerMonitor *trigger.TriggerMonitor
+	pairRegistry   *registry.HighPerformancePairRegistry
 }
 
 // NewService creates a new trading service
@@ -133,14 +136,34 @@ func NewService(logger *zap.Logger, db *gorm.DB, bookkeeperSvc bookkeeper.Bookke
 	// Register order book price feeds with trigger monitor
 	// This will be done when order books are created
 
+	// Initialize pair registry
+	registryConfig := registry.DefaultRegistryConfig()
+	registryConfig.EnableCrossRouting = true
+	pairRegistry := registry.NewHighPerformancePairRegistry(registryConfig, logger)
+
+	// Initialize centralized fee engine
+	feeEngineConfig := &engine.FeeEngineConfig{
+		DefaultMakerFee:        decimal.NewFromFloat(0.001), // 0.1% maker fee
+		DefaultTakerFee:        decimal.NewFromFloat(0.001), // 0.1% taker fee
+		CrossPairFeeMultiplier: decimal.NewFromFloat(1.2),   // 20% extra for cross-pair
+		CrossPairMinFee:        decimal.NewFromFloat(0.0001),
+		CrossPairMaxFee:        decimal.NewFromFloat(0.01),
+		MinFeeAmount:           decimal.NewFromFloat(0.00000001),
+		MaxFeeAmount:           decimal.NewFromFloat(1000.0),
+		FeeDisplayPrecision:    8,
+	}
+	feeEngine := engine.NewFeeEngine(logger, feeEngineConfig)
+
 	// Create service
 	svc := &Service{
 		logger:         logger,
 		db:             db,
 		engine:         tradingEngine,
 		bookkeeperSvc:  bookkeeperSvc,
+		feeEngine:      feeEngine,
 		riskConfig:     riskCfg, // Pass risk config for admin API
 		triggerMonitor: triggerMonitor,
+		pairRegistry:   pairRegistry,
 	}
 
 	return svc, nil
@@ -656,18 +679,63 @@ func engineGetOrderBook(engine *engine.MatchingEngine, symbol string) *orderbook
 	return nil
 }
 
-// Implement missing TradingService methods as stubs on *Service
+// Implement missing TradingService methods using PairRegistry
 func (s *Service) GetTradingPairs() ([]*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
+	if s.pairRegistry == nil {
+		return nil, fmt.Errorf("pair registry not initialized")
+	}
+	return s.pairRegistry.ListPairs(context.Background(), nil)
 }
+
 func (s *Service) GetTradingPair(symbol string) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
+	if s.pairRegistry == nil {
+		return nil, fmt.Errorf("pair registry not initialized")
+	}
+
+	// Get pairs and find the requested symbol
+	pairs, err := s.pairRegistry.ListPairs(context.Background(), &registry.PairFilter{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, pair := range pairs {
+		if pair.Symbol == symbol {
+			return pair, nil
+		}
+	}
+
+	return nil, fmt.Errorf("trading pair %s not found", symbol)
 }
+
 func (s *Service) CreateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
+	if s.pairRegistry == nil {
+		return nil, fmt.Errorf("pair registry not initialized")
+	}
+
+	// Create a new orderbook for the pair
+	orderbook := s.createOrderBookForPair(pair.Symbol)
+
+	// Register the pair with the registry
+	err := s.pairRegistry.RegisterPair(context.Background(), pair, orderbook)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register trading pair: %w", err)
+	}
+
+	return pair, nil
 }
+
 func (s *Service) UpdateTradingPair(pair *models.TradingPair) (*models.TradingPair, error) {
-	return nil, fmt.Errorf("not implemented")
+	if s.pairRegistry == nil {
+		return nil, fmt.Errorf("pair registry not initialized")
+	}
+
+	// Update the pair status in the registry
+	err := s.pairRegistry.UpdatePairStatus(pair.Symbol, pair.Status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update trading pair: %w", err)
+	}
+
+	return pair, nil
 }
 
 // Implement ListOrders for TradingService
@@ -804,4 +872,18 @@ func (s *Service) GetMarketData(pair string) (*MarketData, error) {
 		OrderImbalance: imbalance,
 		Vwap:           midPrice, // Simplified - would need actual VWAP calculation
 	}, nil
+}
+
+// createOrderBookForPair creates a new orderbook instance for a trading pair
+func (s *Service) createOrderBookForPair(symbol string) orderbook.OrderBookInterface {
+	// Create a new standard orderbook for the pair
+	ob := orderbook.NewOrderBook(symbol)
+
+	// Register the orderbook with the matching engine if needed
+	if s.engine != nil {
+		// The engine will manage the orderbook internally
+		s.logger.Debug("Created new orderbook for pair", zap.String("symbol", symbol))
+	}
+
+	return ob
 }

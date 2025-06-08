@@ -508,13 +508,12 @@ func (h *MarketDataHandler) GetExchangeInfo(c *gin.Context) {
 		})
 		return
 	}
-
 	// Build exchange info response
 	symbols := make([]SymbolInfo, 0, len(pairs))
 	for _, pair := range pairs {
 		symbolInfo := SymbolInfo{
 			Symbol:                 pair.Symbol,
-			Status:                 pair.Status,
+			Status:                 string(pair.Status),
 			OrderTypes:             []string{"MARKET", "LIMIT", "STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"},
 			IcebergAllowed:         true,
 			IsSpotTradingAllowed:   true,

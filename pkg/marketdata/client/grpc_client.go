@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	// pb "github.com/Aidin1998/finalex/api/marketdata" // TODO: Generate proto files
+	pb "github.com/Aidin1998/finalex/github.com/Aidin1998/finalex/pkg/proto/marketdata"
 	"github.com/Aidin1998/finalex/internal/marketmaking/marketdata/distribution"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // GRPCClient is a gRPC client with auto-reconnect and streaming
@@ -123,7 +124,7 @@ func (c *GRPCClient) Subscribe(opts SubscribeOptions) {
 		Symbol:      opts.Symbol,
 		Levels:      opts.Levels,
 		Frequency:   toProtoDuration(opts.Frequency),
-		Compression: opts.Compression,
+		Compression: boolToString(opts.Compression),
 	}
 	c.subMu.Unlock()
 }
@@ -135,8 +136,6 @@ func (c *GRPCClient) Next() (distribution.Update, bool) {
 }
 
 // Close shuts down the client
-type closeOnce struct{}
-
 func (c *GRPCClient) Close() {
 	close(c.quitCh)
 	c.connMu.Lock()
@@ -146,7 +145,15 @@ func (c *GRPCClient) Close() {
 	c.connMu.Unlock()
 }
 
+// boolToString converts bool to string for protobuf compatibility
+func boolToString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
 // toProtoDuration converts time.Duration to protobuf Duration
-func toProtoDuration(d time.Duration) *pb.Frequency {
-	return &pb.Frequency{Seconds: int64(d.Seconds()), Nanos: int32(d.Nanoseconds() % 1e9)}
+func toProtoDuration(d time.Duration) *durationpb.Duration {
+	return durationpb.New(d)
 }
