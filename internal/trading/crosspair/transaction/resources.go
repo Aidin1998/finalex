@@ -9,6 +9,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/accounts/transaction"
 	"github.com/Aidin1998/finalex/internal/trading/crosspair"
+	dto "github.com/Aidin1998/finalex/internal/trading/crosspair/dto"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -92,7 +93,7 @@ func (br *BalanceResource) Rollback(ctx context.Context, xid transaction.XID) er
 
 		// Notify frontend of rollback/failure
 		if br.EventPublisher != nil {
-			event := crosspair.CrossPairOrderEvent{
+			event := dto.CrossPairOrderEvent{
 				UserID:    ops.UserID,
 				Status:    "FAILED",
 				Error:     ptrString("Balance rollback executed"),
@@ -267,13 +268,13 @@ func (mer *MatchingEngineResource) Rollback(ctx context.Context, xid transaction
 
 		// Notify frontend of rollback/failure with rich context
 		if mer.EventPublisher != nil && op.OriginalOrder != nil {
-			event := crosspair.CrossPairOrderEvent{
+			event := dto.CrossPairOrderEvent{
 				OrderID:        op.OriginalOrder.ID,
 				UserID:         op.OriginalOrder.UserID,
 				Status:         "ROLLED_BACK",
 				FillAmountLeg1: op.OriginalOrder.ExecutedQuantity, // best available
 				SyntheticRate:  op.OriginalOrder.EstimatedRate,
-				Fee:            op.OriginalOrder.Fees,
+				Fee:            toDTOFees(op.OriginalOrder.Fees),
 				CreatedAt:      op.OriginalOrder.CreatedAt,
 				UpdatedAt:      time.Now(),
 				Error:          ptrString("Order rollback executed"),
@@ -435,14 +436,14 @@ func (tsr *TradeStoreResource) Rollback(ctx context.Context, xid transaction.XID
 
 		// Notify frontend of rollback/failure with rich context
 		if tsr.EventPublisher != nil && op.Trade != nil {
-			event := crosspair.CrossPairOrderEvent{
+			event := dto.CrossPairOrderEvent{
 				OrderID:        op.Trade.OrderID,
 				UserID:         op.Trade.UserID,
 				Status:         "ROLLED_BACK",
 				Leg1TradeID:    op.Trade.ID, // If available, else leave zero
 				FillAmountLeg1: op.Trade.Quantity,
 				SyntheticRate:  op.Trade.ExecutedRate,
-				Fee:            op.Trade.Fees,
+				Fee:            toDTOFees(op.Trade.Fees),
 				CreatedAt:      op.Trade.CreatedAt,
 				UpdatedAt:      time.Now(),
 				Error:          ptrString("Trade rollback executed"),
@@ -531,3 +532,17 @@ func (tsr *TradeStoreResource) cleanup(xid transaction.XID) {
 
 // Helper for pointer to string
 func ptrString(s string) *string { return &s }
+
+// Add helper at top-level:
+func toDTOFees(fees []crosspair.CrossPairFee) []dto.CrossPairFee {
+	result := make([]dto.CrossPairFee, len(fees))
+	for i, f := range fees {
+		result[i] = dto.CrossPairFee{
+			Asset:   f.Asset,
+			Amount:  f.Amount,
+			FeeType: f.FeeType,
+			Pair:    f.Pair,
+		}
+	}
+	return result
+}

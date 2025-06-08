@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	dto "github.com/Aidin1998/finalex/internal/trading/crosspair/dto"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -60,7 +61,7 @@ type FeeEngineInterface interface {
 type EventPublisherInterface interface {
 	PublishBalanceEvent(ctx context.Context, event *BalanceEvent) error
 	PublishErrorEvent(ctx context.Context, event *ErrorEvent) error
-	PublishCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent) error // Added for deduplication
+	PublishCrossPairOrderEvent(ctx context.Context, event dto.CrossPairOrderEvent) error // Added for deduplication
 }
 
 // MetricsCollectorInterface defines the interface for metrics collection
@@ -259,7 +260,7 @@ func NewRealEventPublisher(eventPublisher EventPublisherInterface) *RealEventPub
 }
 
 func (p *RealEventPublisher) PublishOrderCreated(order *CrossPairOrder) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:   order.ID,
 		UserID:    order.UserID,
 		Status:    "CREATED",
@@ -270,13 +271,13 @@ func (p *RealEventPublisher) PublishOrderCreated(order *CrossPairOrder) error {
 }
 
 func (p *RealEventPublisher) PublishOrderCompleted(order *CrossPairOrder) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:        order.ID,
 		UserID:         order.UserID,
 		Status:         "COMPLETED",
 		FillAmountLeg1: order.ExecutedQuantity,
 		SyntheticRate:  order.EstimatedRate,
-		Fee:            order.Fees,
+		Fee:            toDTOFees(order.Fees),
 		CreatedAt:      order.CreatedAt,
 		UpdatedAt:      time.Now(),
 	}
@@ -284,7 +285,7 @@ func (p *RealEventPublisher) PublishOrderCompleted(order *CrossPairOrder) error 
 }
 
 func (p *RealEventPublisher) PublishOrderCancelled(order *CrossPairOrder) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:    order.ID,
 		UserID:     order.UserID,
 		Status:     "CANCELED",
@@ -296,14 +297,14 @@ func (p *RealEventPublisher) PublishOrderCancelled(order *CrossPairOrder) error 
 }
 
 func (p *RealEventPublisher) PublishTradeExecuted(trade *CrossPairTrade) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:        trade.OrderID,
 		UserID:         trade.UserID,
 		Status:         "FILLED",
 		Leg1TradeID:    trade.ID,
 		FillAmountLeg1: trade.Quantity,
 		SyntheticRate:  trade.ExecutedRate,
-		Fee:            trade.Fees,
+		Fee:            toDTOFees(trade.Fees),
 		CreatedAt:      trade.CreatedAt,
 		UpdatedAt:      time.Now(),
 		FilledAt:       ptrTime(time.Now()),
@@ -312,13 +313,13 @@ func (p *RealEventPublisher) PublishTradeExecuted(trade *CrossPairTrade) error {
 }
 
 func (p *RealEventPublisher) PublishOrderUpdated(order *CrossPairOrder) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:        order.ID,
 		UserID:         order.UserID,
 		Status:         string(order.Status),
 		FillAmountLeg1: order.ExecutedQuantity,
 		SyntheticRate:  order.EstimatedRate,
-		Fee:            order.Fees,
+		Fee:            toDTOFees(order.Fees),
 		CreatedAt:      order.CreatedAt,
 		UpdatedAt:      time.Now(),
 	}
@@ -337,13 +338,13 @@ func (p *RealEventPublisher) PublishExecutionFailed(orderID uuid.UUID, reason st
 }
 
 func (p *RealEventPublisher) PublishPartialFill(order *CrossPairOrder, leg int, fillAmount decimal.Decimal, tradeID uuid.UUID, fees []CrossPairFee) error {
-	event := CrossPairOrderEvent{
+	event := dto.CrossPairOrderEvent{
 		OrderID:   order.ID,
 		UserID:    order.UserID,
 		Status:    "PARTIALLY_FILLED",
 		CreatedAt: order.CreatedAt,
 		UpdatedAt: time.Now(),
-		Fee:       fees,
+		Fee:       toDTOFees(fees),
 	}
 	if leg == 1 {
 		event.Leg1TradeID = tradeID
@@ -640,4 +641,20 @@ func (a *ServiceIntegration) NewAtomicExecutor() *RealAtomicExecutor {
 		a.spotEngine,
 		a.coordService,
 	)
+}
+
+// When constructing dto.CrossPairOrderEvent, convert []CrossPairFee to []dto.CrossPairFee, e.g.:
+// Fee: toDTOFees(order.Fees),
+// Add helper:
+func toDTOFees(fees []CrossPairFee) []dto.CrossPairFee {
+	result := make([]dto.CrossPairFee, len(fees))
+	for i, f := range fees {
+		result[i] = dto.CrossPairFee{
+			Asset:   f.Asset,
+			Amount:  f.Amount,
+			FeeType: f.FeeType,
+			Pair:    f.Pair,
+		}
+	}
+	return result
 }

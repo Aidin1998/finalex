@@ -153,7 +153,7 @@ func NewCrossPairEngine(
 		metricsCollector: metricsCollector,
 		config:           config,
 		activeOrders:     make(map[uuid.UUID]*CrossPairOrder),
-		executionQueue:   make(chan *CrossPairOrder, config.MaxConcurrentExecutions*2),
+		executionQueue:   make(chan *CrossPairOrder, config.QueueSize),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -771,6 +771,7 @@ func (e *CrossPairEngine) executeOrderAttempt(ctx context.Context, order *CrossP
 		e.rateCalculator,
 		e.matchingEngines,
 		e.tradeStore,
+		e.eventPublisher, // Pass eventPublisher for partial fill event publishing
 	)
 
 	// Validate execution conditions

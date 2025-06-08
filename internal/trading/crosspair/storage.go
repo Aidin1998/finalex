@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	dto "github.com/Aidin1998/finalex/internal/trading/crosspair/dto"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -157,7 +158,7 @@ func (s *PostgreSQLStorage) UpdateOrderStatus(ctx context.Context, orderID uuid.
 	query := `UPDATE crosspair_orders SET status = $1, updated_at = $2 WHERE id = $3`
 	_, err := s.db.ExecContext(ctx, query, status, time.Now(), orderID)
 	if err == nil && s.EventPublisher != nil {
-		event := CrossPairOrderEvent{
+		event := dto.CrossPairOrderEvent{
 			OrderID:   orderID,
 			Status:    string(status),
 			UpdatedAt: time.Now(),
@@ -193,13 +194,13 @@ func (s *PostgreSQLStorage) CreateTrade(ctx context.Context, trade *CrossPairTra
 		trade.ExecutionTimeMs, trade.CreatedAt,
 	)
 	if err == nil && s.EventPublisher != nil {
-		event := CrossPairOrderEvent{
+		event := dto.CrossPairOrderEvent{
 			OrderID:        trade.OrderID,
 			UserID:         trade.UserID,
 			Status:         "TRADE_EXECUTED",
 			Leg1TradeID:    trade.ID, // If available, else leave blank
 			SyntheticRate:  trade.ExecutedRate,
-			Fee:            trade.Fees,
+			Fee:            toDTOFees(trade.Fees),
 			FillAmountLeg1: trade.Quantity, // For single-leg, or sum for multi-leg
 			CreatedAt:      trade.CreatedAt,
 			UpdatedAt:      trade.CreatedAt,
@@ -686,7 +687,7 @@ func (s *InMemoryStorage) CleanupExpiredOrders(ctx context.Context, before time.
 // EventPublisher defines the interface for publishing cross-pair events
 // This allows wiring to real infra (WebSocket, EventBus, Compliance, etc.)
 type CrossPairEventPublisher interface {
-	PublishCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent)
+	PublishCrossPairOrderEvent(ctx context.Context, event dto.CrossPairOrderEvent)
 }
 
 // Migration SQL for database setup

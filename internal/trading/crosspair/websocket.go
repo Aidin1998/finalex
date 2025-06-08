@@ -85,9 +85,9 @@ type TradeUpdate struct {
 }
 
 // NewWebSocketManager creates a new WebSocket manager
-func NewWebSocketManager(rateCalc RateCalculator, engine *CrossPairEngine, allowedOrigins []string) *WebSocketManager {
+func NewWebSocketManager(rateCalc RateCalculator, engine *CrossPairEngine, config WebSocketConfig) *WebSocketManager {
 	originMap := make(map[string]struct{})
-	for _, o := range allowedOrigins {
+	for _, o := range config.AllowedOrigins {
 		originMap[o] = struct{}{}
 	}
 	return &WebSocketManager{
@@ -97,15 +97,15 @@ func NewWebSocketManager(rateCalc RateCalculator, engine *CrossPairEngine, allow
 				_, ok := originMap[origin]
 				return ok
 			},
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
+			ReadBufferSize:  config.ReadBufferSize,
+			WriteBufferSize: config.WriteBufferSize,
 		},
 		clients:      make(map[string]*WebSocketClient),
 		rateCalc:     rateCalc,
 		engine:       engine,
-		rateUpdates:  make(chan RateUpdate, 1000),
-		orderUpdates: make(chan OrderUpdate, 1000),
-		tradeUpdates: make(chan TradeUpdate, 1000),
+		rateUpdates:  make(chan RateUpdate, config.BroadcastQueueSize),
+		orderUpdates: make(chan OrderUpdate, config.BroadcastQueueSize),
+		tradeUpdates: make(chan TradeUpdate, config.BroadcastQueueSize),
 	}
 }
 

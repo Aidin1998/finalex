@@ -20,6 +20,7 @@ type TransactionAPI struct {
 	retryManager    *RetryManager
 	deadLetterQueue *DeadLetterQueue
 	logger          *zap.Logger
+	eventPublisher  crosspair.CrossPairEventPublisher
 }
 
 // TransactionRequest represents a request to start a transaction
@@ -73,12 +74,14 @@ func NewTransactionAPI(
 	retryManager *RetryManager,
 	deadLetterQueue *DeadLetterQueue,
 	logger *zap.Logger,
+	eventPublisher crosspair.CrossPairEventPublisher,
 ) *TransactionAPI {
 	return &TransactionAPI{
 		coordinator:     coordinator,
 		retryManager:    retryManager,
 		deadLetterQueue: deadLetterQueue,
 		logger:          logger.Named("transaction-api"),
+		eventPublisher:  eventPublisher,
 	}
 }
 
@@ -334,7 +337,7 @@ func (api *TransactionAPI) validateTransactionRequest(req *TransactionRequest) e
 
 func (api *TransactionAPI) registerResourcesForTransaction(txnCtx *CrossPairTransactionContext) error {
 	// Register balance service resource
-	balanceResource := NewBalanceResource(api.logger, api.coordinator.balanceService)
+	balanceResource := NewBalanceResource(api.logger, api.coordinator.balanceService, api.eventPublisher)
 	txnCtx.Resources = append(txnCtx.Resources, balanceResource)
 
 	// Register matching engine resources based on transaction type
@@ -343,11 +346,11 @@ func (api *TransactionAPI) registerResourcesForTransaction(txnCtx *CrossPairTran
 		if txnCtx.Route != nil {
 			// Add matching engines for first and second pair
 			if engine, exists := api.coordinator.matchingEngines[txnCtx.Route.FirstPair]; exists {
-				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.FirstPair)
+				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.FirstPair, api.eventPublisher)
 				txnCtx.Resources = append(txnCtx.Resources, engineResource)
 			}
 			if engine, exists := api.coordinator.matchingEngines[txnCtx.Route.SecondPair]; exists {
-				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.SecondPair)
+				engineResource := NewMatchingEngineResource(api.logger, engine, txnCtx.Route.SecondPair, api.eventPublisher)
 				txnCtx.Resources = append(txnCtx.Resources, engineResource)
 			}
 		}
@@ -355,7 +358,7 @@ func (api *TransactionAPI) registerResourcesForTransaction(txnCtx *CrossPairTran
 
 	// Register trade store resource
 	if txnCtx.Type == TransactionTypeTrade || txnCtx.Type == TransactionTypeSettlement {
-		tradeStoreResource := NewTradeStoreResource(api.logger, api.coordinator.tradeStore)
+		tradeStoreResource := NewTradeStoreResource(api.logger, api.coordinator.tradeStore, api.eventPublisher)
 		txnCtx.Resources = append(txnCtx.Resources, tradeStoreResource)
 	}
 

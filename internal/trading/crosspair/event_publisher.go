@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/Aidin1998/finalex/internal/trading/crosspair/dto"
 	"github.com/google/uuid"
 )
 
@@ -17,10 +18,10 @@ type CrossPairEventPublisherImpl struct {
 	Metrics          MetricsCollectorInterface // Optional
 }
 
-func (p *CrossPairEventPublisherImpl) PublishCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent) {
+func (p *CrossPairEventPublisherImpl) PublishCrossPairOrderEvent(ctx context.Context, event dto.CrossPairOrderEvent) {
 	// 1. WebSocket: Notify user (and optionally admin/monitoring)
 	if p.WebSocketManager != nil {
-		go func(ev CrossPairOrderEvent) {
+		go func(ev dto.CrossPairOrderEvent) {
 			// Send to user (topic: "orders" or "crosspair.orders")
 			p.WebSocketManager.broadcastToSubscribers("orders", ev)
 			// Optionally: p.WebSocketManager.broadcastToSubscribers("admin", ev)
@@ -29,7 +30,7 @@ func (p *CrossPairEventPublisherImpl) PublishCrossPairOrderEvent(ctx context.Con
 
 	// 2. EventBus: Publish for admin/monitoring dashboards
 	if p.EventBus != nil {
-		go func(ev CrossPairOrderEvent) {
+		go func(ev dto.CrossPairOrderEvent) {
 			payload, _ := json.Marshal(ev)
 			event := EventBusEvent{
 				ID:        uuid.New(),
@@ -44,7 +45,7 @@ func (p *CrossPairEventPublisherImpl) PublishCrossPairOrderEvent(ctx context.Con
 
 	// 3. Compliance: Log for audit/compliance
 	if p.ComplianceHooks != nil {
-		go func(ev CrossPairOrderEvent) {
+		go func(ev dto.CrossPairOrderEvent) {
 			_ = p.ComplianceHooks.OnCrossPairOrderEvent(ctx, ev)
 		}(event)
 	}
@@ -76,5 +77,5 @@ type EventBusInterface interface {
 // ComplianceHookManager is a minimal interface for compliance hooks
 // (Replace with the real one from compliance/hooks)
 type ComplianceHookManager interface {
-	OnCrossPairOrderEvent(ctx context.Context, event CrossPairOrderEvent) error
+	OnCrossPairOrderEvent(ctx context.Context, event dto.CrossPairOrderEvent) error
 }

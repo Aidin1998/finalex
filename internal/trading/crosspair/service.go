@@ -124,9 +124,7 @@ func (s *CrossPairService) initializeComponents(integration *ServiceIntegration)
 
 	// Initialize WebSocket manager if enabled
 	if s.config.WebSocket.Enabled {
-		// Allowed origins can be loaded from config or env
-		allowedOrigins := s.config.WebSocket.AllowedOrigins // []string, add to config struct if not present
-		s.wsManager = NewWebSocketManager(s.rateCalc, s.engine, allowedOrigins)
+		s.wsManager = NewWebSocketManager(s.rateCalc, s.engine, s.config.WebSocket)
 	}
 
 	// Initialize the event publisher
