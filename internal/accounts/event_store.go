@@ -4,6 +4,7 @@ package accounts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // Event represents a domain event in the system
@@ -318,13 +320,58 @@ func (es *EventStore) GetEvents(ctx context.Context, aggregateID string, fromVer
 		es.metrics.EventStoreLatency.WithLabelValues("get_events").Observe(time.Since(start).Seconds())
 	}()
 
-	// TODO: Implement database query to get events
-	// This would query the stored_events table
-	es.logger.Debug("Getting events for aggregate",
-		zap.String("aggregate_id", aggregateID),
-		zap.Int64("from_version", fromVersion))
+	// Query stored_events table using read database
+	var storedEvents []StoredEvent
+	query := es.repository.readDB.WithContext(ctx).
+		Where("aggregate_id = ? AND version >= ?", aggregateID, fromVersion).
+		Order("version ASC")
 
-	return []Event{}, nil
+	if err := query.Find(&storedEvents).Error; err != nil {
+		es.metrics.EventsProcessed.WithLabelValues("get_events", "failed").Inc()
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+
+	// Convert stored events to domain events
+	events := make([]Event, len(storedEvents))
+	for i, storedEvent := range storedEvents {
+		// Unmarshal payload
+		var payload interface{}
+		if err := json.Unmarshal(storedEvent.Data, &payload); err != nil {
+			es.logger.Warn("Failed to unmarshal event payload",
+				zap.String("event_id", storedEvent.ID.String()),
+				zap.Error(err))
+			continue
+		}
+
+		// Unmarshal metadata
+		var metadata map[string]interface{}
+		if len(storedEvent.Metadata) > 0 {
+			if err := json.Unmarshal(storedEvent.Metadata, &metadata); err != nil {
+				metadata = make(map[string]interface{})
+			}
+		} else {
+			metadata = make(map[string]interface{})
+		}
+
+		// Create domain event
+		events[i] = &BaseEvent{
+			ID:          storedEvent.ID,
+			Type:        storedEvent.EventType,
+			AggregateID: storedEvent.AggregateID,
+			Version:     storedEvent.Version,
+			Timestamp:   storedEvent.CreatedAt,
+			Payload:     payload,
+			Metadata:    metadata,
+		}
+	}
+
+	es.metrics.EventsProcessed.WithLabelValues("get_events", "success").Inc()
+	es.logger.Debug("Retrieved events for aggregate",
+		zap.String("aggregate_id", aggregateID),
+		zap.Int64("from_version", fromVersion),
+		zap.Int("event_count", len(events)))
+
+	return events, nil
 }
 
 // CreateSnapshot creates an aggregate snapshot
@@ -340,7 +387,6 @@ func (es *EventStore) CreateSnapshot(ctx context.Context, aggregateID string, ag
 		es.metrics.SnapshotsCreated.WithLabelValues(aggregateType, "failed").Inc()
 		return fmt.Errorf("failed to serialize snapshot data: %w", err)
 	}
-
 	// Create snapshot record
 	snapshot := &EventSnapshot{
 		ID:            uuid.New(),
@@ -350,8 +396,17 @@ func (es *EventStore) CreateSnapshot(ctx context.Context, aggregateID string, ag
 		Data:          serializedData,
 		CreatedAt:     time.Now(),
 	}
-	// TODO: Implement database save
-	_ = snapshot // suppress unused variable warning
+
+	// Save snapshot to database
+	if err := es.repository.writeDB.WithContext(ctx).Create(snapshot).Error; err != nil {
+		es.metrics.SnapshotsCreated.WithLabelValues(aggregateType, "failed").Inc()
+		es.logger.Error("Failed to save snapshot to database",
+			zap.String("aggregate_id", aggregateID),
+			zap.String("aggregate_type", aggregateType),
+			zap.Int64("version", version),
+			zap.Error(err))
+		return fmt.Errorf("failed to save snapshot: %w", err)
+	}
 
 	es.logger.Info("Snapshot created",
 		zap.String("aggregate_id", aggregateID),
@@ -373,11 +428,29 @@ func (es *EventStore) GetSnapshot(ctx context.Context, aggregateID string) (*Eve
 	defer func() {
 		es.metrics.EventStoreLatency.WithLabelValues("get_snapshot").Observe(time.Since(start).Seconds())
 	}()
+	// Query database for latest snapshot
+	var snapshot EventSnapshot
+	err := es.repository.readDB.WithContext(ctx).
+		Where("aggregate_id = ?", aggregateID).
+		Order("version DESC").
+		First(&snapshot).Error
 
-	// TODO: Implement database query to get latest snapshot
-	es.logger.Debug("Getting snapshot for aggregate", zap.String("aggregate_id", aggregateID))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			es.logger.Debug("No snapshot found for aggregate", zap.String("aggregate_id", aggregateID))
+			return nil, nil
+		}
+		es.logger.Error("Failed to query snapshot from database",
+			zap.String("aggregate_id", aggregateID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get snapshot: %w", err)
+	}
 
-	return nil, nil
+	es.logger.Debug("Retrieved snapshot for aggregate",
+		zap.String("aggregate_id", aggregateID),
+		zap.Int64("version", snapshot.Version))
+
+	return &snapshot, nil
 }
 
 // Stop stops the event store
@@ -440,9 +513,16 @@ func (es *EventStore) flushEvents(ctx context.Context) error {
 			CreatedAt:     event.GetTimestamp(),
 		}
 	}
+	// Batch insert stored events to database
+	if len(storedEvents) > 0 {
+		if err := es.repository.writeDB.WithContext(ctx).CreateInBatches(storedEvents, 100).Error; err != nil {
+			es.logger.Error("Failed to batch insert events to database",
+				zap.Int("event_count", len(storedEvents)),
+				zap.Error(err))
+			return fmt.Errorf("failed to flush events to database: %w", err)
+		}
+	}
 
-	// TODO: Implement batch insert to database
-	// This would insert into the stored_events table
 	es.logger.Debug("Flushed events to storage", zap.Int("count", len(events)))
 
 	// Check if snapshots are needed
@@ -505,13 +585,82 @@ func (es *EventStore) checkAndCreateSnapshot(ctx context.Context, event Event) {
 	} else {
 		shouldSnapshot = event.GetVersion()-lastVersion >= int64(es.snapshotInterval)
 	}
-
 	if shouldSnapshot {
-		// TODO: Implement aggregate reconstruction and snapshot creation
-		es.logger.Debug("Snapshot needed",
+		// Reconstruct current account state from events
+		events, err := es.GetEvents(ctx, event.GetAggregateID(), 0)
+		if err != nil {
+			es.logger.Error("Failed to get events for snapshot creation",
+				zap.String("aggregate_id", event.GetAggregateID()),
+				zap.Error(err))
+			return
+		}
+
+		// Reconstruct account state by applying events
+		aggregateState := es.reconstructAccountAggregate(events)
+		if aggregateState == nil {
+			es.logger.Error("Failed to reconstruct aggregate state",
+				zap.String("aggregate_id", event.GetAggregateID()))
+			return
+		}
+
+		// Create snapshot with reconstructed state
+		if err := es.CreateSnapshot(ctx, event.GetAggregateID(), "account", event.GetVersion(), aggregateState); err != nil {
+			es.logger.Error("Failed to create snapshot",
+				zap.String("aggregate_id", event.GetAggregateID()),
+				zap.Int64("version", event.GetVersion()),
+				zap.Error(err))
+			return
+		}
+
+		es.logger.Info("Snapshot created successfully",
 			zap.String("aggregate_id", event.GetAggregateID()),
 			zap.Int64("version", event.GetVersion()))
 	}
+}
+
+// reconstructAccountAggregate rebuilds account state from events
+func (es *EventStore) reconstructAccountAggregate(events []Event) *Account {
+	if len(events) == 0 {
+		return nil
+	}
+
+	// Initialize account state - extract aggregate ID which should be in format "user_id:currency"
+	var account *Account
+
+	for _, event := range events {
+		switch e := event.(type) {
+		case *BalanceUpdatedEvent:
+			if account == nil {
+				// Initialize account on first event
+				account = &Account{
+					ID:          uuid.New(), // Generate new ID for snapshot
+					UserID:      e.UserID,
+					Currency:    e.Currency,
+					Balance:     decimal.Zero,
+					Available:   decimal.Zero,
+					Locked:      decimal.Zero,
+					Version:     1,
+					AccountType: "spot",
+					Status:      "active",
+					CreatedAt:   event.GetTimestamp(),
+					UpdatedAt:   event.GetTimestamp(),
+				}
+			}
+			// Apply balance changes
+			account.Balance = account.Balance.Add(e.BalanceDelta)
+			account.Locked = account.Locked.Add(e.LockedDelta)
+			account.Available = account.Balance.Sub(account.Locked)
+			account.Version = event.GetVersion()
+			account.UpdatedAt = event.GetTimestamp()
+
+		default:
+			// Handle other event types as needed
+			es.logger.Debug("Unhandled event type in aggregate reconstruction",
+				zap.String("event_type", event.GetType()))
+		}
+	}
+
+	return account
 }
 
 // Saga pattern interfaces and implementations for complex transaction workflows

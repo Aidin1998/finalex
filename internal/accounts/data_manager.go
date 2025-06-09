@@ -134,6 +134,7 @@ func NewAccountDataManager(
 	cache *CacheLayer,
 	config *DataManagerConfig,
 	logger *zap.Logger,
+	currencyConverter CurrencyConverter,
 ) (*AccountDataManager, error) {
 	// Initialize metrics
 	metrics := &DataManagerMetrics{
@@ -297,10 +298,9 @@ func NewAccountDataManager(
 			LastHealthCheck: time.Now(),
 		},
 	}
-
 	// Initialize CQRS handlers
 	dm.commandHandler = NewAccountCommandHandler(dm, logger)
-	dm.queryHandler = NewAccountQueryHandler(dm, logger)
+	dm.queryHandler = NewAccountQueryHandler(dm, logger, currencyConverter)
 
 	// Initialize lifecycle manager
 	dm.lifecycleManager = NewDataLifecycleManager(nil, logger) // pass nil for *sql.DB if not available

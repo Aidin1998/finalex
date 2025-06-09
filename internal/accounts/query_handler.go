@@ -13,14 +13,20 @@ import (
 	"go.uber.org/zap"
 )
 
+// CurrencyConverter interface for currency conversion services
+type CurrencyConverter interface {
+	ConvertPrice(ctx context.Context, amount decimal.Decimal, fromCurrency, toCurrency string) (decimal.Decimal, error)
+}
+
 // AccountQueryHandler handles all read operations using CQRS pattern
 type AccountQueryHandler struct {
-	dataManager *AccountDataManager
-	repository  *Repository
-	cache       *CacheLayer
-	hotCache    *HotCache
-	logger      *zap.Logger
-	metrics     *QueryMetrics
+	dataManager       *AccountDataManager
+	repository        *Repository
+	cache             *CacheLayer
+	hotCache          *HotCache
+	logger            *zap.Logger
+	metrics           *QueryMetrics
+	currencyConverter CurrencyConverter
 }
 
 // QueryMetrics holds Prometheus metrics for query operations
@@ -173,7 +179,7 @@ func (q *GetReservationsQuery) Validate() error {
 }
 
 // NewAccountQueryHandler creates a new query handler
-func NewAccountQueryHandler(dataManager *AccountDataManager, logger *zap.Logger) *AccountQueryHandler {
+func NewAccountQueryHandler(dataManager *AccountDataManager, logger *zap.Logger, currencyConverter CurrencyConverter) *AccountQueryHandler {
 	metrics := &QueryMetrics{
 		QueriesTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
@@ -233,14 +239,14 @@ func NewAccountQueryHandler(dataManager *AccountDataManager, logger *zap.Logger)
 			[]string{"query_type"},
 		),
 	}
-
 	return &AccountQueryHandler{
-		dataManager: dataManager,
-		repository:  dataManager.repository,
-		cache:       dataManager.cache,
-		hotCache:    dataManager.hotCache,
-		logger:      logger,
-		metrics:     metrics,
+		dataManager:       dataManager,
+		repository:        dataManager.repository,
+		cache:             dataManager.cache,
+		hotCache:          dataManager.hotCache,
+		logger:            logger,
+		metrics:           metrics,
+		currencyConverter: currencyConverter,
 	}
 }
 
@@ -453,26 +459,73 @@ func (qh *AccountQueryHandler) executeGetBalance(ctx context.Context, query *Get
 func (qh *AccountQueryHandler) executeGetAccountHistory(ctx context.Context, query *GetAccountHistoryQuery) ([]*LedgerTransaction, error) {
 	queryType := query.GetType()
 
-	// No cache layer for history (not implemented in CacheLayer)
-	// Query from database (not implemented in Repository, so return error)
-	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
-	return nil, fmt.Errorf("account history retrieval not implemented in repository")
+	// Query from database using the repository
+	transactions, err := qh.repository.GetAccountHistory(ctx, query.UserID, query.Currency, query.Limit, query.Offset, query.FromDate, query.ToDate)
+	if err != nil {
+		qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
+		qh.metrics.QueryErrors.WithLabelValues(queryType, "database").Inc()
+		return nil, fmt.Errorf("failed to get account history: %w", err)
+	}
+
+	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "success").Inc()
+	return transactions, nil
 }
 
 // executeGetReservations implements reservations retrieval with filtering
 func (qh *AccountQueryHandler) executeGetReservations(ctx context.Context, query *GetReservationsQuery) ([]*Reservation, error) {
 	queryType := query.GetType()
 
-	// Use cache layer for reservations if available
-	if _, err := qh.cache.GetReservations(ctx, query.UserID, query.Currency); err == nil {
-		qh.metrics.CacheHits.WithLabelValues(queryType, "hot").Inc()
-		return nil, fmt.Errorf("reservation filtering by status/limit/offset not implemented in cache layer")
-	}
-	qh.metrics.CacheMisses.WithLabelValues(queryType, "hot").Inc()
+	// Try cache layer for reservations if available (basic cache check)
+	if cachedReservations, err := qh.cache.GetReservations(ctx, query.UserID, query.Currency); err == nil && len(cachedReservations) > 0 {
+		qh.metrics.CacheHits.WithLabelValues(queryType, "warm").Inc()
 
-	// Query from database (not implemented in Repository, so return error)
-	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
-	return nil, fmt.Errorf("reservation retrieval with filtering not implemented in repository")
+		// Convert cached reservations to regular reservations
+		reservations := make([]*Reservation, 0, len(cachedReservations))
+		for _, cached := range cachedReservations {
+			// Apply status filter if specified
+			if query.Status != "" && cached.Status != query.Status {
+				continue
+			}
+
+			reservation := &Reservation{
+				ID:          cached.ID,
+				UserID:      cached.UserID,
+				Currency:    cached.Currency,
+				Amount:      cached.Amount,
+				Type:        cached.Type,
+				ReferenceID: cached.ReferenceID,
+				Status:      cached.Status,
+				ExpiresAt:   cached.ExpiresAt,
+				Version:     cached.Version,
+				CreatedAt:   cached.CachedAt, // Use cached timestamp as creation time approximation
+			}
+			reservations = append(reservations, reservation)
+		}
+
+		// Apply pagination to cached results
+		start := query.Offset
+		if start >= len(reservations) {
+			return []*Reservation{}, nil
+		}
+
+		end := start + query.Limit
+		if end > len(reservations) {
+			end = len(reservations)
+		}
+
+		return reservations[start:end], nil
+	}
+	qh.metrics.CacheMisses.WithLabelValues(queryType, "warm").Inc()
+
+	// Query from database using the repository
+	reservations, err := qh.repository.GetReservations(ctx, query.UserID, query.Currency, query.Status, query.Limit, query.Offset)
+	if err != nil {
+		qh.metrics.DatabaseQueries.WithLabelValues(queryType, "failed").Inc()
+		qh.metrics.QueryErrors.WithLabelValues(queryType, "database").Inc()
+		return nil, fmt.Errorf("failed to get reservations: %w", err)
+	}
+	qh.metrics.DatabaseQueries.WithLabelValues(queryType, "success").Inc()
+	return reservations, nil
 }
 
 // GetAccountsByUser retrieves all accounts for a user (optimized bulk query)
@@ -510,13 +563,35 @@ func (qh *AccountQueryHandler) GetTotalBalance(ctx context.Context, userID uuid.
 	if err != nil {
 		return decimal.Zero, err
 	}
-
 	var totalBalance decimal.Decimal
 	for _, account := range accounts {
 		if account.Currency == baseCurrency {
+			// Same currency - add directly
 			totalBalance = totalBalance.Add(account.Balance)
+		} else {
+			// Different currency - convert to base currency
+			if qh.currencyConverter != nil {
+				convertedBalance, err := qh.currencyConverter.ConvertPrice(ctx, account.Balance, account.Currency, baseCurrency)
+				if err != nil {
+					// Log the conversion error but continue processing other accounts
+					qh.logger.Warn("Failed to convert currency for total balance calculation",
+						zap.String("user_id", userID.String()),
+						zap.String("from_currency", account.Currency),
+						zap.String("to_currency", baseCurrency),
+						zap.String("amount", account.Balance.String()),
+						zap.Error(err))
+					// Skip this account in the total balance calculation
+					continue
+				}
+				totalBalance = totalBalance.Add(convertedBalance)
+			} else {
+				// No currency converter available - log and skip
+				qh.logger.Warn("Currency converter not available for total balance calculation",
+					zap.String("user_id", userID.String()),
+					zap.String("account_currency", account.Currency),
+					zap.String("base_currency", baseCurrency))
+			}
 		}
-		// TODO: Add currency conversion for different currencies
 	}
 
 	return totalBalance, nil

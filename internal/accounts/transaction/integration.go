@@ -14,7 +14,6 @@ import (
 )
 
 // TransactionManagerSuite provides a complete transaction management solution
-// NOTE: MonitoringService, PerformanceMetrics, WorkflowOrchestrator, EnhancedRecoveryManager, DistributedTransactionTestingFramework are not implemented in the codebase. We'll omit or stub them for now.
 type TransactionManagerSuite struct {
 	XAManager     *XATransactionManager
 	LockManager   *DistributedLockManager
@@ -26,6 +25,12 @@ type TransactionManagerSuite struct {
 	SettlementXA *SettlementXAResource
 	TradingXA    *TradingXAResource
 	FiatXA       *FiatXAResource
+
+	// New integrated components
+	WorkflowOrchestrator *DistributedTransactionOrchestrator
+	PerformanceMetrics   *PerformanceMetricsCollector
+	MonitoringService    *TransactionMonitor
+	TestingFramework     *DistributedTransactionTester
 
 	logger *zap.Logger
 	db     *gorm.DB
@@ -58,26 +63,40 @@ func NewTransactionManagerSuite(
 	settlementXA := NewSettlementXAResource(settlementEngine, db, logger)
 	tradingXA := NewTradingXAResource(db, tradingPathManager, logger)
 	fiatXA := NewFiatXAResource(fiatSvc, db, logger, "")
-
 	// Initialize middleware
 	middleware := NewTransactionMiddleware(xaManager, lockManager, logger)
-	// middleware.WithTimeout(config.XAManager.TransactionTimeout) // config not used
 
 	// Configure middleware with endpoint locking requirements
 	configureMiddlewareLocking(middleware)
 
+	// Initialize new integrated components
+	workflowOrchestrator := NewDistributedTransactionOrchestrator(
+		db, logger, bookkeeperSvc, nil, nil, settlementEngine, fiatSvc,
+	)
+
+	performanceMetrics := NewPerformanceMetricsCollector(db)
+	monitoringService := NewTransactionMonitor(db)
+	testingFramework := NewDistributedTransactionTester(nil, db, logger) // Will set suite reference after creation
+
 	suite := &TransactionManagerSuite{
-		XAManager:     xaManager,
-		LockManager:   lockManager,
-		ConfigManager: configManager,
-		Middleware:    middleware,
-		BookkeeperXA:  bookkeeperXA,
-		SettlementXA:  settlementXA,
-		TradingXA:     tradingXA,
-		FiatXA:        fiatXA,
-		logger:        logger,
-		db:            db,
+		XAManager:            xaManager,
+		LockManager:          lockManager,
+		ConfigManager:        configManager,
+		Middleware:           middleware,
+		BookkeeperXA:         bookkeeperXA,
+		SettlementXA:         settlementXA,
+		TradingXA:            tradingXA,
+		FiatXA:               fiatXA,
+		WorkflowOrchestrator: workflowOrchestrator,
+		PerformanceMetrics:   performanceMetrics,
+		MonitoringService:    monitoringService,
+		TestingFramework:     testingFramework,
+		logger:               logger,
+		db:                   db,
 	}
+
+	// Set the suite reference in the testing framework
+	testingFramework.suite = suite
 
 	// Register configuration watchers
 	if err := suite.registerConfigWatchers(); err != nil {
@@ -92,13 +111,14 @@ func (tms *TransactionManagerSuite) Start(ctx context.Context) error {
 	tms.logger.Info("Starting Transaction Manager Suite")
 
 	// Start monitoring service
-	// if err := tms.MonitoringService.Start(ctx); err != nil {
-	// 	return fmt.Errorf("failed to start monitoring service: %w", err)
-	// }
+	if err := tms.MonitoringService.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start monitoring service: %w", err)
+	}
 
 	// Start performance metrics collection
-	// if err := tms.PerformanceMetrics.StartCollection(ctx); err != nil {
-	// 	return fmt.Errorf("failed to start performance metrics: %w", err)
+	if err := tms.PerformanceMetrics.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start performance metrics: %w", err)
+	}
 	// }
 
 	// Start recovery manager
@@ -132,14 +152,11 @@ func (tms *TransactionManagerSuite) Stop(ctx context.Context) error {
 	// if err := tms.RecoveryManager.Stop(ctx); err != nil {
 	// 	tms.logger.Error("Failed to stop recovery manager", zap.Error(err))
 	// }
+	// Stop performance metrics collection
+	tms.PerformanceMetrics.Stop()
 
-	// if err := tms.PerformanceMetrics.StopCollection(); err != nil {
-	// 	tms.logger.Error("Failed to stop performance metrics", zap.Error(err))
-	// }
-
-	// if err := tms.MonitoringService.Stop(); err != nil {
-	// 	tms.logger.Error("Failed to stop monitoring service", zap.Error(err))
-	// }
+	// Stop monitoring service
+	tms.MonitoringService.Stop()
 
 	// Stop XA manager
 	tms.XAManager.Stop()

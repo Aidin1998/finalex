@@ -792,3 +792,18 @@ func (s *SlackAlertSubscriber) GetID() string {
 func (s *SlackAlertSubscriber) IsEnabled() bool {
 	return s.Enabled
 }
+
+// GetActiveAlerts returns all active alerts from the alert manager
+func (tm *TransactionMonitor) GetActiveAlerts() []*Alert {
+	tm.alertManager.mu.RLock()
+	defer tm.alertManager.mu.RUnlock()
+
+	activeAlerts := make([]*Alert, 0)
+	for _, alert := range tm.alertManager.alerts {
+		if !alert.IsResolved {
+			activeAlerts = append(activeAlerts, alert)
+		}
+	}
+
+	return activeAlerts
+}

@@ -58,6 +58,9 @@ type AccountOrchestrator struct {
 	monitoringManager  *AdvancedMonitoringManager
 	benchmarkFramework *BenchmarkingFramework
 
+	// Dependencies
+	currencyConverter CurrencyConverter
+
 	// Configuration and state
 	config    *OrchestratorConfig
 	logger    *zap.Logger
@@ -125,21 +128,20 @@ type BackgroundWorker struct {
 }
 
 // NewAccountOrchestrator creates a new account orchestrator
-func NewAccountOrchestrator(db *gorm.DB, logger *zap.Logger, config *OrchestratorConfig) (*AccountOrchestrator, error) {
+func NewAccountOrchestrator(db *gorm.DB, logger *zap.Logger, config *OrchestratorConfig, currencyConverter CurrencyConverter) (*AccountOrchestrator, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-
 	orchestrator := &AccountOrchestrator{
-		config:  config,
-		logger:  logger,
-		db:      db,
-		ctx:     ctx,
-		cancel:  cancel,
-		workers: make(map[string]*BackgroundWorker),
-		metrics: createOrchestratorMetrics(),
+		config:            config,
+		logger:            logger,
+		db:                db,
+		ctx:               ctx,
+		cancel:            cancel,
+		workers:           make(map[string]*BackgroundWorker),
+		metrics:           createOrchestratorMetrics(),
+		currencyConverter: currencyConverter,
 	}
-
 	// Initialize all components
-	if err := orchestrator.initializeComponents(); err != nil {
+	if err := orchestrator.initializeComponents(currencyConverter); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}
@@ -212,7 +214,7 @@ func createOrchestratorMetrics() *OrchestratorMetrics {
 }
 
 // initializeComponents initializes all orchestrator components
-func (o *AccountOrchestrator) initializeComponents() error {
+func (o *AccountOrchestrator) initializeComponents(currencyConverter CurrencyConverter) error {
 	var err error
 	// First initialize cache layer for the repository
 	cacheConfig := &CacheConfig{
@@ -276,14 +278,13 @@ func (o *AccountOrchestrator) initializeComponents() error {
 		MigrationTimeout:        time.Minute * 30,
 		RollbackEnabled:         true,
 	}
-
-	if o.dataManager, err = NewAccountDataManager(repository, cache, dataManagerConfig, o.logger); err != nil {
+	if o.dataManager, err = NewAccountDataManager(repository, cache, dataManagerConfig, o.logger, currencyConverter); err != nil {
 		return fmt.Errorf("failed to create data manager: %w", err)
 	}
 
 	// Initialize CQRS handlers with data manager
 	o.commandHandler = NewAccountCommandHandler(o.dataManager, o.logger)
-	o.queryHandler = NewAccountQueryHandler(o.dataManager, o.logger)
+	o.queryHandler = NewAccountQueryHandler(o.dataManager, o.logger, currencyConverter)
 	// Initialize event store if enabled
 	if o.config.EnableEventSourcing {
 		if o.eventStore, err = NewEventStore(repository, o.logger); err != nil {
@@ -410,20 +411,26 @@ func (o *AccountOrchestrator) Stop() error {
 
 // startComponents starts all orchestrator components
 func (o *AccountOrchestrator) startComponents(ctx context.Context) error {
-	// Start data manager - for now assume it doesn't have Start method
-	// TODO: Add Start method to data manager if needed
-	o.logger.Info("Data manager initialized (no start method)")
-
-	// Start shard manager if enabled - for now assume it doesn't have Start method
-	if o.config.EnableSharding && o.shardManager != nil {
-		// TODO: Add Start method to shard manager if needed
-		o.logger.Info("Shard manager initialized (no start method)")
+	// Start data manager background tasks
+	if o.dataManager != nil {
+		if err := o.dataManager.StartBackgroundTasks(ctx); err != nil {
+			return fmt.Errorf("failed to start data manager background tasks: %w", err)
+		}
+		o.logger.Info("Data manager background tasks started")
 	}
 
-	// Start event store if enabled - for now assume it doesn't have Start method
+	// Start shard manager auto-rebalance if enabled
+	if o.config.EnableSharding && o.shardManager != nil {
+		if err := o.shardManager.StartAutoRebalance(ctx); err != nil {
+			o.logger.Warn("Failed to start shard auto-rebalance", zap.Error(err))
+		} else {
+			o.logger.Info("Shard manager auto-rebalance started")
+		}
+	}
+
+	// Event store starts background processes in constructor, no additional start needed
 	if o.config.EnableEventSourcing && o.eventStore != nil {
-		// TODO: Add Start method to event store if needed
-		o.logger.Info("Event store initialized (no start method)")
+		o.logger.Info("Event store background processes running")
 	}
 
 	// Start lifecycle manager if enabled
@@ -446,23 +453,19 @@ func (o *AccountOrchestrator) stopComponents() error {
 			errors = append(errors, fmt.Errorf("lifecycle manager stop error: %w", err))
 		}
 	}
-
 	if o.eventStore != nil {
-		// TODO: Fix event store Stop method signature
 		if err := o.eventStore.Stop(context.Background()); err != nil {
 			errors = append(errors, fmt.Errorf("event store stop error: %w", err))
 		}
 	}
 
 	if o.shardManager != nil {
-		// TODO: Fix shard manager Stop method signature
 		if err := o.shardManager.Stop(context.Background()); err != nil {
 			errors = append(errors, fmt.Errorf("shard manager stop error: %w", err))
 		}
 	}
 
 	if o.dataManager != nil {
-		// TODO: Fix data manager Stop method signature
 		if err := o.dataManager.Stop(context.Background()); err != nil {
 			errors = append(errors, fmt.Errorf("data manager stop error: %w", err))
 		}
@@ -590,8 +593,19 @@ func (o *AccountOrchestrator) metricsCollectionWorker(ctx context.Context) error
 		o.metrics.operationDuration.WithLabelValues("metrics-collection", "orchestrator").Observe(time.Since(start).Seconds())
 	}()
 
-	// Update system load metric - data manager doesn't have GetMetrics method
-	// TODO: Implement proper metrics collection when GetMetrics is available
+	// Collect data manager health metrics
+	if o.dataManager != nil {
+		healthStatus := o.dataManager.GetHealthStatus()
+		if healthStatus.IsHealthy {
+			o.metrics.componentHealth.WithLabelValues("data_manager_health").Set(1)
+		} else {
+			o.metrics.componentHealth.WithLabelValues("data_manager_health").Set(0)
+		}
+		o.metrics.componentHealth.WithLabelValues("data_manager_active_connections").Set(float64(healthStatus.ActiveConnections))
+		o.metrics.componentHealth.WithLabelValues("data_manager_queued_operations").Set(float64(healthStatus.QueuedOperations))
+		o.metrics.componentHealth.WithLabelValues("data_manager_throughput_per_second").Set(float64(healthStatus.ThroughputPerSecond))
+		o.metrics.componentHealth.WithLabelValues("data_manager_error_rate").Set(healthStatus.ErrorRate)
+	}
 
 	// Update cache metrics
 	if o.hotCache != nil {
@@ -609,42 +623,48 @@ func (o *AccountOrchestrator) autoScalingWorker(ctx context.Context) error {
 	defer func() {
 		o.metrics.operationDuration.WithLabelValues("auto-scaling", "orchestrator").Observe(time.Since(start).Seconds())
 	}()
-
 	if !o.config.AutoScaleEnabled || o.shardManager == nil {
 		return nil
 	}
 
-	// ShardManager doesn't have GetMetrics - use simplified scaling logic
-	// TODO: Implement proper metrics when ShardManager.GetMetrics is available
+	// Get shard metrics for scaling decisions
+	shardMetrics := o.shardManager.GetMetrics()
+	maxLoadFactor, hasMaxLoad := shardMetrics["max_load_factor"].(float64)
+	currentShardCount, hasShardCount := shardMetrics["shard_count"].(int)
 
-	// For now, use simplified scaling based on current shard count
-	currentShards := o.config.MinShards // Simplified placeholder
-	// Scale up decision - placeholder logic
-	if currentShards < o.config.MaxShards {
+	if !hasMaxLoad || !hasShardCount {
+		o.logger.Warn("Missing shard metrics for auto-scaling")
+		return nil
+	}
+
+	// Scale up decision based on load factor
+	if maxLoadFactor > o.config.ScaleUpThreshold && currentShardCount < o.config.MaxShards {
 		o.logger.Info("Auto-scaling up",
-			zap.Int("current_shards", currentShards))
+			zap.Float64("max_load_factor", maxLoadFactor),
+			zap.Int("current_shards", currentShardCount))
 
 		// AddShard requires (string, int) parameters, not context
-		shardID := fmt.Sprintf("shard_%d", currentShards+1)
-		o.shardManager.AddShard(shardID, currentShards+1) // Returns void, not error
+		shardID := fmt.Sprintf("shard_%d", currentShardCount+1)
+		o.shardManager.AddShard(shardID, 100) // Returns void, not error
 
 		if o.monitoringManager != nil {
-			// TriggerAlert doesn't exist - use logging instead
+			// Use logging instead of TriggerAlert
 			o.logger.Info("System scaled up", zap.String("component", "auto_scale"))
 		}
 	}
 
-	// Scale down decision - placeholder logic
-	if currentShards > o.config.MinShards {
+	// Scale down decision based on load factor
+	if maxLoadFactor < o.config.ScaleDownThreshold && currentShardCount > o.config.MinShards {
 		o.logger.Info("Auto-scaling down",
-			zap.Int("current_shards", currentShards))
+			zap.Float64("max_load_factor", maxLoadFactor),
+			zap.Int("current_shards", currentShardCount))
 
 		// RemoveShard requires string parameter, not context
-		shardID := fmt.Sprintf("shard_%d", currentShards)
+		shardID := fmt.Sprintf("shard_%d", currentShardCount)
 		o.shardManager.RemoveShard(shardID) // Returns void, not error
 
 		if o.monitoringManager != nil {
-			// TriggerAlert doesn't exist - use logging instead
+			// Use logging instead of TriggerAlert
 			o.logger.Info("System scaled down", zap.String("component", "auto_scale"))
 		}
 	}
@@ -663,9 +683,24 @@ func (o *AccountOrchestrator) lifecycleWorker(ctx context.Context) error {
 		return nil
 	}
 
-	// ExecutePolicies method doesn't exist - use available methods
-	// TODO: Implement proper lifecycle policies when ExecutePolicies is available
-	o.logger.Debug("Lifecycle worker executed (ExecutePolicies not implemented)")
+	// The lifecycle manager runs its own background scheduler when started,
+	// so we just collect metrics and monitor its status here
+	metrics := o.lifecycleManager.GetMetrics()
+	if totalJobs, ok := metrics["total_jobs"].(int); ok {
+		o.metrics.componentHealth.WithLabelValues("lifecycle_total_jobs").Set(float64(totalJobs))
+	}
+	if completedJobs, ok := metrics["jobs_completed"].(int); ok {
+		o.metrics.componentHealth.WithLabelValues("lifecycle_completed_jobs").Set(float64(completedJobs))
+	}
+	if failedJobs, ok := metrics["jobs_failed"].(int); ok {
+		o.metrics.componentHealth.WithLabelValues("lifecycle_failed_jobs").Set(float64(failedJobs))
+	}
+	if runningJobs, ok := metrics["jobs_running"].(int); ok {
+		o.metrics.componentHealth.WithLabelValues("lifecycle_running_jobs").Set(float64(runningJobs))
+	}
+
+	o.logger.Debug("Lifecycle worker executed successfully",
+		zap.Any("lifecycle_metrics", metrics))
 
 	return nil
 }

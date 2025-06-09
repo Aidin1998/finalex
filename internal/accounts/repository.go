@@ -52,14 +52,6 @@ type BalanceUpdate struct {
 	ExpectedVersion int64
 }
 
-// TransactionContext represents a database transaction with caching
-type TransactionContext struct {
-	tx      pgx.Tx
-	cache   *CacheLayer
-	metrics *RepositoryMetrics
-	logger  *zap.Logger
-}
-
 // AuditLogEntry represents an immutable audit log for balance changes
 // (not persisted here, but sent to an async audit log processor)
 type AuditLogEntry struct {
@@ -75,9 +67,12 @@ type AuditLogEntry struct {
 // AuditLogQueue is a global async channel for audit entries (buffered)
 var AuditLogQueue = make(chan AuditLogEntry, 100000)
 
-// getTraceID returns a trace ID for audit logging (stub)
+// getTraceID returns a trace ID for audit logging with context information
 func getTraceID() string {
-	return uuid.New().String()
+	// Generate a more comprehensive trace ID that includes timestamp and node info
+	timestamp := time.Now().UnixNano()
+	nodeID := "node-1" // Could be made configurable via environment variable
+	return fmt.Sprintf("%s-%d-%s", nodeID, timestamp, uuid.New().String()[:8])
 }
 
 // NewRepository creates a new high-performance repository
@@ -134,7 +129,9 @@ func NewRepository(writeDB, readDB *gorm.DB, pgxPool *pgxpool.Pool, cache *Cache
 // GetAccount retrieves account with caching and read replica optimization
 func (r *Repository) GetAccount(ctx context.Context, userID uuid.UUID, currency string) (*Account, error) {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("get_account", "accounts").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_account", "accounts").Observe(time.Since(start).Seconds())
+	}()
 
 	// Try cache first
 	if cachedAccount, err := r.cache.GetAccount(ctx, userID, currency); err == nil {
@@ -192,7 +189,9 @@ func (r *Repository) GetAccount(ctx context.Context, userID uuid.UUID, currency 
 // GetAccountBalance retrieves only balance information (optimized for high frequency)
 func (r *Repository) GetAccountBalance(ctx context.Context, userID uuid.UUID, currency string) (decimal.Decimal, decimal.Decimal, int64, error) {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("get_balance", "accounts").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_balance", "accounts").Observe(time.Since(start).Seconds())
+	}()
 
 	// Try cache first
 	if balance, available, version, err := r.cache.GetAccountBalance(ctx, userID, currency); err == nil {
@@ -253,7 +252,9 @@ func (r *Repository) UpdateBalanceAtomic(ctx context.Context, update *BalanceUpd
 // performBalanceUpdate executes a single balance update attempt
 func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUpdate) error {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("update_balance", "accounts").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("update_balance", "accounts").Observe(time.Since(start).Seconds())
+	}()
 
 	// Acquire distributed lock
 	lockKey := fmt.Sprintf("account:lock:%s:%s", update.UserID.String(), update.Currency)
@@ -414,7 +415,9 @@ func (r *Repository) performBalanceUpdate(ctx context.Context, update *BalanceUp
 // CreateReservation creates a new fund reservation with atomic operations
 func (r *Repository) CreateReservation(ctx context.Context, reservation *Reservation) error {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("create_reservation", "reservations").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("create_reservation", "reservations").Observe(time.Since(start).Seconds())
+	}()
 
 	// Acquire distributed lock
 	lockKey := fmt.Sprintf("account:lock:%s:%s", reservation.UserID.String(), reservation.Currency)
@@ -485,7 +488,9 @@ func (r *Repository) CreateReservation(ctx context.Context, reservation *Reserva
 // ReleaseReservation releases a fund reservation and unlocks funds
 func (r *Repository) ReleaseReservation(ctx context.Context, reservationID uuid.UUID) error {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("release_reservation", "reservations").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("release_reservation", "reservations").Observe(time.Since(start).Seconds())
+	}()
 
 	// Get reservation details
 	var reservation Reservation
@@ -564,7 +569,9 @@ func (r *Repository) ReleaseReservation(ctx context.Context, reservationID uuid.
 // GetUserAccounts retrieves all accounts for a user with caching
 func (r *Repository) GetUserAccounts(ctx context.Context, userID uuid.UUID) ([]*Account, error) {
 	start := time.Now()
-	defer r.metrics.QueryDuration.WithLabelValues("get_user_accounts", "accounts").Observe(time.Since(start).Seconds())
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_user_accounts", "accounts").Observe(time.Since(start).Seconds())
+	}()
 
 	partition := r.partitions.GetAccountPartition(userID)
 	tableName := fmt.Sprintf("accounts_%s", partition)
@@ -581,6 +588,127 @@ func (r *Repository) GetUserAccounts(ctx context.Context, userID uuid.UUID) ([]*
 
 	r.metrics.QueryCount.WithLabelValues("get_user_accounts", "accounts", "success").Inc()
 	return accounts, nil
+}
+
+// GetAccountHistory retrieves account transaction history with pagination and filtering
+func (r *Repository) GetAccountHistory(ctx context.Context, userID uuid.UUID, currency string, limit int, offset int, fromDate, toDate *time.Time) ([]*LedgerTransaction, error) {
+	start := time.Now()
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_account_history", "ledger_transactions").Observe(time.Since(start).Seconds())
+	}()
+
+	// Get account first to ensure it exists
+	account, err := r.GetAccount(ctx, userID, currency)
+	if err != nil {
+		r.metrics.QueryCount.WithLabelValues("get_account_history", "ledger_transactions", "account_not_found").Inc()
+		return nil, fmt.Errorf("account not found: %w", err)
+	}
+
+	// Build query with appropriate filters
+	query := r.readDB.Table("ledger_transactions").
+		Where("user_id = ? AND currency = ?", userID, currency).
+		Order("created_at DESC")
+
+	// Add date filters if provided
+	if fromDate != nil {
+		query = query.Where("created_at >= ?", *fromDate)
+	}
+	if toDate != nil {
+		query = query.Where("created_at <= ?", *toDate)
+	}
+
+	// Apply pagination
+	if limit <= 0 {
+		limit = 100 // Default limit
+	}
+	if limit > 1000 {
+		limit = 1000 // Maximum limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	query = query.Limit(limit).Offset(offset)
+
+	var transactions []*LedgerTransaction
+	err = query.Find(&transactions).Error
+	if err != nil {
+		r.metrics.QueryCount.WithLabelValues("get_account_history", "ledger_transactions", "error").Inc()
+		return nil, fmt.Errorf("failed to get account history: %w", err)
+	}
+
+	// Set account_id for transactions that might not have it
+	for _, tx := range transactions {
+		if tx.AccountID == uuid.Nil {
+			tx.AccountID = account.ID
+		}
+	}
+
+	r.metrics.QueryCount.WithLabelValues("get_account_history", "ledger_transactions", "success").Inc()
+	return transactions, nil
+}
+
+// GetReservations retrieves reservations with filtering support
+func (r *Repository) GetReservations(ctx context.Context, userID uuid.UUID, currency string, status string, limit int, offset int) ([]*Reservation, error) {
+	start := time.Now()
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_reservations", "reservations").Observe(time.Since(start).Seconds())
+	}()
+
+	// Build base query
+	query := r.readDB.Table("reservations").
+		Where("user_id = ?", userID)
+
+	// Add currency filter if specified
+	if currency != "" {
+		query = query.Where("currency = ?", currency)
+	}
+
+	// Add status filter if specified
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	// Apply pagination
+	if limit <= 0 {
+		limit = 100 // Default limit
+	}
+	if limit > 500 {
+		limit = 500 // Maximum limit for reservations
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	query = query.Limit(limit).Offset(offset).Order("created_at DESC")
+
+	var reservations []*Reservation
+	err := query.Find(&reservations).Error
+	if err != nil {
+		r.metrics.QueryCount.WithLabelValues("get_reservations", "reservations", "error").Inc()
+		return nil, fmt.Errorf("failed to get reservations: %w", err)
+	}
+
+	r.metrics.QueryCount.WithLabelValues("get_reservations", "reservations", "success").Inc()
+	return reservations, nil
+}
+
+// GetReservation retrieves a single reservation by ID
+func (r *Repository) GetReservation(ctx context.Context, reservationID uuid.UUID) (*Reservation, error) {
+	start := time.Now()
+	defer func() {
+		r.metrics.QueryDuration.WithLabelValues("get_reservation", "reservations").Observe(time.Since(start).Seconds())
+	}()
+
+	var reservation Reservation
+	err := r.readDB.Where("id = ?", reservationID).First(&reservation).Error
+	if err != nil {
+		r.metrics.QueryCount.WithLabelValues("get_reservation", "reservations", "error").Inc()
+		return nil, fmt.Errorf("reservation not found: %w", err)
+	}
+
+	r.metrics.QueryCount.WithLabelValues("get_reservation", "reservations", "success").Inc()
+	return &reservation, nil
 }
 
 // Helper methods

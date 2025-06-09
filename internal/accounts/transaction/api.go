@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/Aidin1998/finalex/pkg/models"
 )
 
 // TransactionAPI provides HTTP endpoints for distributed transaction management
@@ -103,6 +105,11 @@ func (api *TransactionAPI) ExecuteWorkflow(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
+	// Set default timeout if not provided
+	timeout := time.Duration(request.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 60 * time.Second // Default timeout
+	}
 
 	// Execute workflow based on type
 	var result interface{}
@@ -110,26 +117,66 @@ func (api *TransactionAPI) ExecuteWorkflow(c *gin.Context) {
 
 	switch request.WorkflowType {
 	case "trade_execution":
-		// TODO: WorkflowOrchestrator is not implemented. Stub or remove usage to fix build.
-		// result, err = api.suite.WorkflowOrchestrator.ExecuteTradeWorkflow(
-		// 	c.Request.Context(),
-		// 	request.Parameters,
-		// 	timeout,
-		// )
+		// Extract parameters for ComplexTradeExecutionWorkflow
+		userID, ok := request.Parameters["user_id"].(string)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing or invalid user_id parameter"})
+			return
+		}
+
+		// Parse order request from parameters
+		orderReq := &models.OrderRequest{
+			Symbol:   request.Parameters["symbol"].(string),
+			Side:     request.Parameters["side"].(string),
+			Quantity: request.Parameters["quantity"].(float64),
+			Price:    request.Parameters["price"].(float64),
+		}
+
+		result, err = api.suite.WorkflowOrchestrator.ComplexTradeExecutionWorkflow(
+			c.Request.Context(),
+			userID,
+			orderReq,
+		)
+
 	case "fiat_deposit":
-		// TODO: WorkflowOrchestrator is not implemented. Stub or remove usage to fix build.
-		// result, err = api.suite.WorkflowOrchestrator.ExecuteFiatDepositWorkflow(
-		// 	c.Request.Context(),
-		// 	request.Parameters,
-		// 	timeout,
-		// )
+		// Extract parameters for FiatDepositWorkflow
+		userID, ok := request.Parameters["user_id"].(string)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing or invalid user_id parameter"})
+			return
+		}
+		currency := request.Parameters["currency"].(string)
+		amount := request.Parameters["amount"].(float64)
+		provider := request.Parameters["provider"].(string)
+
+		result, err = api.suite.WorkflowOrchestrator.FiatDepositWorkflow(
+			c.Request.Context(),
+			userID,
+			currency,
+			amount,
+			provider,
+		)
+
 	case "crypto_withdrawal":
-		// TODO: WorkflowOrchestrator is not implemented. Stub or remove usage to fix build.
-		// result, err = api.suite.WorkflowOrchestrator.ExecuteCryptoWithdrawalWorkflow(
-		// 	c.Request.Context(),
-		// 	request.Parameters,
-		// 	timeout,
-		// )
+		// Extract parameters for CryptoWithdrawalWorkflow
+		userID, ok := request.Parameters["user_id"].(string)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing or invalid user_id parameter"})
+			return
+		}
+		walletID := request.Parameters["wallet_id"].(string)
+		asset := request.Parameters["asset"].(string)
+		toAddress := request.Parameters["to_address"].(string)
+		amount := request.Parameters["amount"].(float64)
+
+		result, err = api.suite.WorkflowOrchestrator.CryptoWithdrawalWorkflow(
+			c.Request.Context(),
+			userID,
+			walletID,
+			asset,
+			toAddress,
+			amount,
+		)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown workflow type"})
 		return
@@ -205,7 +252,50 @@ func (api *TransactionAPI) AbortTransaction(c *gin.Context) {
 
 // GetHealthCheck returns the health status of all transaction components
 func (api *TransactionAPI) GetHealthCheck(c *gin.Context) {
-	health := api.suite.GetHealthCheck()
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now(),
+		"components": map[string]interface{}{
+			"xa_manager": map[string]interface{}{
+				"status": "active",
+				"active_transactions": func() int {
+					api.suite.XAManager.mu.RLock()
+					defer api.suite.XAManager.mu.RUnlock()
+					return len(api.suite.XAManager.transactions)
+				}(),
+			},
+			"lock_manager": map[string]interface{}{
+				"status": "active",
+				"active_locks": func() int {
+					api.suite.LockManager.mu.RLock()
+					defer api.suite.LockManager.mu.RUnlock()
+					return len(api.suite.LockManager.locks)
+				}(),
+			},
+			"performance_metrics": map[string]interface{}{
+				"status":     "active",
+				"collecting": api.suite.PerformanceMetrics != nil,
+			},
+			"monitoring_service": map[string]interface{}{
+				"status":  "active",
+				"enabled": api.suite.MonitoringService != nil,
+			},
+			"testing_framework": map[string]interface{}{
+				"status":    "active",
+				"available": api.suite.TestingFramework != nil,
+			},
+		},
+	}
+
+	// Check if any monitoring service reports unhealthy status
+	if api.suite.MonitoringService != nil {
+		alerts := api.suite.MonitoringService.GetActiveAlerts()
+		if len(alerts) > 0 {
+			health["status"] = "degraded"
+			health["active_alerts"] = len(alerts)
+		}
+	}
+
 	c.JSON(http.StatusOK, health)
 }
 
@@ -225,10 +315,13 @@ func (api *TransactionAPI) GetMetrics(c *gin.Context) {
 
 // GetPerformanceMetrics returns detailed performance metrics
 func (api *TransactionAPI) GetPerformanceMetrics(c *gin.Context) {
-	// TODO: PerformanceMetrics is not implemented. Stub or remove usage to fix build.
-	// metrics := api.suite.PerformanceMetrics.GetRealTimeMetrics()
-	// c.JSON(http.StatusOK, metrics)
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Performance metrics not available"})
+	if api.suite.PerformanceMetrics == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Performance metrics not available"})
+		return
+	}
+
+	metrics := api.suite.PerformanceMetrics.GetRealTimeMetrics()
+	c.JSON(http.StatusOK, metrics)
 }
 
 // RunChaosTest executes chaos engineering tests
@@ -242,27 +335,45 @@ func (api *TransactionAPI) RunChaosTest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
+	if api.suite.TestingFramework == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Testing framework not available"})
+		return
+	}
 
-	// TODO: TestingFramework is not implemented. Stub or remove usage to fix build.
-	// tester, ok := api.suite.TestingFramework.(*DistributedTransactionTester)
-	// if !ok {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Testing framework not available"})
-	// 	return
-	// }
+	tester := api.suite.TestingFramework
 
-	// tester.EnableChaos(true)
-	// result, err := tester.RunScenario(c.Request.Context(), "chaos_test")
-	// tester.EnableChaos(false)
+	// Configure chaos test parameters
+	config := ChaosConfig{
+		FailureRate:         float64(request.Intensity) / 100.0,
+		LatencyInjection:    time.Duration(request.Duration) * time.Second,
+		ResourceExhaustion:  true,
+		NetworkPartition:    true,
+		RandomFailures:      true,
+		CircuitBreakerTrips: true,
+	}
 
-	// if err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{
-	// 		"error":   "Chaos test failed",
-	// 		"details": err.Error(),
-	// 	})
-	// 	return
-	// }
+	tester.EnableChaos(true)
+	tester.SetChaosConfig(config)
 
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Chaos test not available"})
+	result, err := tester.RunScenario(c.Request.Context(), "chaos_test")
+
+	tester.EnableChaos(false)
+
+	if err != nil {
+		api.logger.Error("Chaos test failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Chaos test failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "completed",
+		"result":           result,
+		"duration_seconds": request.Duration,
+		"intensity":        request.Intensity,
+	})
 }
 
 // RunLoadTest executes load testing
