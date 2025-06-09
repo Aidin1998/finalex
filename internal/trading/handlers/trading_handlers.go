@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/finalex/common/apiutil"
+	"github.com/Aidin1998/finalex/api/responses"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -109,49 +109,33 @@ func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 	var req PlaceOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid order placement request", zap.Error(err))
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_request",
-			Message: "Invalid order parameters",
-			Details: err.Error(),
-		})
+		responses.BadRequest(c, "Invalid order parameters: "+err.Error())
 		return
 	}
 
 	// Get user ID from auth context
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, apiutil.ErrorResponse{
-			Error:   "unauthorized",
-			Message: "User authentication required",
-		})
+		responses.Unauthorized(c, "User authentication required")
 		return
 	}
 
 	userUUID, err := uuid.Parse(userID.(string))
 	if err != nil {
 		h.logger.Error("Invalid user ID format", zap.Error(err))
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_user_id",
-			Message: "Invalid user ID format",
-		})
+		responses.BadRequest(c, "Invalid user ID format")
 		return
 	}
 
 	// Validate price for limit orders
 	if (req.Type == "limit" || strings.Contains(req.Type, "limit")) && req.Price.IsZero() {
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_price",
-			Message: "Price is required for limit orders",
-		})
+		responses.BadRequest(c, "Price is required for limit orders")
 		return
 	}
 
 	// Validate stop price for stop orders
 	if strings.Contains(req.Type, "stop") && req.StopPrice.IsZero() {
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_stop_price",
-			Message: "Stop price is required for stop orders",
-		})
+		responses.BadRequest(c, "Stop price is required for stop orders")
 		return
 	}
 
@@ -188,25 +172,16 @@ func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 
 		// Handle specific error types
 		if strings.Contains(err.Error(), "insufficient") {
-			c.JSON(http.StatusForbidden, apiutil.ErrorResponse{
-				Error:   "insufficient_balance",
-				Message: "Insufficient balance to place order",
-			})
+			responses.Forbidden(c, "Insufficient balance to place order")
 			return
 		}
 
 		if strings.Contains(err.Error(), "compliance") {
-			c.JSON(http.StatusForbidden, apiutil.ErrorResponse{
-				Error:   "compliance_violation",
-				Message: "Order violates compliance rules",
-			})
+			responses.Forbidden(c, "Order violates compliance rules")
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, apiutil.ErrorResponse{
-			Error:   "order_placement_failed",
-			Message: "Failed to place order",
-		})
+		responses.InternalServerError(c, "Failed to place order")
 		return
 	}
 
@@ -258,21 +233,14 @@ func (h *TradingHandler) GetOrders(c *gin.Context) {
 	var req ListOrdersRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		h.logger.Warn("Invalid order listing request", zap.Error(err))
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_request",
-			Message: "Invalid query parameters",
-			Details: err.Error(),
-		})
+		responses.BadRequest(c, "Invalid query parameters: "+err.Error())
 		return
 	}
 
 	// Get user ID from auth context
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, apiutil.ErrorResponse{
-			Error:   "unauthorized",
-			Message: "User authentication required",
-		})
+		responses.Unauthorized(c, "User authentication required")
 		return
 	}
 
@@ -300,10 +268,7 @@ func (h *TradingHandler) GetOrders(c *gin.Context) {
 			zap.Error(err),
 			zap.String("user_id", userID.(string)),
 		)
-		c.JSON(http.StatusInternalServerError, apiutil.ErrorResponse{
-			Error:   "orders_retrieval_failed",
-			Message: "Failed to retrieve orders",
-		})
+		responses.InternalServerError(c, "Failed to retrieve orders")
 		return
 	}
 
@@ -340,20 +305,14 @@ func (h *TradingHandler) GetOrder(c *gin.Context) {
 
 	// Validate order ID format
 	if _, err := uuid.Parse(orderID); err != nil {
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_order_id",
-			Message: "Invalid order ID format",
-		})
+		responses.BadRequest(c, "Invalid order ID format")
 		return
 	}
 
 	// Get user ID from auth context
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, apiutil.ErrorResponse{
-			Error:   "unauthorized",
-			Message: "User authentication required",
-		})
+		responses.Unauthorized(c, "User authentication required")
 		return
 	}
 
@@ -361,10 +320,7 @@ func (h *TradingHandler) GetOrder(c *gin.Context) {
 	order, err := h.tradingService.GetOrder(orderID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusNotFound, apiutil.ErrorResponse{
-				Error:   "order_not_found",
-				Message: "Order not found",
-			})
+			responses.NotFound(c, "Order not found")
 			return
 		}
 
@@ -373,10 +329,7 @@ func (h *TradingHandler) GetOrder(c *gin.Context) {
 			zap.String("user_id", userID.(string)),
 			zap.String("order_id", orderID),
 		)
-		c.JSON(http.StatusInternalServerError, apiutil.ErrorResponse{
-			Error:   "order_retrieval_failed",
-			Message: "Failed to retrieve order",
-		})
+		responses.InternalServerError(c, "Failed to retrieve order")
 		return
 	}
 
@@ -402,20 +355,14 @@ func (h *TradingHandler) CancelOrder(c *gin.Context) {
 
 	// Validate order ID format
 	if _, err := uuid.Parse(orderID); err != nil {
-		c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-			Error:   "invalid_order_id",
-			Message: "Invalid order ID format",
-		})
+		responses.BadRequest(c, "Invalid order ID format")
 		return
 	}
 
 	// Get user ID from auth context
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, apiutil.ErrorResponse{
-			Error:   "unauthorized",
-			Message: "User authentication required",
-		})
+		responses.Unauthorized(c, "User authentication required")
 		return
 	}
 
@@ -423,18 +370,12 @@ func (h *TradingHandler) CancelOrder(c *gin.Context) {
 	err := h.tradingService.CancelOrder(c.Request.Context(), orderID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusNotFound, apiutil.ErrorResponse{
-				Error:   "order_not_found",
-				Message: "Order not found",
-			})
+			responses.NotFound(c, "Order not found")
 			return
 		}
 
 		if strings.Contains(err.Error(), "cannot be cancelled") {
-			c.JSON(http.StatusBadRequest, apiutil.ErrorResponse{
-				Error:   "order_not_cancellable",
-				Message: "Order cannot be cancelled in its current state",
-			})
+			responses.BadRequest(c, "Order cannot be cancelled in its current state")
 			return
 		}
 
@@ -443,10 +384,7 @@ func (h *TradingHandler) CancelOrder(c *gin.Context) {
 			zap.String("user_id", userID.(string)),
 			zap.String("order_id", orderID),
 		)
-		c.JSON(http.StatusInternalServerError, apiutil.ErrorResponse{
-			Error:   "order_cancellation_failed",
-			Message: "Failed to cancel order",
-		})
+		responses.InternalServerError(c, "Failed to cancel order")
 		return
 	}
 
