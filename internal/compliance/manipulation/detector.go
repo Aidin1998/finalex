@@ -153,10 +153,23 @@ type DetectionConfig struct {
 	// Auto-suspension settings
 	AutoSuspendEnabled   bool            `json:"auto_suspend_enabled"`
 	AutoSuspendThreshold decimal.Decimal `json:"auto_suspend_threshold"`
-
 	// Alert settings
 	RealTimeAlertsEnabled bool `json:"real_time_alerts_enabled"`
 	AlertCooldownMinutes  int  `json:"alert_cooldown_minutes"`
+
+	// Consolidated adapter settings
+	UseConsolidatedAdapter bool                      `json:"use_consolidated_adapter"`
+	ConsolidatedConfig     ConsolidatedAdapterConfig `json:"consolidated_config"`
+}
+
+// ConsolidatedAdapterConfig contains configuration for the consolidated detection adapter
+type ConsolidatedAdapterConfig struct {
+	Enabled              bool            `json:"enabled"`
+	WashTradingThreshold decimal.Decimal `json:"wash_trading_threshold"`
+	MinOrderCount        int             `json:"min_order_count"`
+	MinTradeCount        int             `json:"min_trade_count"`
+	TimeWindowMinutes    int             `json:"time_window_minutes"`
+	MinVolume            decimal.Decimal `json:"min_volume"`
 }
 
 // MarketMetrics tracks market-level metrics for manipulation detection
@@ -217,12 +230,30 @@ func NewManipulationDetector(logger *zap.SugaredLogger, riskService risk.RiskSer
 		stopChan:       make(chan struct{}),
 		tradingEngine:  tradingEngine,
 	}
-
 	// Initialize pattern detection engines
 	md.washTradingDetector = NewWashTradingDetector(config, logger)
 	md.spoofingDetector = NewSpoofingDetector(config, logger)
 	md.pumpDumpDetector = NewPumpDumpDetector(config, logger)
 	md.layeringDetector = NewLayeringDetector(config, logger)
+	// Initialize consolidated detection adapter
+	if config.UseConsolidatedAdapter && config.ConsolidatedConfig.Enabled {
+		md.consolidatedAdapter = NewConsolidatedDetectorAdapter(logger)
+		// Apply configuration to the adapter
+		md.consolidatedAdapter.config = AdapterConfig{
+			WashTradingThreshold: config.ConsolidatedConfig.WashTradingThreshold,
+			MinOrderCount:        config.ConsolidatedConfig.MinOrderCount,
+			MinTradeCount:        config.ConsolidatedConfig.MinTradeCount,
+			TimeWindow:           time.Duration(config.ConsolidatedConfig.TimeWindowMinutes) * time.Minute,
+			MinVolume:            config.ConsolidatedConfig.MinVolume,
+		}
+		logger.Infow("Consolidated detection adapter initialized",
+			"wash_trading_threshold", config.ConsolidatedConfig.WashTradingThreshold.String(),
+			"min_order_count", config.ConsolidatedConfig.MinOrderCount,
+			"min_trade_count", config.ConsolidatedConfig.MinTradeCount)
+	} else {
+		md.consolidatedAdapter = nil
+		logger.Info("Consolidated detection adapter disabled, using legacy detectors")
+	}
 
 	return md
 }

@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/Aidin1998/finalex/internal/integration/infrastructure"
 )
 
 // ComplianceEvent represents an incoming event for compliance analysis
@@ -176,13 +177,12 @@ func (ce *ComplianceEngine) processEvent(event *ComplianceEvent) {
 		ce.logger.Warn("Compliance alert triggered", zap.String("user_id", event.UserID), zap.Strings("violations", violations), zap.Bool("anomaly", isAnomaly), zap.Float64("score", anomalyScore))
 	}
 	// Metrics and audit trail
-	// TODO: Implement metric registration when service supports it
-	// ce.service.RegisterMetric("compliance_event", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
+	ce.service.RegisterMetric("compliance_event", infrastructure.MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
 	if isAnomaly {
-		// ce.service.RegisterMetric("compliance_anomaly", MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
+		ce.service.RegisterMetric("compliance_anomaly", infrastructure.MetricTypeCounter, 1, map[string]string{"event_type": event.EventType})
 	}
 	if len(violations) > 0 {
-		// ce.service.RegisterMetric("compliance_violation", MetricTypeCounter, float64(len(violations)), map[string]string{"event_type": event.EventType})
+		ce.service.RegisterMetric("compliance_violation", infrastructure.MetricTypeCounter, float64(len(violations)), map[string]string{"event_type": event.EventType})
 	}
 }
 

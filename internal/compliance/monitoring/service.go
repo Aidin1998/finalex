@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/Aidin1998/finalex/internal/integration/infrastructure"
 )
 
 // Helper functions for enum conversions
@@ -55,6 +56,7 @@ type MonitoringService struct {
 	alertChan   chan interfaces.MonitoringAlert
 	policyCache map[string]*interfaces.MonitoringPolicy
 	metrics     *MonitoringMetrics
+	promMetrics *PrometheusMetrics
 	mu          sync.RWMutex
 	stopChan    chan struct{}
 	workers     int
@@ -75,7 +77,6 @@ func NewMonitoringService(db *gorm.DB, auditSvc interfaces.AuditService, workers
 	if workers <= 0 {
 		workers = 4
 	}
-
 	return &MonitoringService{
 		db:          db,
 		auditSvc:    auditSvc,
@@ -83,6 +84,7 @@ func NewMonitoringService(db *gorm.DB, auditSvc interfaces.AuditService, workers
 		alertChan:   make(chan interfaces.MonitoringAlert, 1000),
 		policyCache: make(map[string]*interfaces.MonitoringPolicy),
 		metrics:     &MonitoringMetrics{},
+		promMetrics: NewPrometheusMetrics(),
 		stopChan:    make(chan struct{}),
 		workers:     workers,
 	}
@@ -165,6 +167,37 @@ func (m *MonitoringService) GetSystemHealth(ctx context.Context) (*interfaces.Sy
 			},
 		},
 	}, nil
+}
+
+// RegisterMetric registers a metric with the monitoring service
+func (m *MonitoringService) RegisterMetric(name string, metricType infrastructure.MetricType, value float64, labels map[string]string) {
+	if m.promMetrics == nil {
+		return
+	}
+
+	switch name {
+	case "compliance_event":
+		eventType := "unknown"
+		if et, ok := labels["event_type"]; ok {
+			eventType = et
+		}
+		// ComplianceChecks expects ["check_type", "result"]
+		m.promMetrics.ComplianceChecks.WithLabelValues(eventType, "processed").Add(value)
+	case "compliance_anomaly":
+		eventType := "unknown"
+		if et, ok := labels["event_type"]; ok {
+			eventType = et
+		}
+		// ManipulationDetections expects ["pattern_type", "market", "severity"]
+		m.promMetrics.ManipulationDetections.WithLabelValues("anomaly", eventType, "medium").Add(value)
+	case "compliance_violation":
+		eventType := "unknown"
+		if et, ok := labels["event_type"]; ok {
+			eventType = et
+		}
+		// PolicyViolations expects ["policy_type", "severity"]
+		m.promMetrics.PolicyViolations.WithLabelValues(eventType, "medium").Add(value)
+	}
 }
 
 // AcknowledgeAlert acknowledges an alert
