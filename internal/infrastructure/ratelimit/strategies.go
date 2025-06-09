@@ -32,7 +32,7 @@ type EnhancedStrategyConfig struct {
 // NewEnhancedStrategy creates a new enhanced strategy
 func NewEnhancedStrategy(config *EnhancedStrategyConfig, logger *zap.Logger) (*EnhancedStrategy, error) {
 	redisClient := NewRedisClient(config.RedisAddr, config.RedisPassword, config.RedisDB)
-	configManager := &ConfigManager{configs: make(map[string]*RateLimitConfig)}
+	configManager := &ConfigManager{Configs: make(map[string]*RateLimitConfig)}
 
 	// Load default configurations
 	for key, cfg := range config.DefaultConfigs {

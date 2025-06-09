@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -363,12 +364,41 @@ func CompareConfigs(oldConfig, newConfig *PlatformConfig) []ConfigDiff {
 			OldValue: oldConfig.Environment,
 			NewValue: newConfig.Environment,
 		})
+	} // Compare server configuration using reflect
+	if !reflect.DeepEqual(oldConfig.Server, newConfig.Server) {
+		diffs = append(diffs, ConfigDiff{
+			Path:     "server",
+			OldValue: oldConfig.Server,
+			NewValue: newConfig.Server,
+		})
 	}
 
-	// Note: Server port comparison disabled as structure changed
-	// TODO: Implement proper comparison for new ServerConfig structure
+	// Compare database configuration
+	if !reflect.DeepEqual(oldConfig.Database, newConfig.Database) {
+		diffs = append(diffs, ConfigDiff{
+			Path:     "database",
+			OldValue: oldConfig.Database,
+			NewValue: newConfig.Database,
+		})
+	}
 
-	// Add more comparisons as needed...
+	// Compare Redis configuration
+	if !reflect.DeepEqual(oldConfig.Redis, newConfig.Redis) {
+		diffs = append(diffs, ConfigDiff{
+			Path:     "redis",
+			OldValue: oldConfig.Redis,
+			NewValue: newConfig.Redis,
+		})
+	}
+
+	// Compare JWT configuration
+	if !reflect.DeepEqual(oldConfig.JWT, newConfig.JWT) {
+		diffs = append(diffs, ConfigDiff{
+			Path:     "jwt",
+			OldValue: oldConfig.JWT,
+			NewValue: newConfig.JWT,
+		})
+	}
 
 	return diffs
 }

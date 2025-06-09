@@ -52,6 +52,24 @@ else
 end
 `)
 
+// Peek script for token bucket (without consuming tokens)
+var tokenBucketPeekScript = redis.NewScript(`
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local bucket = redis.call('HMGET', key, 'tokens', 'last')
+local tokens = tonumber(bucket[1]) or capacity
+local last = tonumber(bucket[2]) or now
+local delta = math.max(0, now - last)
+local refill = delta * refill_rate
+local new_tokens = math.min(capacity, tokens + refill)
+-- Update state without consuming
+redis.call('HMSET', key, 'tokens', new_tokens, 'last', now)
+redis.call('EXPIRE', key, 60)
+return {new_tokens, last}
+`)
+
 // TakeTokenBucket attempts to take n tokens from the distributed bucket
 func (rc *RedisClient) TakeTokenBucket(ctx context.Context, key string, capacity int, refillRate float64, n int) (allowed bool, tokensLeft float64, err error) {
 	now := time.Now().Unix()
@@ -66,6 +84,27 @@ func (rc *RedisClient) TakeTokenBucket(ctx context.Context, key string, capacity
 	allowedInt, _ := vals[0].(int64)
 	tokensLeftF, _ := vals[1].(float64)
 	return allowedInt == 1, tokensLeftF, nil
+}
+
+// PeekTokenBucket returns current token count and next refill time without consuming tokens
+func (rc *RedisClient) PeekTokenBucket(ctx context.Context, key string, capacity int, refillRate float64) (tokensLeft float64, nextRefill time.Time, err error) {
+	now := time.Now().Unix()
+	res, err := tokenBucketPeekScript.Run(ctx, rc.Client, []string{key}, capacity, refillRate, now).Result()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	vals, ok := res.([]interface{})
+	if !ok || len(vals) < 2 {
+		return 0, time.Time{}, fmt.Errorf("unexpected redis script result: %v", res)
+	}
+	tokensLeftF, _ := vals[0].(float64)
+	lastRefillInt, _ := vals[1].(int64)
+
+	// Calculate next refill time based on refill rate
+	secondsToNextToken := (1.0 - (tokensLeftF - float64(int(tokensLeftF)))) / refillRate
+	nextRefill = time.Unix(lastRefillInt, 0).Add(time.Duration(secondsToNextToken * float64(time.Second)))
+
+	return tokensLeftF, nextRefill, nil
 }
 
 // --- Distributed Sliding Window ---
@@ -216,6 +255,25 @@ func (rc *RedisClient) BulkCheck(ctx context.Context, keys []string, algorithm s
 			}
 		}
 	}
-
 	return results, nil
+}
+
+// Implement DistributedStore interface
+func (rc *RedisClient) Get(ctx context.Context, key string) ([]byte, error) {
+	val, err := rc.Client.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Key not found
+		}
+		return nil, err
+	}
+	return []byte(val), nil
+}
+
+func (rc *RedisClient) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
+	return rc.Client.Set(ctx, key, val, ttl).Err()
+}
+
+func (rc *RedisClient) EvalScript(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
+	return rc.Client.Eval(ctx, script, keys, args...).Result()
 }

@@ -2,6 +2,7 @@
 package ratelimit
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"net"
@@ -11,6 +12,32 @@ import (
 	"strings"
 	"time"
 )
+
+// Global configuration for bypass rules
+var DefaultBypassConfig = &BypassConfig{
+	AllowPrivateIPs:       false, // Configurable - don't allow by default for security
+	RequireAdminAuth:      true,  // Always require admin auth for admin bypass
+	AllowHealthChecks:     true,  // Allow health checks
+	AllowInternalRequests: true,  // Allow internal requests
+}
+
+// AdminAuthValidator interface for validating admin authentication
+type AdminAuthValidator interface {
+	ValidateAdminToken(ctx context.Context, token string) (bool, error)
+}
+
+// DefaultAdminAuthValidator can be injected with actual auth service
+var DefaultAdminAuthValidator AdminAuthValidator
+
+// SetAdminAuthValidator sets the global admin auth validator
+func SetAdminAuthValidator(validator AdminAuthValidator) {
+	DefaultAdminAuthValidator = validator
+}
+
+// SetBypassConfig sets the global bypass configuration
+func SetBypassConfig(config *BypassConfig) {
+	DefaultBypassConfig = config
+}
 
 // KeyFromRequest generates a unique key for rate limiting (user, IP, API key, etc)
 func KeyFromRequest(r *http.Request) string {
@@ -278,17 +305,30 @@ func ShouldBypassRateLimit(r *http.Request) bool {
 	if r.Header.Get("X-Internal-Request") == "true" {
 		return true
 	}
-
 	// Bypass admin requests (with proper authentication)
 	if r.Header.Get("X-Admin-Request") == "true" {
-		// TODO: Verify admin authentication
+		if DefaultBypassConfig.RequireAdminAuth && DefaultAdminAuthValidator != nil {
+			// Extract token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				return false // No auth header, don't bypass
+			}
+
+			// Remove "Bearer " prefix if present
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+
+			// Validate admin token
+			isValid, err := DefaultAdminAuthValidator.ValidateAdminToken(r.Context(), token)
+			if err != nil || !isValid {
+				return false // Invalid admin auth, don't bypass
+			}
+		}
 		return true
 	}
 
 	// Bypass requests from private IPs (configurable)
 	if ip := extractClientIP(r); ip != "" && IsPrivateIP(ip) {
-		// TODO: Make this configurable
-		return false // For now, don't bypass private IPs
+		return DefaultBypassConfig.AllowPrivateIPs
 	}
 
 	return false

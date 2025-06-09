@@ -7,26 +7,11 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
-
-// ConfigManager manages all rate limit configs and live reload
-// Supports per-user, per-IP, per-route, global, etc.
-type ConfigManager struct {
-	configs   map[string]*RateLimitConfig
-	mu        sync.RWMutex
-	watcher   *fsnotify.Watcher
-	configDir string
-	logger    *zap.Logger
-	callbacks []ConfigChangeCallback
-}
-
-// ConfigChangeCallback is called when configuration changes
-type ConfigChangeCallback func(key string, old, new *RateLimitConfig)
 
 // NewConfigManager creates a new configuration manager
 func NewConfigManager(configDir string, logger *zap.Logger) (*ConfigManager, error) {
@@ -36,11 +21,11 @@ func NewConfigManager(configDir string, logger *zap.Logger) (*ConfigManager, err
 	}
 
 	cm := &ConfigManager{
-		configs:   make(map[string]*RateLimitConfig),
-		watcher:   watcher,
-		configDir: configDir,
-		logger:    logger,
-		callbacks: make([]ConfigChangeCallback, 0),
+		Configs:   make(map[string]*RateLimitConfig),
+		Watcher:   watcher,
+		ConfigDir: configDir,
+		Logger:    logger,
+		Callbacks: make([]ConfigChangeCallback, 0),
 	}
 
 	// Start watching for file changes
@@ -58,59 +43,59 @@ func NewConfigManager(configDir string, logger *zap.Logger) (*ConfigManager, err
 
 // AddConfigChangeCallback adds a callback for configuration changes
 func (cm *ConfigManager) AddConfigChangeCallback(callback ConfigChangeCallback) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	cm.callbacks = append(cm.callbacks, callback)
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
+	cm.Callbacks = append(cm.Callbacks, callback)
 }
 
 // watchConfigChanges watches for file system changes and reloads configuration
 func (cm *ConfigManager) watchConfigChanges() {
 	for {
 		select {
-		case event, ok := <-cm.watcher.Events:
+		case event, ok := <-cm.Watcher.Events:
 			if !ok {
 				return
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				cm.logger.Info("config file changed, reloading",
+				cm.Logger.Info("config file changed, reloading",
 					zap.String("file", event.Name))
 				if err := cm.LoadFromFile(event.Name); err != nil {
-					cm.logger.Error("failed to reload config",
+					cm.Logger.Error("failed to reload config",
 						zap.String("file", event.Name),
 						zap.Error(err))
 				}
 			}
-		case err, ok := <-cm.watcher.Errors:
+		case err, ok := <-cm.Watcher.Errors:
 			if !ok {
 				return
 			}
-			cm.logger.Error("config watcher error", zap.Error(err))
+			cm.Logger.Error("config watcher error", zap.Error(err))
 		}
 	}
 }
 
 // GetConfig returns the config for a given key (user, IP, route, etc)
 func (cm *ConfigManager) GetConfig(key string) *RateLimitConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	return cm.configs[key]
+	cm.Mu.RLock()
+	defer cm.Mu.RUnlock()
+	return cm.Configs[key]
 }
 
 // SetConfig sets or updates a config
 func (cm *ConfigManager) SetConfig(key string, cfg *RateLimitConfig) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
 
-	old := cm.configs[key]
-	cm.configs[key] = cfg
+	old := cm.Configs[key]
+	cm.Configs[key] = cfg
 
 	// Notify callbacks
-	for _, callback := range cm.callbacks {
+	for _, callback := range cm.Callbacks {
 		go callback(key, old, cfg)
 	}
 
-	if cm.logger != nil {
-		cm.logger.Debug("rate limit config updated",
+	if cm.Logger != nil {
+		cm.Logger.Debug("rate limit config updated",
 			zap.String("key", key),
 			zap.String("type", cfg.Type),
 			zap.Int("limit", cfg.Limit),
@@ -120,8 +105,8 @@ func (cm *ConfigManager) SetConfig(key string, cfg *RateLimitConfig) {
 
 // LoadFromFile loads configs from a JSON or YAML file
 func (cm *ConfigManager) LoadFromFile(path string) error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -163,19 +148,19 @@ func (cm *ConfigManager) LoadFromFile(path string) error {
 	}
 
 	// Update configurations
-	oldConfigs := cm.configs
-	cm.configs = configs
+	oldConfigs := cm.Configs
+	cm.Configs = configs
 
 	// Notify callbacks of changes
 	for key, newCfg := range configs {
 		oldCfg := oldConfigs[key]
-		for _, callback := range cm.callbacks {
+		for _, callback := range cm.Callbacks {
 			go callback(key, oldCfg, newCfg)
 		}
 	}
 
-	if cm.logger != nil {
-		cm.logger.Info("loaded rate limit configuration",
+	if cm.Logger != nil {
+		cm.Logger.Info("loaded rate limit configuration",
 			zap.String("file", path),
 			zap.Int("configs", len(configs)))
 	}
@@ -208,13 +193,12 @@ func (cm *ConfigManager) LoadFromDirectory(dirPath string) error {
 		if file.IsDir() {
 			continue
 		}
-
 		ext := filepath.Ext(file.Name())
 		if ext == ".yaml" || ext == ".yml" || ext == ".json" {
 			filePath := filepath.Join(dirPath, file.Name())
 			if err := cm.LoadFromFile(filePath); err != nil {
-				if cm.logger != nil {
-					cm.logger.Error("failed to load config file",
+				if cm.Logger != nil {
+					cm.Logger.Error("failed to load config file",
 						zap.String("file", filePath),
 						zap.Error(err))
 				}
@@ -227,52 +211,52 @@ func (cm *ConfigManager) LoadFromDirectory(dirPath string) error {
 
 // Admin override: whitelist a key (disable rate limit)
 func (cm *ConfigManager) Whitelist(key string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
 
-	if cfg, ok := cm.configs[key]; ok {
+	if cfg, ok := cm.Configs[key]; ok {
 		old := *cfg // Copy old config
 		cfg.Enabled = false
 
 		// Notify callbacks
-		for _, callback := range cm.callbacks {
+		for _, callback := range cm.Callbacks {
 			go callback(key, &old, cfg)
 		}
 
-		if cm.logger != nil {
-			cm.logger.Info("whitelisted rate limit key", zap.String("key", key))
+		if cm.Logger != nil {
+			cm.Logger.Info("whitelisted rate limit key", zap.String("key", key))
 		}
 	}
 }
 
 // Admin override: blacklist a key (force rate limit block)
 func (cm *ConfigManager) Blacklist(key string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
 
-	if cfg, ok := cm.configs[key]; ok {
+	if cfg, ok := cm.Configs[key]; ok {
 		old := *cfg // Copy old config
 		cfg.Enabled = true
 		cfg.Limit = 0
 
 		// Notify callbacks
-		for _, callback := range cm.callbacks {
+		for _, callback := range cm.Callbacks {
 			go callback(key, &old, cfg)
 		}
 
-		if cm.logger != nil {
-			cm.logger.Info("blacklisted rate limit key", zap.String("key", key))
+		if cm.Logger != nil {
+			cm.Logger.Info("blacklisted rate limit key", zap.String("key", key))
 		}
 	}
 }
 
 // GetAllConfigs returns a copy of all configurations
 func (cm *ConfigManager) GetAllConfigs() map[string]*RateLimitConfig {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
+	cm.Mu.RLock()
+	defer cm.Mu.RUnlock()
 
 	configs := make(map[string]*RateLimitConfig)
-	for key, cfg := range cm.configs {
+	for key, cfg := range cm.Configs {
 		// Deep copy
 		configCopy := *cfg
 		configs[key] = &configCopy
@@ -280,40 +264,109 @@ func (cm *ConfigManager) GetAllConfigs() map[string]*RateLimitConfig {
 	return configs
 }
 
+// ListConfigs returns a list of configuration keys and basic info
+func (cm *ConfigManager) ListConfigs() map[string]interface{} {
+	cm.Mu.RLock()
+	defer cm.Mu.RUnlock()
+
+	result := make(map[string]interface{})
+	for key, cfg := range cm.Configs {
+		result[key] = map[string]interface{}{
+			"type":        cfg.Type,
+			"limit":       cfg.Limit,
+			"window":      cfg.Window.String(),
+			"enabled":     cfg.Enabled,
+			"description": cfg.Description,
+		}
+	}
+	return result
+}
+
 // DeleteConfig removes a configuration
 func (cm *ConfigManager) DeleteConfig(key string) bool {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
 
-	if old, exists := cm.configs[key]; exists {
-		delete(cm.configs, key)
+	if old, exists := cm.Configs[key]; exists {
+		delete(cm.Configs, key)
 
 		// Notify callbacks
-		for _, callback := range cm.callbacks {
+		for _, callback := range cm.Callbacks {
 			go callback(key, old, nil)
 		}
 
-		if cm.logger != nil {
-			cm.logger.Info("deleted rate limit config", zap.String("key", key))
+		if cm.Logger != nil {
+			cm.Logger.Info("deleted rate limit config", zap.String("key", key))
 		}
 		return true
 	}
 	return false
 }
 
+// UpdateConfig updates a configuration using a ConfigUpdate
+func (cm *ConfigManager) UpdateConfig(key string, update *ConfigUpdate) error {
+	cm.Mu.Lock()
+	defer cm.Mu.Unlock()
+
+	config, exists := cm.Configs[key]
+	if !exists {
+		return fmt.Errorf("configuration not found: %s", key)
+	}
+
+	old := *config // Make a copy for callbacks
+
+	// Apply updates
+	if update.Limit != nil {
+		if *update.Limit <= 0 {
+			return fmt.Errorf("limit must be positive")
+		}
+		config.Limit = *update.Limit
+	}
+	if update.Window != nil {
+		if *update.Window <= 0 {
+			return fmt.Errorf("window must be positive")
+		}
+		config.Window = *update.Window
+	}
+	if update.Enabled != nil {
+		config.Enabled = *update.Enabled
+	}
+	if update.Burst != nil {
+		config.Burst = *update.Burst
+	}
+	if update.Description != nil {
+		config.Description = *update.Description
+	}
+
+	// Notify callbacks
+	for _, callback := range cm.Callbacks {
+		go callback(key, &old, config)
+	}
+
+	if cm.Logger != nil {
+		cm.Logger.Debug("rate limit config updated via patch",
+			zap.String("key", key),
+			zap.String("type", config.Type),
+			zap.Int("limit", config.Limit),
+			zap.Duration("window", config.Window))
+	}
+
+	return nil
+}
+
 // SaveToFile saves current configurations to a file
 func (cm *ConfigManager) SaveToFile(path string) error {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
+	cm.Mu.RLock()
+	defer cm.Mu.RUnlock()
 
 	ext := filepath.Ext(path)
 	var data []byte
 	var err error
 
 	if ext == ".yaml" || ext == ".yml" {
-		data, err = yaml.Marshal(cm.configs)
+		data, err = yaml.Marshal(cm.Configs)
 	} else {
-		data, err = json.MarshalIndent(cm.configs, "", "  ")
+		data, err = json.MarshalIndent(cm.Configs, "", "  ")
 	}
 
 	if err != nil {
@@ -324,10 +377,10 @@ func (cm *ConfigManager) SaveToFile(path string) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	if cm.logger != nil {
-		cm.logger.Info("saved rate limit configuration",
+	if cm.Logger != nil {
+		cm.Logger.Info("saved rate limit configuration",
 			zap.String("file", path),
-			zap.Int("configs", len(cm.configs)))
+			zap.Int("configs", len(cm.Configs)))
 	}
 
 	return nil
@@ -335,8 +388,8 @@ func (cm *ConfigManager) SaveToFile(path string) error {
 
 // Close cleanly shuts down the configuration manager
 func (cm *ConfigManager) Close() error {
-	if cm.watcher != nil {
-		return cm.watcher.Close()
+	if cm.Watcher != nil {
+		return cm.Watcher.Close()
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -103,12 +104,48 @@ type DistributedTokenBucket struct {
 
 // Allow checks if n tokens can be consumed, updates state if allowed
 func (tb *DistributedTokenBucket) Allow(ctx context.Context, key string, n int) (bool, time.Duration, map[string]string, error) {
-	// TODO: Implement token bucket logic (local and distributed)
-	return true, 0, nil, nil
+	refillRate := float64(tb.Config.Limit) / tb.Config.Window.Seconds()
+
+	// Use Redis client to check and consume tokens
+	if redisStore, ok := tb.Store.(*RedisClient); ok {
+		allowed, tokensLeft, err := redisStore.TakeTokenBucket(ctx, key, tb.Config.Burst, refillRate, n)
+		if err != nil {
+			return false, 0, nil, fmt.Errorf("distributed token bucket error: %w", err)
+		}
+
+		headers := map[string]string{
+			"X-RateLimit-Limit":     fmt.Sprintf("%d", tb.Config.Limit),
+			"X-RateLimit-Remaining": fmt.Sprintf("%.0f", tokensLeft),
+			"X-RateLimit-Reset":     fmt.Sprintf("%d", time.Now().Add(tb.Config.Window).Unix()),
+		}
+
+		var retryAfter time.Duration
+		if !allowed {
+			// Calculate retry-after based on refill rate
+			tokensNeeded := float64(n) - tokensLeft
+			secondsToWait := tokensNeeded / refillRate
+			retryAfter = time.Duration(secondsToWait * float64(time.Second))
+		}
+
+		return allowed, retryAfter, headers, nil
+	}
+
+	return false, 0, nil, fmt.Errorf("unsupported distributed store type")
 }
 
 // Peek returns remaining tokens and reset time
 func (tb *DistributedTokenBucket) Peek(ctx context.Context, key string) (int, time.Time, error) {
-	// TODO: Implement peek logic
-	return tb.Config.Limit, time.Now().Add(tb.Config.Window), nil
+	refillRate := float64(tb.Config.Limit) / tb.Config.Window.Seconds()
+
+	// Use Redis client to peek at token count
+	if redisStore, ok := tb.Store.(*RedisClient); ok {
+		tokensLeft, nextRefill, err := redisStore.PeekTokenBucket(ctx, key, tb.Config.Burst, refillRate)
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("distributed token bucket peek error: %w", err)
+		}
+
+		return int(tokensLeft), nextRefill, nil
+	}
+
+	return 0, time.Time{}, fmt.Errorf("unsupported distributed store type")
 }
