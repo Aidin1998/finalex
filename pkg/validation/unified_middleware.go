@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Aidin1998/finalex/common/errors"
+	"github.com/Aidin1998/finalex/pkg/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -106,13 +106,11 @@ type UnifiedValidator struct {
 	logger            *zap.Logger
 	redis             *redis.Client
 	errorHandler      *errors.UnifiedErrorHandler
-
 	// Internal state
-	endpointRules      map[string]*EndpointValidationRule
-	rateLimitCounters  map[string]int
-	ipBlacklist        map[string]time.Time
-	suspiciousPatterns []*regexp.Regexp
-	metricsEnabled     bool
+	endpointRules     map[string]*EndpointValidationRule
+	rateLimitCounters map[string]int
+	ipBlacklist       map[string]time.Time
+	metricsEnabled    bool
 }
 
 // NewUnifiedValidator creates a new comprehensive validation system
@@ -721,4 +719,34 @@ func CreateUnifiedValidationMiddleware(logger *zap.Logger, redis *redis.Client, 
 	}
 
 	return UnifiedValidationMiddleware(logger, redis, config)
+}
+
+// ValidationMiddleware provides basic validation middleware
+func ValidationMiddleware(logger *zap.Logger) gin.HandlerFunc {
+	config := DefaultUnifiedValidationConfig()
+	return UnifiedValidationMiddleware(logger, nil, config)
+}
+
+// EnhancedValidationMiddleware provides enhanced validation with custom config
+func EnhancedValidationMiddleware(logger *zap.Logger, config *EnhancedValidationConfig) gin.HandlerFunc {
+	unifiedConfig := &UnifiedValidationConfig{
+		MaxRequestBodySize:       config.MaxRequestBodySize,
+		MaxQueryParamCount:       config.MaxQueryParamCount,
+		EnablePerformanceLogging: config.EnablePerformanceLogging,
+		EnableDetailedErrorLogs:  config.EnableDetailedErrorLogs,
+		StrictModeEnabled:        config.StrictModeEnabled,
+		EnableSecurityHardening:  config.EnableSQLInjectionDetection,
+		EnableXSSProtection:      config.EnableXSSDetection,
+		EnableRateLimiting:       config.EnableRateLimiting,
+		MaxRequestsPerMinute:     config.RateLimitRPM,
+		UseRFC7807Format:         true,
+	}
+	return UnifiedValidationMiddleware(logger, nil, unifiedConfig)
+}
+
+// RequestValidationMiddleware provides request-specific validation
+func RequestValidationMiddleware() gin.HandlerFunc {
+	logger, _ := zap.NewProduction()
+	config := DefaultUnifiedValidationConfig()
+	return UnifiedValidationMiddleware(logger, nil, config)
 }

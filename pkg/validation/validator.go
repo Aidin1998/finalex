@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/go-playground/validator/v10"
@@ -54,10 +55,79 @@ func NewValidator(logger *zap.Logger) *Validator {
 
 // ValidationError represents a validation error with details
 type ValidationError struct {
-	Field   string `json:"field"`
-	Tag     string `json:"tag"`
-	Value   string `json:"value"`
-	Message string `json:"message"`
+	Field   string      `json:"field"`
+	Value   interface{} `json:"value,omitempty"`
+	Message string      `json:"message"`
+	Code    string      `json:"code,omitempty"`
+	Tag     string      `json:"tag,omitempty"`
+}
+
+// ValidationResult holds the result of validation with any errors found
+type ValidationResult struct {
+	Valid          bool                   `json:"valid"`
+	Errors         []ValidationError      `json:"errors,omitempty"`
+	Warnings       []string               `json:"warnings,omitempty"`
+	ProcessingTime time.Duration          `json:"processing_time,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ParamRule defines validation rules for a parameter
+type ParamRule struct {
+	Required      bool           `json:"required"`
+	Type          string         `json:"type"` // string, int, float, bool, email, url, uuid
+	MinLength     *int           `json:"min_length,omitempty"`
+	MaxLength     *int           `json:"max_length,omitempty"`
+	Pattern       string         `json:"pattern,omitempty"`
+	PatternRegex  *regexp.Regexp `json:"-"`
+	AllowedValues []string       `json:"allowed_values,omitempty"`
+	MinValue      *float64       `json:"min_value,omitempty"`
+	MaxValue      *float64       `json:"max_value,omitempty"`
+}
+
+// EndpointValidationRule defines validation rules for a specific endpoint
+type EndpointValidationRule struct {
+	Method          string               `json:"method"`
+	Path            string               `json:"path"`
+	PathPattern     *regexp.Regexp       `json:"-"`
+	AllowedParams   map[string]ParamRule `json:"allowed_params"`
+	RequiredParams  []string             `json:"required_params,omitempty"`
+	RequiredHeaders []string             `json:"required_headers,omitempty"`
+	MaxBodySize     int64                `json:"max_body_size,omitempty"`
+	ContentTypes    []string             `json:"content_types,omitempty"`
+}
+
+// EnhancedValidationConfig provides configuration for enhanced validation
+type EnhancedValidationConfig struct {
+	EnableSQLInjectionDetection bool    `json:"enable_sql_injection_detection"`
+	EnableXSSDetection          bool    `json:"enable_xss_detection"`
+	EnableSanitization          bool    `json:"enable_sanitization"`
+	MaxRequestBodySize          int64   `json:"max_request_body_size"`
+	MaxQueryParamCount          int     `json:"max_query_param_count"`
+	MaxStringLength             int     `json:"max_string_length"`
+	MaxNumericValue             float64 `json:"max_numeric_value"`
+	EnableRateLimiting          bool    `json:"enable_rate_limiting"`
+	RateLimitRPM                int     `json:"rate_limit_rpm"`
+	EnablePerformanceLogging    bool    `json:"enable_performance_logging"`
+	EnableDetailedErrorLogs     bool    `json:"enable_detailed_error_logs"`
+	StrictModeEnabled           bool    `json:"strict_mode_enabled"`
+}
+
+// DefaultEnhancedValidationConfig returns a default enhanced validation configuration
+func DefaultEnhancedValidationConfig() *EnhancedValidationConfig {
+	return &EnhancedValidationConfig{
+		EnableSQLInjectionDetection: true,
+		EnableXSSDetection:          true,
+		EnableSanitization:          true,
+		MaxRequestBodySize:          1024 * 1024, // 1MB
+		MaxQueryParamCount:          100,
+		MaxStringLength:             1000,
+		MaxNumericValue:             1000000000,
+		EnableRateLimiting:          true,
+		RateLimitRPM:                100,
+		EnablePerformanceLogging:    false,
+		EnableDetailedErrorLogs:     true,
+		StrictModeEnabled:           true,
+	}
 }
 
 // ValidationErrors is a collection of validation errors
@@ -765,7 +835,7 @@ func ValidateJSONFields(validator *Validator, data map[string]interface{}, prefi
 			for i, item := range v {
 				if itemMap, ok := item.(map[string]interface{}); ok {
 					arrayFieldName := fmt.Sprintf("%s[%d]", fieldName, i)
-					if err := validateJSONFields(validator, itemMap, arrayFieldName); err != nil {
+					if err := ValidateJSONFields(validator, itemMap, arrayFieldName); err != nil {
 						return err
 					}
 				}

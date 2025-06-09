@@ -3,7 +3,7 @@ package apiutil
 import (
 	"net/http"
 
-	"github.com/Aidin1998/finalex/common/errors"
+	"github.com/Aidin1998/finalex/pkg/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,7 +29,7 @@ func RFC7807ErrorMiddleware() gin.HandlerFunc {
 				problemDetails = e
 			case *errors.Error:
 				// Convert legacy error to RFC 7807
-				problemDetails = e.ToProblemDetails(instance)
+				problemDetails = convertLegacyError(e, instance)
 			case *gin.Error:
 				// Convert Gin error to RFC 7807
 				problemDetails = ginErrorToProblemDetails(e, instance)
@@ -54,6 +54,53 @@ func RFC7807ErrorMiddleware() gin.HandlerFunc {
 			c.Abort()
 		}
 	}
+}
+
+// convertLegacyError converts legacy Error to RFC 7807 ProblemDetails
+func convertLegacyError(e *errors.Error, instance string) *errors.ProblemDetails {
+	var problemDetails *errors.ProblemDetails
+
+	switch e.Kind {
+	case "ValidationError":
+		problemDetails = errors.NewValidationError(e.Message, instance)
+	case "Unauthorized":
+		problemDetails = errors.NewUnauthorizedError(e.Message, instance)
+	case "Forbidden":
+		problemDetails = errors.NewForbiddenError(e.Message, instance)
+	case "NotFound":
+		problemDetails = errors.NewNotFoundError(e.Message, instance)
+	case "RateLimit":
+		problemDetails = errors.NewRateLimitError(e.Message, instance)
+	case "InsufficientFunds":
+		problemDetails = errors.NewInsufficientFundsError(e.Message, instance)
+	case "InvalidOrder":
+		problemDetails = errors.NewInvalidOrderError(e.Message, instance)
+	case "MarketClosed":
+		problemDetails = errors.NewMarketClosedError(e.Message, instance)
+	case "KYCRequired":
+		problemDetails = errors.NewKYCRequiredError(e.Message, instance)
+	case "MFARequired":
+		problemDetails = errors.NewMFARequiredError(e.Message, instance)
+	case "AMLBlocked":
+		problemDetails = errors.NewAMLBlockedError(e.Message, instance)
+	default:
+		problemDetails = errors.NewInternalError(e.Message, instance)
+	}
+
+	// Convert legacy field errors to validation errors
+	if len(e.Fields) > 0 {
+		validationErrors := make([]errors.ValidationError, len(e.Fields))
+		for i, field := range e.Fields {
+			validationErrors[i] = errors.ValidationError{
+				Field:   field.Field,
+				Message: field.Message,
+				Code:    field.Kind,
+			}
+		}
+		problemDetails.WithValidationErrors(validationErrors)
+	}
+
+	return problemDetails
 }
 
 // ginErrorToProblemDetails converts a Gin error to RFC 7807 ProblemDetails
@@ -145,38 +192,24 @@ func RFC7807InternalServerErrorResponse(c *gin.Context, detail string) {
 	RFC7807ErrorResponse(c, problemDetails)
 }
 
-// Legacy compatibility function
+// Legacy compatibility function - DEPRECATED: Use specific error constructors instead
 func WriteErrorResponseRFC7807(c *gin.Context, status int, code, message string, details interface{}) {
-	var problemType, title string
+	var problemDetails *errors.ProblemDetails
 
 	switch status {
 	case http.StatusBadRequest:
-		problemType = errors.TypeValidationError
-		title = errors.TitleValidationError
+		problemDetails = errors.NewValidationError(message, c.Request.URL.Path)
 	case http.StatusUnauthorized:
-		problemType = errors.TypeUnauthorized
-		title = errors.TitleUnauthorized
+		problemDetails = errors.NewUnauthorizedError(message, c.Request.URL.Path)
 	case http.StatusForbidden:
-		problemType = errors.TypeForbidden
-		title = errors.TitleForbidden
+		problemDetails = errors.NewForbiddenError(message, c.Request.URL.Path)
 	case http.StatusNotFound:
-		problemType = errors.TypeNotFound
-		title = errors.TitleNotFound
+		problemDetails = errors.NewNotFoundError(message, c.Request.URL.Path)
 	case http.StatusTooManyRequests:
-		problemType = errors.TypeRateLimit
-		title = errors.TitleRateLimit
+		problemDetails = errors.NewRateLimitError(message, c.Request.URL.Path)
 	default:
-		problemType = errors.TypeInternalError
-		title = errors.TitleInternalError
+		problemDetails = errors.NewInternalError(message, c.Request.URL.Path)
 	}
-
-	problemDetails := errors.NewProblemDetails(
-		problemType,
-		title,
-		status,
-		message,
-		c.Request.URL.Path,
-	)
 
 	if details != nil {
 		switch d := details.(type) {

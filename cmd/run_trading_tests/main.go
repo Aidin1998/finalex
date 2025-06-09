@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,5 +53,27 @@ func main() {
 }
 
 func runCommand(cmd string) int {
-	return 0 // Placeholder - actual implementation would run the command and return exit code
+	// Execute the command using PowerShell
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		fmt.Println("Error: empty command")
+		return 1
+	}
+
+	// Create the command
+	execCmd := exec.Command(parts[0], parts[1:]...)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+	execCmd.Dir = "."
+
+	// Run the command
+	if err := execCmd.Run(); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return exitError.ExitCode()
+		}
+		fmt.Printf("Error running command: %v\n", err)
+		return 1
+	}
+
+	return 0
 }
