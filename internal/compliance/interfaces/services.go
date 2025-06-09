@@ -154,7 +154,6 @@ type MonitoringService interface {
 	CreatePolicy(ctx context.Context, policy *MonitoringPolicy) error
 	UpdatePolicy(ctx context.Context, policyID string, policy *MonitoringPolicy) error
 	DeletePolicy(ctx context.Context, policyID string) error
-
 	// Configuration
 	UpdateMonitoringRules(ctx context.Context, rules []interface{}) error
 	GetConfiguration(ctx context.Context) (map[string]interface{}, error)
@@ -163,6 +162,7 @@ type MonitoringService interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	HealthCheck(ctx context.Context) error
+	CheckHealth(ctx context.Context) (*ServiceHealth, error)
 }
 
 // OrchestrationService coordinates all compliance services

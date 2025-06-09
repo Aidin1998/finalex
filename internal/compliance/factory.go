@@ -2,13 +2,16 @@ package compliance
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/compliance/audit"
 	"github.com/Aidin1998/finalex/internal/compliance/hooks"
 	"github.com/Aidin1998/finalex/internal/compliance/interfaces"
+	"github.com/Aidin1998/finalex/internal/compliance/monitoring"
 	"github.com/Aidin1998/finalex/internal/compliance/observability"
-	"github.com/google/uuid"
+	"github.com/Aidin1998/finalex/internal/compliance/service"
+	userauthCompliance "github.com/Aidin1998/finalex/internal/userauth/compliance"
 	"github.com/pkg/errors"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -101,14 +104,56 @@ func (f *ServiceFactory) createAuditService() (interfaces.AuditService, error) {
 
 // createComplianceService creates the compliance service
 func (f *ServiceFactory) createComplianceService(auditSvc interfaces.AuditService) (interfaces.ComplianceService, error) {
-	// Return a stub implementation that satisfies interfaces.ComplianceService
-	return &complianceServiceStub{}, nil
+	// Auto-migrate compliance models
+	if err := service.AutoMigrate(f.db); err != nil {
+		f.logger.Warn("Failed to auto-migrate compliance models", zap.Error(err))
+	}
+
+	// Create userauth compliance service with stub dependencies
+	geoService := &userauthCompliance.StubGeolocationService{}
+	sanctionService := &userauthCompliance.StubSanctionCheckService{}
+	kycProvider := &userauthCompliance.StubKYCProvider{}
+
+	userauthComplianceSvc := userauthCompliance.NewComplianceService(
+		f.db,
+		f.logger,
+		geoService,
+		sanctionService,
+		kycProvider,
+	)
+
+	// Create compliance service configuration
+	config := &service.Config{
+		EnableRealTimeMonitoring: f.config.Compliance.EnableKYC || f.config.Compliance.EnableAML,
+		DefaultRiskLevel:         interfaces.RiskLevelMedium,
+		RequireKYCThreshold:      decimal.NewFromFloat(1000.0),
+		AMLTransactionThreshold:  decimal.NewFromFloat(f.config.Compliance.AMLRiskThreshold * 1000), // Convert to amount
+		PolicyRefreshInterval:    f.config.Compliance.PolicyUpdateInterval,
+		EventBufferSize:          1000,
+	}
+
+	// Create the real compliance service
+	complianceSvc := service.NewComplianceService(
+		f.db,
+		f.logger,
+		auditSvc,
+		userauthComplianceSvc,
+		config,
+	)
+
+	return complianceSvc, nil
 }
 
 // createMonitoringService creates the monitoring service
 func (f *ServiceFactory) createMonitoringService(auditSvc interfaces.AuditService) (interfaces.MonitoringService, error) {
-	// Return a stub implementation that satisfies interfaces.MonitoringService
-	return &monitoringServiceStub{}, nil
+	// Create the real monitoring service
+	monitoringSvc := monitoring.NewMonitoringService(
+		f.db,
+		auditSvc,
+		f.config.Monitoring.Workers,
+	)
+
+	return monitoringSvc, nil
 }
 
 // createObservabilityManager creates the observability manager
@@ -155,22 +200,182 @@ type ComplianceModule struct {
 
 // Start initializes the entire compliance module
 func (m *ComplianceModule) Start(ctx context.Context) error {
+	// Start services in dependency order
+	if err := m.AuditService.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start audit service: %w", err)
+	}
+
+	if err := m.ComplianceService.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start compliance service: %w", err)
+	}
+
+	if err := m.MonitoringService.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start monitoring service: %w", err)
+	}
+
+	// Start hook manager
+	if err := m.HookManager.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start hook manager: %w", err)
+	}
+
+	// ObservabilityManager doesn't have a Start method - it's ready to use
+
 	return nil
 }
 
 // Stop gracefully shuts down the compliance module
 func (m *ComplianceModule) Stop() error {
+	// Stop services in reverse order (last started, first stopped)
+
+	// Stop hook manager first
+	if err := m.HookManager.Stop(context.Background()); err != nil {
+		return fmt.Errorf("failed to stop hook manager: %w", err)
+	}
+
+	// Stop monitoring service
+	if err := m.MonitoringService.Stop(context.Background()); err != nil {
+		return fmt.Errorf("failed to stop monitoring service: %w", err)
+	}
+
+	// Stop compliance service
+	if err := m.ComplianceService.Stop(context.Background()); err != nil {
+		return fmt.Errorf("failed to stop compliance service: %w", err)
+	}
+
+	// Stop audit service last
+	if err := m.AuditService.Stop(context.Background()); err != nil {
+		return fmt.Errorf("failed to stop audit service: %w", err)
+	}
+
+	// ObservabilityManager doesn't need explicit stopping
+
 	return nil
 }
 
 // ProcessComplianceRequest is the main entry point for compliance checking
 func (m *ComplianceModule) ProcessComplianceRequest(ctx context.Context, request interfaces.ComplianceRequest) (*interfaces.ComplianceResult, error) {
-	return nil, nil
+	// Delegate to the compliance service for processing
+	return m.ComplianceService.CheckCompliance(ctx, &request)
 }
 
 // GetSystemHealth returns the health status of the compliance module
 func (m *ComplianceModule) GetSystemHealth(ctx context.Context) (*interfaces.SystemHealth, error) {
-	return nil, nil
+	health := &interfaces.SystemHealth{
+		Timestamp: time.Now(),
+		Services:  make(map[string]interfaces.ServiceHealth),
+		Metrics:   make([]interfaces.MetricSummary, 0),
+	}
+
+	overallHealthy := true
+
+	// Check audit service health
+	if err := m.AuditService.HealthCheck(ctx); err != nil {
+		health.Services["audit"] = interfaces.ServiceHealth{
+			ServiceName:  "audit",
+			Status:       "unhealthy",
+			HealthScore:  0.0,
+			LastCheck:    time.Now(),
+			ErrorMessage: err.Error(),
+			ResponseTime: 0,
+		}
+		overallHealthy = false
+	} else {
+		health.Services["audit"] = interfaces.ServiceHealth{
+			ServiceName:  "audit",
+			Status:       "healthy",
+			HealthScore:  1.0,
+			LastCheck:    time.Now(),
+			ResponseTime: 0,
+		}
+	}
+
+	// Check compliance service health
+	if err := m.ComplianceService.HealthCheck(ctx); err != nil {
+		health.Services["compliance"] = interfaces.ServiceHealth{
+			ServiceName:  "compliance",
+			Status:       "unhealthy",
+			HealthScore:  0.0,
+			LastCheck:    time.Now(),
+			ErrorMessage: err.Error(),
+			ResponseTime: 0,
+		}
+		overallHealthy = false
+	} else {
+		health.Services["compliance"] = interfaces.ServiceHealth{
+			ServiceName:  "compliance",
+			Status:       "healthy",
+			HealthScore:  1.0,
+			LastCheck:    time.Now(),
+			ResponseTime: 0,
+		}
+	}
+
+	// Check monitoring service health
+	if err := m.MonitoringService.HealthCheck(ctx); err != nil {
+		health.Services["monitoring"] = interfaces.ServiceHealth{
+			ServiceName:  "monitoring",
+			Status:       "unhealthy",
+			HealthScore:  0.0,
+			LastCheck:    time.Now(),
+			ErrorMessage: err.Error(),
+			ResponseTime: 0,
+		}
+		overallHealthy = false
+	} else {
+		// Use the monitoring service's CheckHealth method if available to get detailed health info
+		if monitoringHealth, err := m.MonitoringService.CheckHealth(ctx); err == nil {
+			health.Services["monitoring"] = *monitoringHealth
+		} else {
+			health.Services["monitoring"] = interfaces.ServiceHealth{
+				ServiceName:  "monitoring",
+				Status:       "healthy",
+				HealthScore:  1.0,
+				LastCheck:    time.Now(),
+				ResponseTime: 0,
+			}
+		}
+	}
+
+	// Set overall status
+	if overallHealthy {
+		health.OverallStatus = "healthy"
+		health.HealthScore = 1.0
+	} else {
+		health.OverallStatus = "degraded"
+		// Calculate health score based on healthy services
+		healthyCount := 0
+		totalServices := len(health.Services)
+		for _, svc := range health.Services {
+			if svc.Status == "healthy" {
+				healthyCount++
+			}
+		}
+		health.HealthScore = float64(healthyCount) / float64(totalServices)
+	}
+
+	// Add some basic metrics
+	health.Metrics = append(health.Metrics, interfaces.MetricSummary{
+		Name:   "services_count",
+		Value:  float64(len(health.Services)),
+		Unit:   "count",
+		Status: "normal",
+	})
+
+	health.Metrics = append(health.Metrics, interfaces.MetricSummary{
+		Name:  "health_score",
+		Value: health.HealthScore * 100,
+		Unit:  "percentage",
+		Status: func() string {
+			if health.HealthScore > 0.8 {
+				return "normal"
+			} else if health.HealthScore > 0.5 {
+				return "warning"
+			}
+			return "critical"
+		}(),
+	})
+
+	return health, nil
 }
 
 // GetMetrics returns compliance metrics
@@ -217,128 +422,3 @@ func NewComplianceModuleWithConfig(config *Config, db *gorm.DB) (*ComplianceModu
 
 	return factory.CreateComplianceModule(ctx)
 }
-
-// Minimal stub for interfaces.ComplianceService
-// Place this at the bottom of the file or in a suitable location
-
-type complianceServiceStub struct{}
-
-func (c *complianceServiceStub) PerformComplianceCheck(ctx context.Context, req *interfaces.ComplianceRequest) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) CheckCompliance(ctx context.Context, request *interfaces.ComplianceRequest) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) ValidateTransaction(ctx context.Context, userID uuid.UUID, txType string, amount decimal.Decimal, currency string, metadata map[string]interface{}) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) GetUserStatus(ctx context.Context, userID uuid.UUID) (*interfaces.UserComplianceStatus, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) GetUserHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*interfaces.ComplianceEvent, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) AssessUserRisk(ctx context.Context, userID uuid.UUID) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) UpdateRiskProfile(ctx context.Context, userID uuid.UUID, riskLevel interfaces.RiskLevel, riskScore decimal.Decimal, reason string) error {
-	return nil
-}
-func (c *complianceServiceStub) InitiateKYC(ctx context.Context, userID uuid.UUID, targetLevel interfaces.KYCLevel) error {
-	return nil
-}
-func (c *complianceServiceStub) ValidateKYCLevel(ctx context.Context, userID uuid.UUID, requiredLevel interfaces.KYCLevel) error {
-	return nil
-}
-func (c *complianceServiceStub) GetKYCStatus(ctx context.Context, userID uuid.UUID) (interfaces.KYCLevel, error) {
-	return 0, nil
-}
-func (c *complianceServiceStub) PerformAMLCheck(ctx context.Context, userID uuid.UUID, amount decimal.Decimal, currency string) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) CheckSanctionsList(ctx context.Context, name, dateOfBirth, nationality string) (*interfaces.ComplianceResult, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) UpdatePolicies(ctx context.Context, updates []*interfaces.PolicyUpdate) error {
-	return nil
-}
-func (c *complianceServiceStub) GetActivePolicies(ctx context.Context, policyType string) ([]*interfaces.PolicyUpdate, error) {
-	return nil, nil
-}
-func (c *complianceServiceStub) ProcessExternalReport(ctx context.Context, report *interfaces.ExternalComplianceReport) error {
-	return nil
-}
-func (c *complianceServiceStub) CheckTransaction(ctx context.Context, transactionID string) (*interfaces.ComplianceResult, error) {
-	return &interfaces.ComplianceResult{
-		Status:      interfaces.ComplianceStatusApproved,
-		RiskLevel:   interfaces.RiskLevelLow,
-		RiskScore:   decimal.NewFromInt(10),
-		Flags:       []string{},
-		ProcessedAt: time.Now(),
-	}, nil
-}
-func (c *complianceServiceStub) Start(ctx context.Context) error       { return nil }
-func (c *complianceServiceStub) Stop(ctx context.Context) error        { return nil }
-func (c *complianceServiceStub) HealthCheck(ctx context.Context) error { return nil }
-
-// Minimal stub for interfaces.MonitoringService
-
-type monitoringServiceStub struct{}
-
-func (m *monitoringServiceStub) IngestEvent(ctx context.Context, event *interfaces.ComplianceEvent) error {
-	return nil
-}
-func (m *monitoringServiceStub) IngestBatch(ctx context.Context, events []*interfaces.ComplianceEvent) error {
-	return nil
-}
-func (m *monitoringServiceStub) StartMonitoring(ctx context.Context) error { return nil }
-func (m *monitoringServiceStub) StopMonitoring(ctx context.Context) error  { return nil }
-func (m *monitoringServiceStub) GetMonitoringStatus(ctx context.Context) (*interfaces.MonitoringStatus, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) RegisterAlertHandler(handler interfaces.AlertHandler) error {
-	return nil
-}
-func (m *monitoringServiceStub) GetActiveAlerts(ctx context.Context) ([]*interfaces.MonitoringAlert, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) GetAlerts(ctx context.Context, filter *interfaces.AlertFilter) ([]*interfaces.MonitoringAlert, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) GetAlert(ctx context.Context, alertID uuid.UUID) (*interfaces.MonitoringAlert, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) UpdateAlertStatus(ctx context.Context, alertID uuid.UUID, status string) error {
-	return nil
-}
-func (m *monitoringServiceStub) GenerateAlert(ctx context.Context, alert *interfaces.MonitoringAlert) error {
-	return nil
-}
-func (m *monitoringServiceStub) GetDashboard(ctx context.Context) (*interfaces.MonitoringDashboard, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) GetMetrics(ctx context.Context) (*interfaces.MonitoringMetrics, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) GenerateReport(ctx context.Context, reportType string, from, to time.Time) ([]byte, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) GetPolicies(ctx context.Context) ([]*interfaces.MonitoringPolicy, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) CreatePolicy(ctx context.Context, policy *interfaces.MonitoringPolicy) error {
-	return nil
-}
-func (m *monitoringServiceStub) UpdatePolicy(ctx context.Context, policyID string, policy *interfaces.MonitoringPolicy) error {
-	return nil
-}
-func (m *monitoringServiceStub) DeletePolicy(ctx context.Context, policyID string) error { return nil }
-func (m *monitoringServiceStub) UpdateMonitoringRules(ctx context.Context, rules []interface{}) error {
-	return nil
-}
-func (m *monitoringServiceStub) GetConfiguration(ctx context.Context) (map[string]interface{}, error) {
-	return nil, nil
-}
-func (m *monitoringServiceStub) Start(ctx context.Context) error       { return nil }
-func (m *monitoringServiceStub) Stop(ctx context.Context) error        { return nil }
-func (m *monitoringServiceStub) HealthCheck(ctx context.Context) error { return nil }

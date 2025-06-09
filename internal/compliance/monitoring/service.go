@@ -50,16 +50,19 @@ func alertSeverityFromString(s string) interfaces.AlertSeverity {
 
 // MonitoringService implements real-time compliance monitoring
 type MonitoringService struct {
-	db          *gorm.DB
-	auditSvc    interfaces.AuditService
-	subscribers map[string][]interfaces.AlertSubscriber
-	alertChan   chan interfaces.MonitoringAlert
-	policyCache map[string]*interfaces.MonitoringPolicy
-	metrics     *MonitoringMetrics
-	promMetrics *PrometheusMetrics
-	mu          sync.RWMutex
-	stopChan    chan struct{}
-	workers     int
+	db            *gorm.DB
+	auditSvc      interfaces.AuditService
+	subscribers   map[string][]interfaces.AlertSubscriber
+	alertChan     chan interfaces.MonitoringAlert
+	policyCache   map[string]*interfaces.MonitoringPolicy
+	metrics       *MonitoringMetrics
+	promMetrics   *PrometheusMetrics
+	alertHandlers []interfaces.AlertHandler
+	isMonitoring  bool
+	eventQueue    chan *interfaces.ComplianceEvent
+	mu            sync.RWMutex
+	stopChan      chan struct{}
+	workers       int
 }
 
 // MonitoringMetrics tracks monitoring performance
@@ -78,15 +81,18 @@ func NewMonitoringService(db *gorm.DB, auditSvc interfaces.AuditService, workers
 		workers = 4
 	}
 	return &MonitoringService{
-		db:          db,
-		auditSvc:    auditSvc,
-		subscribers: make(map[string][]interfaces.AlertSubscriber),
-		alertChan:   make(chan interfaces.MonitoringAlert, 1000),
-		policyCache: make(map[string]*interfaces.MonitoringPolicy),
-		metrics:     &MonitoringMetrics{},
-		promMetrics: NewPrometheusMetrics(),
-		stopChan:    make(chan struct{}),
-		workers:     workers,
+		db:            db,
+		auditSvc:      auditSvc,
+		subscribers:   make(map[string][]interfaces.AlertSubscriber),
+		alertChan:     make(chan interfaces.MonitoringAlert, 1000),
+		policyCache:   make(map[string]*interfaces.MonitoringPolicy),
+		metrics:       &MonitoringMetrics{},
+		promMetrics:   NewPrometheusMetrics(),
+		alertHandlers: make([]interfaces.AlertHandler, 0),
+		isMonitoring:  false,
+		eventQueue:    make(chan *interfaces.ComplianceEvent, 10000),
+		stopChan:      make(chan struct{}),
+		workers:       workers,
 	}
 }
 
@@ -295,6 +301,23 @@ func (m *MonitoringService) CreateAlert(ctx context.Context, alert *interfaces.M
 	return nil
 }
 
+// GenerateAlert generates a new monitoring alert
+func (m *MonitoringService) GenerateAlert(ctx context.Context, alert *interfaces.MonitoringAlert) error {
+	// Ensure alert has required fields
+	if alert.ID == uuid.Nil {
+		alert.ID = uuid.New()
+	}
+	if alert.Timestamp.IsZero() {
+		alert.Timestamp = time.Now()
+	}
+	if alert.Status == 0 {
+		alert.Status = interfaces.AlertStatusPending
+	}
+
+	// Create the alert using the existing CreateAlert method
+	return m.CreateAlert(ctx, alert)
+}
+
 // UpdateAlertStatus updates the status of an alert
 func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID uuid.UUID, status string) error {
 	var newStatus interfaces.AlertStatus
@@ -358,23 +381,42 @@ func (m *MonitoringService) UpdateAlertStatus(ctx context.Context, alertID uuid.
 }
 
 // GetAlerts retrieves alerts with filtering options
-func (m *MonitoringService) GetAlerts(ctx context.Context, userID *uuid.UUID, status *interfaces.AlertStatus, limit, offset int) ([]*interfaces.MonitoringAlert, error) {
+func (m *MonitoringService) GetAlerts(ctx context.Context, filter *interfaces.AlertFilter) ([]*interfaces.MonitoringAlert, error) {
 	query := m.db.WithContext(ctx).Model(&MonitoringAlertModel{})
 
-	if userID != nil {
-		query = query.Where("user_id = ?", userID.String())
-	}
+	// Apply filters if provided
+	if filter != nil {
+		if filter.UserID != "" {
+			query = query.Where("user_id = ?", filter.UserID)
+		}
 
-	if status != nil {
-		query = query.Where("status = ?", status.String())
-	}
+		if filter.AlertType != "" {
+			query = query.Where("alert_type = ?", filter.AlertType)
+		}
 
-	if limit > 0 {
-		query = query.Limit(limit)
-	}
+		if filter.Status != 0 {
+			query = query.Where("status = ?", filter.Status.String())
+		}
 
-	if offset > 0 {
-		query = query.Offset(offset)
+		if filter.Severity != 0 {
+			query = query.Where("severity = ?", filter.Severity.String())
+		}
+
+		if !filter.StartTime.IsZero() {
+			query = query.Where("timestamp >= ?", filter.StartTime)
+		}
+
+		if !filter.EndTime.IsZero() {
+			query = query.Where("timestamp <= ?", filter.EndTime)
+		}
+
+		if filter.Limit > 0 {
+			query = query.Limit(filter.Limit)
+		}
+
+		if filter.Offset > 0 {
+			query = query.Offset(filter.Offset)
+		}
 	}
 
 	var alertModels []*MonitoringAlertModel
@@ -398,6 +440,63 @@ func (m *MonitoringService) GetAlerts(ctx context.Context, userID *uuid.UUID, st
 	}
 
 	return alerts, nil
+}
+
+// GetActiveAlerts retrieves all currently active alerts (pending, acknowledged, investigating)
+func (m *MonitoringService) GetActiveAlerts(ctx context.Context) ([]*interfaces.MonitoringAlert, error) {
+	query := m.db.WithContext(ctx).Model(&MonitoringAlertModel{}).
+		Where("status IN (?)", []string{
+			interfaces.AlertStatusPending.String(),
+			interfaces.AlertStatusAcknowledged.String(),
+			interfaces.AlertStatusInvestigating.String(),
+		})
+
+	var alertModels []*MonitoringAlertModel
+	if err := query.Order("created_at DESC").Find(&alertModels).Error; err != nil {
+		return nil, errors.Wrap(err, "failed to retrieve active alerts")
+	}
+
+	alerts := make([]*interfaces.MonitoringAlert, len(alertModels))
+	for i, model := range alertModels {
+		id, _ := uuid.Parse(model.ID)
+		alerts[i] = &interfaces.MonitoringAlert{
+			ID:        id,
+			UserID:    model.UserID,
+			AlertType: model.AlertType,
+			Severity:  alertSeverityFromString(model.Severity),
+			Message:   model.Message,
+			Details:   model.Data,
+			Status:    alertStatusFromString(model.Status),
+			Timestamp: model.Timestamp,
+		}
+	}
+
+	return alerts, nil
+}
+
+// GetAlert retrieves a specific monitoring alert by ID
+func (m *MonitoringService) GetAlert(ctx context.Context, alertID uuid.UUID) (*interfaces.MonitoringAlert, error) {
+	var alertModel MonitoringAlertModel
+	if err := m.db.WithContext(ctx).Where("id = ?", alertID.String()).First(&alertModel).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil // Return nil if alert not found (not an error)
+		}
+		return nil, errors.Wrap(err, "failed to retrieve alert")
+	}
+
+	id, _ := uuid.Parse(alertModel.ID)
+	alert := &interfaces.MonitoringAlert{
+		ID:        id,
+		UserID:    alertModel.UserID,
+		AlertType: alertModel.AlertType,
+		Severity:  alertSeverityFromString(alertModel.Severity),
+		Message:   alertModel.Message,
+		Details:   alertModel.Data,
+		Status:    alertStatusFromString(alertModel.Status),
+		Timestamp: alertModel.Timestamp,
+	}
+
+	return alert, nil
 }
 
 // CreatePolicy creates a new monitoring policy
@@ -445,7 +544,7 @@ func (m *MonitoringService) CreatePolicy(ctx context.Context, policy *interfaces
 }
 
 // UpdatePolicy updates an existing monitoring policy
-func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy *interfaces.MonitoringPolicy) error {
+func (m *MonitoringService) UpdatePolicy(ctx context.Context, policyID string, policy *interfaces.MonitoringPolicy) error {
 	conditionsJSON, err := json.Marshal(policy.Conditions)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal conditions")
@@ -468,14 +567,13 @@ func (m *MonitoringService) UpdatePolicy(ctx context.Context, policy *interfaces
 		},
 		"updated_at": time.Now(),
 	}
-
-	if err := m.db.WithContext(ctx).Model(&MonitoringPolicyModel{}).Where("id = ?", policy.ID).Updates(updates).Error; err != nil {
+	if err := m.db.WithContext(ctx).Model(&MonitoringPolicyModel{}).Where("id = ?", policyID).Updates(updates).Error; err != nil {
 		return errors.Wrap(err, "failed to update policy")
 	}
 
 	// Update cache
 	m.mu.Lock()
-	m.policyCache[policy.ID] = policy
+	m.policyCache[policyID] = policy
 	m.mu.Unlock()
 
 	m.metrics.mu.Lock()
@@ -715,4 +813,445 @@ func (m *MonitoringService) GetHealthStatus() map[string]interface{} {
 			"policy_updates":   m.metrics.PolicyUpdates,
 		},
 	}
+}
+
+// GenerateReport generates a compliance monitoring report for the specified time period
+func (m *MonitoringService) GenerateReport(ctx context.Context, reportType string, from, to time.Time) ([]byte, error) {
+	switch reportType {
+	case "alerts":
+		return m.generateAlertsReport(ctx, from, to)
+	case "metrics":
+		return m.generateMetricsReport(ctx, from, to)
+	case "summary":
+		return m.generateSummaryReport(ctx, from, to)
+	default:
+		return nil, fmt.Errorf("unsupported report type: %s", reportType)
+	}
+}
+
+func (m *MonitoringService) generateAlertsReport(ctx context.Context, from, to time.Time) ([]byte, error) {
+	// Get alerts with the monitoring service's actual method signature
+	filter := &interfaces.AlertFilter{
+		StartTime: from,
+		EndTime:   to,
+		Limit:     10000,
+		Offset:    0,
+	}
+	alerts, err := m.GetAlerts(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alerts: %w", err)
+	}
+
+	// Filter alerts by time period (already done by the filter, but keeping for safety)
+	filteredAlerts := make([]*interfaces.MonitoringAlert, 0)
+	for _, alert := range alerts {
+		if alert.Timestamp.After(from) && alert.Timestamp.Before(to) {
+			filteredAlerts = append(filteredAlerts, alert)
+		}
+	}
+
+	report := map[string]interface{}{
+		"report_type": "alerts",
+		"period": map[string]interface{}{
+			"from": from,
+			"to":   to,
+		},
+		"total_alerts": len(filteredAlerts),
+		"alerts":       filteredAlerts,
+		"generated_at": time.Now(),
+	}
+
+	return json.Marshal(report)
+}
+
+func (m *MonitoringService) generateMetricsReport(ctx context.Context, from, to time.Time) ([]byte, error) {
+	// Create basic metrics from current state
+	m.mu.RLock()
+	metrics := map[string]interface{}{
+		"alerts_generated": m.metrics.AlertsGenerated,
+		"alerts_processed": m.metrics.AlertsProcessed,
+		"policy_updates":   m.metrics.PolicyUpdates,
+		"queue_size":       len(m.alertChan),
+		"workers":          m.workers,
+	}
+	m.mu.RUnlock()
+
+	report := map[string]interface{}{
+		"report_type": "metrics",
+		"period": map[string]interface{}{
+			"from": from,
+			"to":   to,
+		},
+		"metrics":      metrics,
+		"generated_at": time.Now(),
+	}
+
+	return json.Marshal(report)
+}
+
+func (m *MonitoringService) generateSummaryReport(ctx context.Context, from, to time.Time) ([]byte, error) {
+	// Get alerts for the period
+	filter := &interfaces.AlertFilter{
+		Limit:  10000,
+		Offset: 0,
+	}
+	alerts, err := m.GetAlerts(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alerts: %w", err)
+	}
+
+	// Filter alerts by time period and count by severity
+	filteredAlerts := make([]*interfaces.MonitoringAlert, 0)
+	severityCounts := make(map[string]int)
+
+	for _, alert := range alerts {
+		if alert.Timestamp.After(from) && alert.Timestamp.Before(to) {
+			filteredAlerts = append(filteredAlerts, alert)
+			severityCounts[alert.Severity.String()]++
+		}
+	}
+
+	// Get current health status
+	health := m.GetHealthStatus()
+
+	report := map[string]interface{}{
+		"report_type": "summary",
+		"period": map[string]interface{}{
+			"from": from,
+			"to":   to,
+		},
+		"health_status":      health,
+		"alerts_by_severity": severityCounts,
+		"total_alerts":       len(filteredAlerts),
+		"generated_at":       time.Now(),
+	}
+
+	return json.Marshal(report)
+}
+
+// IngestEvent processes a single compliance event
+func (m *MonitoringService) IngestEvent(ctx context.Context, event *interfaces.ComplianceEvent) error {
+	if event == nil {
+		return errors.New("event cannot be nil")
+	}
+
+	// Add event to queue for processing
+	select {
+	case m.eventQueue <- event:
+		// Successfully queued
+		m.metrics.mu.Lock()
+		m.metrics.AlertsProcessed++
+		m.metrics.mu.Unlock()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return errors.New("event queue is full, failed to ingest event")
+	}
+}
+
+// IngestBatch processes multiple compliance events
+func (m *MonitoringService) IngestBatch(ctx context.Context, events []*interfaces.ComplianceEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	for _, event := range events {
+		if err := m.IngestEvent(ctx, event); err != nil {
+			return errors.Wrapf(err, "failed to ingest event with type %s", event.EventType)
+		}
+	}
+
+	return nil
+}
+
+// StartMonitoring begins the monitoring process
+func (m *MonitoringService) StartMonitoring(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.isMonitoring {
+		return errors.New("monitoring is already running")
+	}
+
+	m.isMonitoring = true
+
+	// Start event processing workers
+	for i := 0; i < m.workers; i++ {
+		go m.eventProcessor(ctx)
+	}
+
+	return nil
+}
+
+// StopMonitoring stops the monitoring process
+func (m *MonitoringService) StopMonitoring(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.isMonitoring {
+		return errors.New("monitoring is not running")
+	}
+
+	m.isMonitoring = false
+
+	// Signal stop to workers
+	close(m.stopChan)
+
+	// Recreate stop channel for future use
+	m.stopChan = make(chan struct{})
+
+	return nil
+}
+
+// GetMonitoringStatus returns the current monitoring status
+func (m *MonitoringService) GetMonitoringStatus(ctx context.Context) (*interfaces.MonitoringStatus, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	m.metrics.mu.RLock()
+	defer m.metrics.mu.RUnlock()
+
+	return &interfaces.MonitoringStatus{
+		Active:         m.isMonitoring,
+		WorkersActive:  m.workers,
+		QueueDepth:     int64(len(m.eventQueue)),
+		ProcessingRate: float64(m.metrics.AlertsProcessed) / time.Since(time.Now().Add(-1*time.Hour)).Hours(),
+		LastEventTime:  time.Now(), // Would track actual last event time in production
+		ErrorCount:     0,          // Would track actual error count
+		Configuration: map[string]interface{}{
+			"workers":      m.workers,
+			"queue_size":   cap(m.eventQueue),
+			"alert_buffer": cap(m.alertChan),
+		},
+	}, nil
+}
+
+// RegisterAlertHandler registers a new alert handler
+func (m *MonitoringService) RegisterAlertHandler(handler interfaces.AlertHandler) error {
+	if handler == nil {
+		return errors.New("handler cannot be nil")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.alertHandlers = append(m.alertHandlers, handler)
+	return nil
+}
+
+// GetDashboard returns monitoring dashboard data
+func (m *MonitoringService) GetDashboard(ctx context.Context) (*interfaces.MonitoringDashboard, error) {
+	// Get recent alerts
+	filter := &interfaces.AlertFilter{
+		Limit:  10,
+		Offset: 0,
+	}
+	recentAlerts, err := m.GetAlerts(ctx, filter)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get recent alerts")
+	}
+
+	// Get active alerts count
+	activeAlerts, err := m.GetActiveAlerts(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get active alerts")
+	}
+
+	// Count critical alerts
+	criticalCount := 0
+	for _, alert := range activeAlerts {
+		if alert.Severity == interfaces.AlertSeverityCritical {
+			criticalCount++
+		}
+	}
+
+	// Create metrics
+	m.metrics.mu.RLock()
+	metrics := &interfaces.MonitoringMetrics{
+		EventsProcessed:     m.metrics.AlertsProcessed,
+		AlertsGenerated:     m.metrics.AlertsGenerated,
+		ProcessingLatency:   m.metrics.ProcessingLatency,
+		ThroughputPerSecond: float64(m.metrics.AlertsProcessed) / time.Since(time.Now().Add(-1*time.Hour)).Seconds(),
+		ErrorRate:           0.0, // Would calculate actual error rate
+		SystemLoad:          0.5, // Would get actual system load
+		MemoryUsage:         0,   // Would get actual memory usage
+		Details:             make(map[string]interface{}),
+		Timestamp:           time.Now(),
+	}
+	m.metrics.mu.RUnlock()
+
+	// Create dashboard summary
+	summary := &interfaces.DashboardSummary{
+		ActiveAlerts:   len(activeAlerts),
+		CriticalAlerts: criticalCount,
+		TotalUsers:     0, // Would get from user service
+		HighRiskUsers:  0, // Would calculate from risk analysis
+		ProcessingRate: metrics.ThroughputPerSecond,
+		SystemHealth:   "healthy", // Would determine from actual health checks
+		LastUpdate:     time.Now(),
+		TrendData:      make(map[string]interface{}),
+	}
+
+	return &interfaces.MonitoringDashboard{
+		Summary:      summary,
+		RecentAlerts: recentAlerts,
+		Metrics:      metrics,
+		Health:       map[string]interface{}{"status": "healthy"},
+		UpdatedAt:    time.Now(),
+	}, nil
+}
+
+// GetMetrics returns monitoring metrics converted to interface format
+func (m *MonitoringService) GetMetrics(ctx context.Context) (*interfaces.MonitoringMetrics, error) {
+	m.metrics.mu.RLock()
+	defer m.metrics.mu.RUnlock()
+
+	return &interfaces.MonitoringMetrics{
+		EventsProcessed:     m.metrics.AlertsProcessed,
+		AlertsGenerated:     m.metrics.AlertsGenerated,
+		ProcessingLatency:   m.metrics.ProcessingLatency,
+		ThroughputPerSecond: float64(m.metrics.AlertsProcessed) / time.Since(time.Now().Add(-1*time.Hour)).Seconds(),
+		ErrorRate:           0.0, // Would calculate actual error rate
+		SystemLoad:          0.5, // Would get actual system load
+		MemoryUsage:         0,   // Would get actual memory usage
+		Details:             make(map[string]interface{}),
+		Timestamp:           time.Now(),
+	}, nil
+}
+
+// GetPolicies returns all monitoring policies
+func (m *MonitoringService) GetPolicies(ctx context.Context) ([]*interfaces.MonitoringPolicy, error) {
+	var policyModels []MonitoringPolicyModel
+	if err := m.db.WithContext(ctx).Find(&policyModels).Error; err != nil {
+		return nil, errors.Wrap(err, "failed to fetch policies")
+	}
+
+	policies := make([]*interfaces.MonitoringPolicy, len(policyModels))
+	for i, model := range policyModels {
+		policy, err := m.convertPolicyModelToInterface(&model)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to convert policy %s", model.ID)
+		}
+		policies[i] = policy
+	}
+
+	return policies, nil
+}
+
+// eventProcessor processes events from the event queue
+func (m *MonitoringService) eventProcessor(ctx context.Context) {
+	for {
+		select {
+		case event := <-m.eventQueue:
+			if err := m.processEvent(ctx, event); err != nil {
+				// Log error - in production would use proper logging
+				continue
+			}
+		case <-m.stopChan:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// processEvent processes a single compliance event
+func (m *MonitoringService) processEvent(ctx context.Context, event *interfaces.ComplianceEvent) error {
+	// Create monitoring alert based on event
+	alert := &interfaces.MonitoringAlert{
+		ID:        uuid.New(),
+		UserID:    event.UserID,
+		AlertType: event.EventType,
+		Severity:  interfaces.AlertSeverityMedium, // Would determine based on event analysis
+		Status:    interfaces.AlertStatusPending,
+		Message:   fmt.Sprintf("Compliance Event: %s detected for user %s", event.EventType, event.UserID),
+		Details:   event.Details,
+		Timestamp: time.Now(),
+		Metadata: map[string]interface{}{
+			"event_type": event.EventType,
+			"user_id":    event.UserID,
+			"timestamp":  event.Timestamp,
+			"details":    event.Details,
+		},
+	}
+
+	// Process alert through handlers
+	for _, handler := range m.alertHandlers {
+		if err := handler.HandleAlert(ctx, alert); err != nil {
+			// Log error but continue with other handlers
+			continue
+		}
+	}
+
+	// Store alert
+	if err := m.CreateAlert(ctx, alert); err != nil {
+		return errors.Wrap(err, "failed to create alert from event")
+	}
+
+	return nil
+}
+
+// convertPolicyModelToInterface converts database model to interface type
+func (m *MonitoringService) convertPolicyModelToInterface(model *MonitoringPolicyModel) (*interfaces.MonitoringPolicy, error) {
+	policy := model.ToInterface()
+	return &policy, nil
+}
+
+// GetConfiguration returns the monitoring service configuration
+func (m *MonitoringService) GetConfiguration(ctx context.Context) (map[string]interface{}, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return map[string]interface{}{
+		"workers":                m.workers,
+		"event_queue_capacity":   cap(m.eventQueue),
+		"alert_channel_capacity": cap(m.alertChan),
+		"is_monitoring":          m.isMonitoring,
+		"alert_handlers_count":   len(m.alertHandlers),
+		"policy_cache_size":      len(m.policyCache),
+		"subscribers_count":      len(m.subscribers),
+	}, nil
+}
+
+// UpdateMonitoringRules updates monitoring rules configuration
+func (m *MonitoringService) UpdateMonitoringRules(ctx context.Context, rules []interface{}) error {
+	// Implementation would depend on the specific rule format
+	// For now, just validate that rules is not nil
+	if rules == nil {
+		return errors.New("rules cannot be nil")
+	}
+
+	// In a real implementation, you would:
+	// 1. Validate the rules format
+	// 2. Store the rules in the database
+	// 3. Update the runtime configuration
+	// 4. Notify relevant components
+
+	return nil
+}
+
+// HealthCheck performs a health check of the monitoring service
+func (m *MonitoringService) HealthCheck(ctx context.Context) error {
+	// Check database connectivity
+	if err := m.db.WithContext(ctx).Exec("SELECT 1").Error; err != nil {
+		return errors.Wrap(err, "database health check failed")
+	}
+	// Check if monitoring is running as expected
+	m.mu.RLock()
+	eventQueueDepth := len(m.eventQueue)
+	alertChannelDepth := len(m.alertChan)
+	m.mu.RUnlock()
+
+	// Check for potential issues
+	if eventQueueDepth > cap(m.eventQueue)*3/4 {
+		return errors.New("event queue is nearly full, potential bottleneck")
+	}
+
+	if alertChannelDepth > cap(m.alertChan)*3/4 {
+		return errors.New("alert channel is nearly full, potential bottleneck")
+	}
+
+	// All checks passed
+	return nil
 }
