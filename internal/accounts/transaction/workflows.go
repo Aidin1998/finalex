@@ -4,9 +4,11 @@ package transaction
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
+	"github.com/Aidin1998/finalex/internal/integration/contracts"
 	"github.com/Aidin1998/finalex/internal/trading"
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	walletInterfaces "github.com/Aidin1998/finalex/internal/wallet/interfaces"
@@ -25,7 +27,7 @@ type DistributedTransactionOrchestrator struct {
 	tradingSvc       trading.TradingService
 	walletSvc        walletInterfaces.WalletService
 	settlementEngine *settlement.SettlementEngine
-	fiatSvc          interface{} // TODO: Replace interface{} with the correct FiatService type
+	fiatSvc          contracts.FiatServiceContract // Fixed: Replace interface{} with correct FiatService type
 
 	// XA Resources (removed unused fields)
 	// bookkeeperXA *BookkeeperXAResource
@@ -43,7 +45,7 @@ func NewDistributedTransactionOrchestrator(
 	tradingSvc trading.TradingService,
 	walletSvc walletInterfaces.WalletService,
 	settlementEngine *settlement.SettlementEngine,
-	fiatSvc interface{}, // TODO: Replace interface{} with the correct FiatService type
+	fiatSvc contracts.FiatServiceContract, // Fixed: Replace interface{} with correct FiatService type
 ) *DistributedTransactionOrchestrator {
 
 	xaManager := NewXATransactionManager(logger, 60*time.Second)
@@ -114,11 +116,18 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 		zap.String("side", orderRequest.Side),
 		zap.Float64("quantity", orderRequest.Quantity),
 		zap.Float64("price", orderRequest.Price))
+	// Step 1: Reserve funds in bookkeeper (parse base/quote currencies from symbol)
+	baseCurrency, quoteCurrency, err := dto.parseSymbolCurrencies(orderRequest.Symbol)
+	if err != nil {
+		dto.xaManager.Abort(ctx, xaTx)
+		return nil, fmt.Errorf("failed to parse symbol currencies: %w", err)
+	}
 
-	// Step 1: Reserve funds in bookkeeper (assume currency is extracted from symbol)
-	currency := orderRequest.Symbol // TODO: parse base/quote if needed
+	var currency string
 	var reserveAmount float64
 	if orderRequest.Side == "BUY" {
+		// For BUY orders, reserve quote currency (e.g., USDT for BTC/USDT)
+		currency = quoteCurrency
 		reserveAmount = orderRequest.Quantity * orderRequest.Price
 		// Fix: Use LockFundsXA for XA transactions
 		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
@@ -126,6 +135,8 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 			return nil, fmt.Errorf("failed to reserve funds: %w", err)
 		}
 	} else {
+		// For SELL orders, reserve base currency (e.g., BTC for BTC/USDT)
+		currency = baseCurrency
 		reserveAmount = orderRequest.Quantity
 		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
@@ -503,4 +514,52 @@ func (dto *DistributedTransactionOrchestrator) GetWorkflowMetrics() map[string]i
 func (dto *DistributedTransactionOrchestrator) Stop() {
 	dto.lockManager.Stop()
 	dto.logger.Info("Distributed transaction orchestrator stopped")
+}
+
+// parseSymbolCurrencies parses a trading symbol to extract base and quote currencies
+// Supports formats like:
+//   - BTC/USDT -> base: BTC, quote: USDT
+//   - BTCUSDT -> base: BTC, quote: USDT (assumes 3-letter base, rest is quote)
+//   - ETH-USD -> base: ETH, quote: USD
+func (dto *DistributedTransactionOrchestrator) parseSymbolCurrencies(symbol string) (base, quote string, err error) {
+	if symbol == "" {
+		return "", "", fmt.Errorf("symbol cannot be empty")
+	}
+
+	// Handle symbol with "/" separator (e.g., BTC/USDT)
+	if idx := strings.Index(symbol, "/"); idx != -1 {
+		if idx == 0 || idx == len(symbol)-1 {
+			return "", "", fmt.Errorf("invalid symbol format: %s", symbol)
+		}
+		return symbol[:idx], symbol[idx+1:], nil
+	}
+
+	// Handle symbol with "-" separator (e.g., BTC-USDT)
+	if idx := strings.Index(symbol, "-"); idx != -1 {
+		if idx == 0 || idx == len(symbol)-1 {
+			return "", "", fmt.Errorf("invalid symbol format: %s", symbol)
+		}
+		return symbol[:idx], symbol[idx+1:], nil
+	}
+
+	// Handle concatenated format (e.g., BTCUSDT)
+	// Common quote currencies to try matching
+	commonQuotes := []string{"USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH", "BNB"}
+
+	for _, quoteCurrency := range commonQuotes {
+		if strings.HasSuffix(strings.ToUpper(symbol), quoteCurrency) {
+			baseLen := len(symbol) - len(quoteCurrency)
+			if baseLen > 0 {
+				return strings.ToUpper(symbol[:baseLen]), quoteCurrency, nil
+			}
+		}
+	}
+
+	// Fallback: assume first 3 characters are base, rest is quote (for 6+ char symbols)
+	if len(symbol) >= 6 {
+		return strings.ToUpper(symbol[:3]), strings.ToUpper(symbol[3:]), nil
+	}
+
+	// Default fallback for unknown formats
+	return strings.ToUpper(symbol), "USDT", fmt.Errorf("could not parse symbol format, used fallback: %s", symbol)
 }

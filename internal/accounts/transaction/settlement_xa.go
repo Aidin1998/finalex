@@ -9,6 +9,8 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/trading/settlement"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -16,6 +18,46 @@ import (
 
 // TraceIDKey is the context key for trace ID propagation
 const TraceIDKey = "trace_id"
+
+// Settlement metrics for Prometheus time-series database
+var (
+	// Settlement latency tracking by stage
+	settlementLatencyHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "settlement_xa_latency_seconds",
+			Help:    "Latency of settlement XA operations by stage",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms to ~16s
+		},
+		[]string{"stage", "trace_id", "operation_type"},
+	)
+
+	// Settlement stage checkpoints counter
+	settlementStageCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "settlement_xa_stage_checkpoints_total",
+			Help: "Total number of settlement stage checkpoints recorded",
+		},
+		[]string{"stage", "operation_type", "status"},
+	)
+
+	// Settlement operation duration gauge for real-time monitoring
+	settlementOperationDuration = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "settlement_xa_operation_duration_seconds",
+			Help: "Current duration of settlement operations",
+		},
+		[]string{"stage", "trace_id"},
+	)
+
+	// Settlement throughput gauge
+	settlementThroughput = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "settlement_xa_throughput_ops_per_second",
+			Help: "Settlement operations throughput per second",
+		},
+		[]string{"operation_type"},
+	)
+)
 
 // SettlementXAResource implements XA interface for settlement operations
 type SettlementXAResource struct {
@@ -509,5 +551,101 @@ func recordLatencyCheckpoint(ctx context.Context, logger *zap.Logger, stage stri
 		fields = append(fields, zap.Any(k, v))
 	}
 	logger.Info("latency_checkpoint", fields...)
-	// TODO: Write to time-series DB (Prometheus/Tempo/Influx) here
+
+	// Write settlement metrics to time-series database (Prometheus)
+	writeSettlementMetrics(ctx, stage, traceID, extra)
+}
+
+// writeSettlementMetrics writes settlement metrics to Prometheus time-series database
+func writeSettlementMetrics(ctx context.Context, stage, traceID string, extra map[string]interface{}) {
+	// Extract operation type from extra data, default to "unknown"
+	operationType := "unknown"
+	if opType, exists := extra["operation_type"]; exists {
+		if opTypeStr, ok := opType.(string); ok && opTypeStr != "" {
+			operationType = opTypeStr
+		}
+	}
+
+	// Extract duration if available for latency tracking
+	var duration time.Duration
+	if d, exists := extra["duration"]; exists {
+		switch v := d.(type) {
+		case time.Duration:
+			duration = v
+		case float64:
+			duration = time.Duration(v * float64(time.Second))
+		case int64:
+			duration = time.Duration(v) * time.Nanosecond
+		}
+	} else if startTime, exists := extra["start_time"]; exists {
+		if startTimeVal, ok := startTime.(time.Time); ok {
+			duration = time.Since(startTimeVal)
+		}
+	}
+
+	// Record latency histogram if duration is available
+	if duration > 0 {
+		settlementLatencyHistogram.WithLabelValues(stage, traceID, operationType).Observe(duration.Seconds())
+		settlementOperationDuration.WithLabelValues(stage, traceID).Set(duration.Seconds())
+	}
+
+	// Determine status from extra data
+	status := "success"
+	if statusVal, exists := extra["status"]; exists {
+		if statusStr, ok := statusVal.(string); ok && statusStr != "" {
+			status = statusStr
+		}
+	}
+	if errorVal, exists := extra["error"]; exists && errorVal != nil {
+		status = "error"
+	}
+
+	// Record stage checkpoint
+	settlementStageCounter.WithLabelValues(stage, operationType, status).Inc()
+
+	// Update throughput metrics if operations count is available
+	if opsCount, exists := extra["operations_count"]; exists {
+		if opsCountFloat, ok := opsCount.(float64); ok {
+			settlementThroughput.WithLabelValues(operationType).Set(opsCountFloat)
+		} else if opsCountInt, ok := opsCount.(int64); ok {
+			settlementThroughput.WithLabelValues(operationType).Set(float64(opsCountInt))
+		}
+	}
+
+	// Record additional custom metrics from extra data
+	recordCustomSettlementMetrics(stage, traceID, operationType, extra)
+}
+
+// recordCustomSettlementMetrics records additional custom metrics from extra data
+func recordCustomSettlementMetrics(stage, traceID, operationType string, extra map[string]interface{}) {
+	// Record batch size if available
+	if batchSize, exists := extra["batch_size"]; exists {
+		if batchSizeFloat, ok := batchSize.(float64); ok {
+			// Use existing histogram if available, or create a new gauge
+			if batchSizeFloat > 0 {
+				settlementOperationDuration.WithLabelValues(stage+"_batch_size", traceID).Set(batchSizeFloat)
+			}
+		}
+	}
+
+	// Record settlement amount if available
+	if amount, exists := extra["amount"]; exists {
+		if amountFloat, ok := amount.(float64); ok {
+			settlementOperationDuration.WithLabelValues(stage+"_amount", traceID).Set(amountFloat)
+		}
+	}
+
+	// Record queue depth if available
+	if queueDepth, exists := extra["queue_depth"]; exists {
+		if queueDepthFloat, ok := queueDepth.(float64); ok {
+			settlementOperationDuration.WithLabelValues(stage+"_queue_depth", traceID).Set(queueDepthFloat)
+		}
+	}
+	// Record error details if available
+	if errorMsg, exists := extra["error_message"]; exists {
+		if errorMsgStr, ok := errorMsg.(string); ok && errorMsgStr != "" {
+			// Record error type for monitoring
+			settlementStageCounter.WithLabelValues(stage, operationType, "error_"+errorMsgStr).Inc()
+		}
+	}
 }

@@ -21,6 +21,7 @@ type TransactionRecoveryManager struct {
 	recoveryStrategies map[XATransactionState]RecoveryStrategy
 	config             *RecoveryConfig
 	activeRecoveries   map[string]*RecoverySession
+	recoveryLocks      map[string]string // Maps transaction ID to lock ID
 	mu                 sync.RWMutex
 	stopChan           chan struct{}
 	running            bool
@@ -164,7 +165,6 @@ func NewTransactionRecoveryManager(
 		NotifyOnRecovery:        true,
 		NotifyOnFailure:         true,
 	}
-
 	manager := &TransactionRecoveryManager{
 		db:               db,
 		xaManager:        xaManager,
@@ -172,6 +172,7 @@ func NewTransactionRecoveryManager(
 		monitor:          monitor,
 		config:           config,
 		activeRecoveries: make(map[string]*RecoverySession),
+		recoveryLocks:    make(map[string]string),
 		stopChan:         make(chan struct{}),
 	}
 
@@ -301,15 +302,38 @@ func (rm *TransactionRecoveryManager) findStuckTransactions(ctx context.Context)
 		return nil, fmt.Errorf("failed to find stuck transactions: %w", err)
 	}
 
-	// Filter out transactions that are locked by other processes
-	filteredTransactions := make([]*XATransaction, 0)
+	// Filter out transactions that are locked by other processes and acquire locks
+	type txnWithLock struct {
+		txn    *XATransaction
+		lockID string
+	}
+
+	var lockedTransactions []txnWithLock
 	for _, txn := range transactions {
 		lockKey := fmt.Sprintf("recovery:%s", txn.ID.String())
-		// TODO: Replace TryLock with AcquireLock or implement a non-blocking lock if needed
+		// Try to acquire lock for this transaction to ensure exclusive recovery access
 		if lock, err := rm.lockManager.AcquireLock(ctx, lockKey, "recovery", 1*time.Minute); err == nil && lock != nil {
-			filteredTransactions = append(filteredTransactions, txn)
-			// Optionally: defer lock.Release() or track locks for later release
+			lockedTransactions = append(lockedTransactions, txnWithLock{
+				txn:    txn,
+				lockID: lock.ID,
+			})
 		}
+	}
+
+	// Store lock IDs in a temporary map for the recovery process to use
+	rm.mu.Lock()
+	if rm.recoveryLocks == nil {
+		rm.recoveryLocks = make(map[string]string)
+	}
+	for _, ltxn := range lockedTransactions {
+		rm.recoveryLocks[ltxn.txn.ID.String()] = ltxn.lockID
+	}
+	rm.mu.Unlock()
+
+	// Extract just the transactions
+	filteredTransactions := make([]*XATransaction, len(lockedTransactions))
+	for i, ltxn := range lockedTransactions {
+		filteredTransactions[i] = ltxn.txn
 	}
 
 	return filteredTransactions, nil
@@ -330,7 +354,6 @@ func (rm *TransactionRecoveryManager) recoverTransaction(ctx context.Context, tx
 		},
 		Metadata: make(map[string]interface{}),
 	}
-
 	rm.mu.Lock()
 	rm.activeRecoveries[txn.ID.String()] = session
 	rm.mu.Unlock()
@@ -338,11 +361,13 @@ func (rm *TransactionRecoveryManager) recoverTransaction(ctx context.Context, tx
 	defer func() {
 		rm.mu.Lock()
 		delete(rm.activeRecoveries, txn.ID.String())
-		rm.mu.Unlock()
 
-		// Unlock the transaction
-		lockKey := fmt.Sprintf("recovery:%s", txn.ID.String())
-		rm.lockManager.ReleaseLock(ctx, lockKey)
+		// Release the lock using the lock ID
+		if lockID, exists := rm.recoveryLocks[txn.ID.String()]; exists {
+			rm.lockManager.ReleaseLock(ctx, lockID)
+			delete(rm.recoveryLocks, txn.ID.String())
+		}
+		rm.mu.Unlock()
 	}()
 
 	// Record recovery start event
