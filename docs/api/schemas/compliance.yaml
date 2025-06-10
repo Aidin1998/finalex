@@ -1,0 +1,505 @@
+ComplianceCheckRequest:
+  type: object
+  properties:
+    type:
+      type: string
+      enum: [TRANSACTION, USER, ADDRESS, COUNTERPARTY]
+      description: Type of compliance check
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+      description: User ID (required for USER and TRANSACTION checks)
+    transaction_details:
+      type: object
+      properties:
+        amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        currency:
+          $ref: '../schemas/common.yaml#/Currency'
+        type:
+          type: string
+          enum: [DEPOSIT, WITHDRAWAL, TRADE, TRANSFER]
+        destination_address:
+          type: string
+        source_address:
+          type: string
+        counterparty_info:
+          type: object
+          properties:
+            name:
+              type: string
+            country:
+              type: string
+            risk_score:
+              type: integer
+              minimum: 0
+              maximum: 100
+    address_details:
+      type: object
+      properties:
+        address:
+          type: string
+        currency:
+          $ref: '../schemas/common.yaml#/Currency'
+        network:
+          type: string
+    check_types:
+      type: array
+      items:
+        type: string
+        enum: [AML, SANCTIONS, FRAUD, PEP, ADVERSE_MEDIA, RISK_SCORING]
+      description: Specific compliance checks to perform
+    priority:
+      type: string
+      enum: [LOW, NORMAL, HIGH, URGENT]
+      default: "NORMAL"
+    metadata:
+      type: object
+      description: Additional context for the check
+  required:
+    - type
+    - check_types
+
+ComplianceCheckResponse:
+  type: object
+  properties:
+    check_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    status:
+      type: string
+      enum: [APPROVED, REJECTED, MANUAL_REVIEW, PENDING]
+    overall_risk_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    risk_level:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    checks_performed:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [AML, SANCTIONS, FRAUD, PEP, ADVERSE_MEDIA, RISK_SCORING]
+          status:
+            type: string
+            enum: [PASS, FAIL, WARNING, ERROR]
+          score:
+            type: integer
+            minimum: 0
+            maximum: 100
+          details:
+            type: string
+          matches:
+            type: array
+            items:
+              type: object
+              properties:
+                source:
+                  type: string
+                match_type:
+                  type: string
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                details:
+                  type: object
+    recommendations:
+      type: array
+      items:
+        type: string
+    required_actions:
+      type: array
+      items:
+        type: object
+        properties:
+          action:
+            type: string
+            enum: [ADDITIONAL_VERIFICATION, MANUAL_REVIEW, DECLINE, MONITOR]
+          reason:
+            type: string
+          deadline:
+            $ref: '../schemas/common.yaml#/Timestamp'
+    alerts_generated:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/UUID'
+    processing_time:
+      type: integer
+      description: Processing time in milliseconds
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    expires_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - check_id
+    - status
+    - overall_risk_score
+    - risk_level
+    - checks_performed
+    - created_at
+
+UserComplianceStatus:
+  type: object
+  properties:
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    overall_status:
+      type: string
+      enum: [COMPLIANT, NON_COMPLIANT, UNDER_REVIEW, SUSPENDED]
+    risk_level:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    risk_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    kyc_status:
+      type: string
+      enum: [NONE, PENDING, APPROVED, REJECTED, EXPIRED]
+    aml_status:
+      type: string
+      enum: [CLEARED, PENDING, FLAGGED, BLOCKED]
+    sanctions_status:
+      type: string
+      enum: [CLEARED, PENDING, MATCH, BLOCKED]
+    pep_status:
+      type: string
+      enum: [NOT_PEP, PEP_MATCH, UNDER_REVIEW]
+    restrictions:
+      type: object
+      properties:
+        trading_disabled:
+          type: boolean
+        withdrawal_disabled:
+          type: boolean
+        deposit_disabled:
+          type: boolean
+        max_daily_withdrawal:
+          $ref: '../schemas/common.yaml#/Decimal'
+        max_monthly_volume:
+          $ref: '../schemas/common.yaml#/Decimal'
+        enhanced_monitoring:
+          type: boolean
+    active_alerts:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/UUID'
+    last_review_date:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    next_review_date:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    compliance_officer:
+      type: string
+    notes:
+      type: array
+      items:
+        type: object
+        properties:
+          timestamp:
+            $ref: '../schemas/common.yaml#/Timestamp'
+          officer:
+            type: string
+          note:
+            type: string
+          category:
+            type: string
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - user_id
+    - overall_status
+    - risk_level
+    - risk_score
+    - updated_at
+
+ComplianceAlert:
+  type: object
+  properties:
+    id:
+      $ref: '../schemas/common.yaml#/UUID'
+    type:
+      type: string
+      enum: [AML, SANCTIONS, FRAUD, MARKET_ABUSE, SUSPICIOUS_ACTIVITY, PEP, ADVERSE_MEDIA]
+    severity:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    status:
+      type: string
+      enum: [OPEN, INVESTIGATING, RESOLVED, FALSE_POSITIVE, ESCALATED]
+    title:
+      type: string
+      example: "Suspicious Trading Pattern Detected"
+    description:
+      type: string
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    related_transactions:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/UUID'
+    risk_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    indicators:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          description:
+            type: string
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+          severity:
+            type: string
+            enum: [LOW, MEDIUM, HIGH]
+    evidence:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            enum: [TRANSACTION, DOCUMENT, COMMUNICATION, PATTERN, EXTERNAL_DATA]
+          description:
+            type: string
+          url:
+            type: string
+          metadata:
+            type: object
+    assigned_to:
+      type: string
+      description: Compliance officer assigned to this alert
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    resolved_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    resolution_notes:
+      type: string
+    escalation_level:
+      type: integer
+      minimum: 0
+      maximum: 5
+    regulatory_reporting:
+      type: object
+      properties:
+        sar_filed:
+          type: boolean
+        ctr_filed:
+          type: boolean
+        external_reports:
+          type: array
+          items:
+            type: object
+            properties:
+              authority:
+                type: string
+              report_id:
+                type: string
+              filed_at:
+                $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - id
+    - type
+    - severity
+    - status
+    - title
+    - description
+    - created_at
+    - updated_at
+
+CreateAlertRequest:
+  type: object
+  properties:
+    type:
+      type: string
+      enum: [AML, SANCTIONS, FRAUD, MARKET_ABUSE, SUSPICIOUS_ACTIVITY, PEP, ADVERSE_MEDIA]
+    severity:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    title:
+      type: string
+      maxLength: 200
+    description:
+      type: string
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    related_transactions:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/UUID'
+    indicators:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          description:
+            type: string
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+    assign_to:
+      type: string
+      description: Compliance officer to assign this alert to
+    priority:
+      type: string
+      enum: [LOW, NORMAL, HIGH, URGENT]
+      default: "NORMAL"
+  required:
+    - type
+    - severity
+    - title
+    - description
+
+ManipulationDetectionRequest:
+  type: object
+  properties:
+    analysis_type:
+      type: string
+      enum: [WASH_TRADING, SPOOFING, LAYERING, PUMP_DUMP, CORNERING]
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+      description: Trading pair to analyze
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+      description: Specific user to analyze (optional)
+    time_range:
+      type: object
+      properties:
+        start_time:
+          $ref: '../schemas/common.yaml#/Timestamp'
+        end_time:
+          $ref: '../schemas/common.yaml#/Timestamp'
+      required:
+        - start_time
+        - end_time
+    parameters:
+      type: object
+      properties:
+        sensitivity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+          default: "MEDIUM"
+        min_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Minimum confidence threshold for detection
+        include_related_accounts:
+          type: boolean
+          default: false
+        deep_analysis:
+          type: boolean
+          default: false
+          description: Perform comprehensive pattern analysis
+  required:
+    - analysis_type
+    - time_range
+
+ManipulationDetectionResponse:
+  type: object
+  properties:
+    analysis_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    analysis_type:
+      type: string
+      enum: [WASH_TRADING, SPOOFING, LAYERING, PUMP_DUMP, CORNERING]
+    status:
+      type: string
+      enum: [COMPLETED, FAILED, PARTIAL]
+    overall_confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+    risk_level:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    detected_patterns:
+      type: array
+      items:
+        type: object
+        properties:
+          pattern_type:
+            type: string
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+          description:
+            type: string
+          evidence:
+            type: array
+            items:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [TRADE_SEQUENCE, PRICE_PATTERN, VOLUME_ANOMALY, TIMING_PATTERN]
+                timestamp:
+                  $ref: '../schemas/common.yaml#/Timestamp'
+                details:
+                  type: object
+          affected_trades:
+            type: array
+            items:
+              $ref: '../schemas/common.yaml#/UUID'
+          involved_users:
+            type: array
+            items:
+              $ref: '../schemas/common.yaml#/UUID'
+    statistical_analysis:
+      type: object
+      properties:
+        total_trades_analyzed:
+          type: integer
+        suspicious_trades:
+          type: integer
+        anomaly_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        behavioral_indicators:
+          type: object
+          additionalProperties:
+            type: number
+    recommendations:
+      type: array
+      items:
+        type: object
+        properties:
+          action:
+            type: string
+            enum: [MONITOR, INVESTIGATE, RESTRICT, REPORT]
+          priority:
+            type: string
+            enum: [LOW, MEDIUM, HIGH, URGENT]
+          reason:
+            type: string
+    alerts_generated:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/UUID'
+    processing_time:
+      type: integer
+      description: Analysis processing time in milliseconds
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - analysis_id
+    - analysis_type
+    - status
+    - overall_confidence
+    - risk_level
+    - created_at

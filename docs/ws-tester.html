@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finalex WebSocket Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #0a0a0a;
+            color: #e1e1e1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 1rem;
+            border-bottom: 1px solid #333;
+        }
+
+        .header h1 {
+            color: #00d4ff;
+            font-size: 1.5rem;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            gap: 1rem;
+            padding: 1rem;
+            max-height: calc(100vh - 80px);
+        }
+
+        .panel {
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1rem;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .control-panel {
+            flex: 0 0 400px;
+        }
+
+        .messages-panel {
+            flex: 1;
+        }
+
+        .panel h2 {
+            color: #00d4ff;
+            margin-bottom: 1rem;
+            font-size: 1.2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #b0b0b0;
+            font-size: 0.9rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e1e1e1;
+            font-size: 0.9rem;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+
+        .btn {
+            padding: 0.75rem 1rem;
+            background-color: #00d4ff;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            width: 100%;
+            margin-bottom: 0.5rem;
+            transition: background-color 0.3s ease;
+        }
+
+        .btn:hover:not(:disabled) {
+            background-color: #00bde5;
+        }
+
+        .btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+            color: #fff;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background-color: #c82333;
+        }
+
+        .status {
+            padding: 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: 'Fira Code', 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+            line-height: 1.4;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+            border-left: 3px solid;
+        }
+
+        .message.sent {
+            background-color: #1e3a8a20;
+            border-left-color: #3b82f6;
+        }
+
+        .message.received {
+            background-color: #16537e20;
+            border-left-color: #00d4ff;
+        }
+
+        .message.error {
+            background-color: #dc254520;
+            border-left-color: #dc3545;
+        }
+
+        .message-header {
+            color: #b0b0b0;
+            font-size: 0.7rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .message-content {
+            color: #e1e1e1;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .quick-subscribe {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .quick-subscribe .btn {
+            font-size: 0.8rem;
+            padding: 0.5rem;
+        }
+
+        .clear-btn {
+            background-color: #6c757d;
+            color: #fff;
+            font-size: 0.8rem;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .clear-btn:hover {
+            background-color: #5a6268;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .control-panel {
+                flex: 0 0 auto;
+            }
+            
+            .messages-panel {
+                flex: 1;
+                min-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Finalex WebSocket API Tester</h1>
+    </div>
+
+    <div class="container">
+        <div class="panel control-panel">
+            <h2>Connection</h2>
+            
+            <div class="status" id="status">Disconnected</div>
+            
+            <div class="form-group">
+                <label for="wsUrl">WebSocket URL</label>
+                <input type="text" id="wsUrl" value="wss://ws.finalex.io" placeholder="wss://ws.finalex.io">
+            </div>
+            
+            <div class="form-group">
+                <label for="authToken">Authentication Token</label>
+                <input type="text" id="authToken" placeholder="JWT token or API key">
+            </div>
+            
+            <button class="btn" id="connectBtn" onclick="toggleConnection()">Connect</button>
+            
+            <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #333;">
+            
+            <h2>Send Message</h2>
+            
+            <div class="form-group">
+                <label for="messageType">Message Type</label>
+                <select id="messageType" onchange="updateMessageTemplate()">
+                    <option value="subscribe">Subscribe</option>
+                    <option value="unsubscribe">Unsubscribe</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="channel">Channel</label>
+                <select id="channel" onchange="updateMessageTemplate()">
+                    <option value="ticker">Ticker</option>
+                    <option value="orderbook">Order Book</option>
+                    <option value="trades">Trades</option>
+                    <option value="klines">Klines</option>
+                    <option value="account">Account</option>
+                    <option value="orders">Orders</option>
+                    <option value="user_trades">User Trades</option>
+                    <option value="notifications">Notifications</option>
+                </select>
+            </div>
+            
+            <div class="form-group" id="symbolGroup">
+                <label for="symbol">Symbol</label>
+                <input type="text" id="symbol" value="BTC/USDT" placeholder="BTC/USDT">
+            </div>
+            
+            <div class="form-group">
+                <label for="messageJson">Message JSON</label>
+                <textarea id="messageJson" rows="6" placeholder="Enter JSON message"></textarea>
+            </div>
+            
+            <button class="btn" id="sendBtn" onclick="sendMessage()" disabled>Send Message</button>
+            
+            <div class="quick-subscribe">
+                <button class="btn" onclick="quickSubscribe('ticker', 'BTC/USDT')">BTC Ticker</button>
+                <button class="btn" onclick="quickSubscribe('ticker', 'ETH/USDT')">ETH Ticker</button>
+                <button class="btn" onclick="quickSubscribe('orderbook', 'BTC/USDT')">BTC OrderBook</button>
+                <button class="btn" onclick="quickSubscribe('trades', 'BTC/USDT')">BTC Trades</button>
+            </div>
+        </div>
+
+        <div class="panel messages-panel">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h2>Messages</h2>
+                <button class="btn clear-btn" onclick="clearMessages()">Clear</button>
+            </div>
+            <div class="messages" id="messages"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let messageId = 1;
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            const token = document.getElementById('authToken').value;
+            
+            const fullUrl = token ? `${url}?token=${encodeURIComponent(token)}` : url;
+            
+            updateStatus('connecting', 'Connecting...');
+            
+            try {
+                ws = new WebSocket(fullUrl);
+                
+                ws.onopen = function(event) {
+                    updateStatus('connected', 'Connected');
+                    document.getElementById('connectBtn').textContent = 'Disconnect';
+                    document.getElementById('connectBtn').classList.remove('btn');
+                    document.getElementById('connectBtn').classList.add('btn', 'btn-danger');
+                    document.getElementById('sendBtn').disabled = false;
+                    
+                    addMessage('system', 'Connected to ' + fullUrl);
+                };
+                
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        addMessage('received', JSON.stringify(data, null, 2));
+                    } catch (e) {
+                        addMessage('received', event.data);
+                    }
+                };
+                
+                ws.onclose = function(event) {
+                    updateStatus('disconnected', 'Disconnected');
+                    document.getElementById('connectBtn').textContent = 'Connect';
+                    document.getElementById('connectBtn').classList.remove('btn-danger');
+                    document.getElementById('connectBtn').classList.add('btn');
+                    document.getElementById('sendBtn').disabled = true;
+                    
+                    addMessage('system', `Connection closed. Code: ${event.code}, Reason: ${event.reason || 'Unknown'}`);
+                };
+                
+                ws.onerror = function(error) {
+                    addMessage('error', 'WebSocket error: ' + error.message);
+                };
+                
+            } catch (error) {
+                updateStatus('disconnected', 'Connection failed');
+                addMessage('error', 'Failed to connect: ' + error.message);
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function updateStatus(type, message) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = `status ${type}`;
+            statusEl.textContent = message;
+        }
+
+        function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('error', 'WebSocket is not connected');
+                return;
+            }
+            
+            const messageText = document.getElementById('messageJson').value.trim();
+            if (!messageText) {
+                addMessage('error', 'Message cannot be empty');
+                return;
+            }
+            
+            try {
+                const message = JSON.parse(messageText);
+                ws.send(JSON.stringify(message));
+                addMessage('sent', JSON.stringify(message, null, 2));
+            } catch (error) {
+                addMessage('error', 'Invalid JSON: ' + error.message);
+            }
+        }
+
+        function quickSubscribe(channel, symbol) {
+            const message = {
+                id: `req_${messageId++}`,
+                method: 'subscribe',
+                params: { channel }
+            };
+            
+            if (symbol && ['ticker', 'orderbook', 'trades', 'klines'].includes(channel)) {
+                message.params.symbol = symbol;
+            }
+            
+            document.getElementById('messageJson').value = JSON.stringify(message, null, 2);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                sendMessage();
+            }
+        }
+
+        function updateMessageTemplate() {
+            const messageType = document.getElementById('messageType').value;
+            const channel = document.getElementById('channel').value;
+            const symbol = document.getElementById('symbol').value;
+            
+            let message = {
+                id: `req_${messageId++}`,
+                method: messageType
+            };
+            
+            if (messageType === 'subscribe' || messageType === 'unsubscribe') {
+                message.params = { channel };
+                
+                if (['ticker', 'orderbook', 'trades', 'klines'].includes(channel) && symbol) {
+                    message.params.symbol = symbol;
+                }
+                
+                if (channel === 'orderbook') {
+                    message.params.depth = 20;
+                }
+                
+                if (channel === 'klines') {
+                    message.params.interval = '1m';
+                }
+            }
+            
+            document.getElementById('messageJson').value = JSON.stringify(message, null, 2);
+            
+            // Show/hide symbol input based on channel
+            const symbolGroup = document.getElementById('symbolGroup');
+            const publicChannels = ['ticker', 'orderbook', 'trades', 'klines'];
+            symbolGroup.style.display = publicChannels.includes(channel) ? 'block' : 'none';
+        }
+
+        function addMessage(type, content) {
+            const messagesEl = document.getElementById('messages');
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const headerEl = document.createElement('div');
+            headerEl.className = 'message-header';
+            headerEl.textContent = `[${timestamp}] ${type.toUpperCase()}`;
+            
+            const contentEl = document.createElement('div');
+            contentEl.className = 'message-content';
+            contentEl.textContent = content;
+            
+            messageEl.appendChild(headerEl);
+            messageEl.appendChild(contentEl);
+            messagesEl.appendChild(messageEl);
+            
+            // Auto-scroll to bottom
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        // Initialize
+        updateMessageTemplate();
+        
+        // Handle Enter key in message textarea
+        document.getElementById('messageJson').addEventListener('keydown', function(event) {
+            if (event.ctrlKey && event.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Auto-connect if token is provided in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const tokenParam = urlParams.get('token');
+        if (tokenParam) {
+            document.getElementById('authToken').value = tokenParam;
+        }
+    </script>
+</body>
+</html>

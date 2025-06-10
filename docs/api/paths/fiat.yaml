@@ -1,0 +1,383 @@
+deposits:
+  post:
+    tags:
+      - Fiat Operations
+    summary: Initiate fiat deposit
+    description: Create a new fiat currency deposit request
+    operationId: initiateFiatDeposit
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/fiat.yaml#/FiatDepositRequest'
+    responses:
+      '201':
+        description: Fiat deposit initiated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatDepositResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get fiat deposits
+    description: Retrieve fiat deposit history for the authenticated user
+    operationId: getFiatDeposits
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: currency
+        in: query
+        required: false
+        description: Filter by currency
+        schema:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: USD
+      - name: status
+        in: query
+        required: false
+        description: Filter by status
+        schema:
+          type: string
+          enum: [pending, processing, completed, failed, cancelled]
+          example: completed
+      - name: startTime
+        in: query
+        required: false
+        description: Start time filter (ISO 8601)
+        schema:
+          type: string
+          format: date-time
+          example: '2024-01-01T00:00:00Z'
+      - name: endTime
+        in: query
+        required: false
+        description: End time filter (ISO 8601)
+        schema:
+          type: string
+          format: date-time
+          example: '2024-01-31T23:59:59Z'
+      - $ref: '../openapi.yaml#/components/parameters/Page'
+      - $ref: '../openapi.yaml#/components/parameters/PerPage'
+    responses:
+      '200':
+        description: Fiat deposit history retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatDepositHistory'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+withdrawals:
+  post:
+    tags:
+      - Fiat Operations
+    summary: Initiate fiat withdrawal
+    description: Create a new fiat currency withdrawal request
+    operationId: initiateFiatWithdrawal
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/fiat.yaml#/FiatWithdrawalRequest'
+    responses:
+      '201':
+        description: Fiat withdrawal initiated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatWithdrawalResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get fiat withdrawals
+    description: Retrieve fiat withdrawal history for the authenticated user
+    operationId: getFiatWithdrawals
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: currency
+        in: query
+        required: false
+        description: Filter by currency
+        schema:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: USD
+      - name: status
+        in: query
+        required: false
+        description: Filter by status
+        schema:
+          type: string
+          enum: [pending, processing, completed, failed, cancelled]
+          example: completed
+      - name: startTime
+        in: query
+        required: false
+        description: Start time filter (ISO 8601)
+        schema:
+          type: string
+          format: date-time
+          example: '2024-01-01T00:00:00Z'
+      - name: endTime
+        in: query
+        required: false
+        description: End time filter (ISO 8601)
+        schema:
+          type: string
+          format: date-time
+          example: '2024-01-31T23:59:59Z'
+      - $ref: '../openapi.yaml#/components/parameters/Page'
+      - $ref: '../openapi.yaml#/components/parameters/PerPage'
+    responses:
+      '200':
+        description: Fiat withdrawal history retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatWithdrawalHistory'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+deposit_status:
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get deposit status
+    description: Retrieve status of a specific fiat deposit
+    operationId: getFiatDepositStatus
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: depositId
+        in: path
+        required: true
+        description: Deposit ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Deposit status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatDepositStatus'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+withdrawal_status:
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get withdrawal status
+    description: Retrieve status of a specific fiat withdrawal
+    operationId: getFiatWithdrawalStatus
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: withdrawalId
+        in: path
+        required: true
+        description: Withdrawal ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Withdrawal status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatWithdrawalStatus'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+bank_accounts:
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get bank accounts
+    description: Retrieve user's registered bank accounts
+    operationId: getBankAccounts
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Bank accounts retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/fiat.yaml#/BankAccount'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  post:
+    tags:
+      - Fiat Operations
+    summary: Add bank account
+    description: Register a new bank account for fiat operations
+    operationId: addBankAccount
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/fiat.yaml#/AddBankAccountRequest'
+    responses:
+      '201':
+        description: Bank account added successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/BankAccount'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+bank_account:
+  delete:
+    tags:
+      - Fiat Operations
+    summary: Remove bank account
+    description: Remove a registered bank account
+    operationId: removeBankAccount
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: accountId
+        in: path
+        required: true
+        description: Bank account ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '204':
+        description: Bank account removed successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+validate_bank_account:
+  post:
+    tags:
+      - Fiat Operations
+    summary: Validate bank account
+    description: Validate bank account details before use
+    operationId: validateBankAccount
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: accountId
+        in: path
+        required: true
+        description: Bank account ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Bank account validation result
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/BankAccountValidation'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+rates:
+  get:
+    tags:
+      - Fiat Operations
+    summary: Get fiat exchange rates
+    description: Retrieve current fiat exchange rates
+    operationId: getFiatRates
+    security: []
+    parameters:
+      - name: baseCurrency
+        in: query
+        required: false
+        description: Base currency
+        schema:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: USD
+      - name: targetCurrency
+        in: query
+        required: false
+        description: Target currency
+        schema:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: EUR
+    responses:
+      '200':
+        description: Exchange rates retrieved successfully
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../schemas/fiat.yaml#/FiatExchangeRate'
+                - type: array
+                  items:
+                    $ref: '../schemas/fiat.yaml#/FiatExchangeRate'
+
+calculate_fees:
+  post:
+    tags:
+      - Fiat Operations
+    summary: Calculate transaction fees
+    description: Calculate fees for fiat operations
+    operationId: calculateFiatFees
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/fiat.yaml#/FeeCalculationRequest'
+    responses:
+      '200':
+        description: Fee calculation completed
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/fiat.yaml#/FiatFeeCalculation'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'

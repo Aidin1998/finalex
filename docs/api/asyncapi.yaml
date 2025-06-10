@@ -1,0 +1,1076 @@
+# AsyncAPI WebSocket Documentation
+asyncapi: 3.0.0
+
+info:
+  title: Finalex WebSocket API
+  version: 1.0.0
+  description: |
+    Real-time WebSocket API for the Finalex cryptocurrency exchange platform.
+    
+    This WebSocket API provides real-time access to:
+    - Live market data (tickers, order books, trades)
+    - User account updates (balances, orders, trades)
+    - Trading notifications and alerts
+    - System announcements
+    
+    ## Authentication
+    
+    WebSocket connections support multiple authentication methods:
+    - JWT Token (query parameter: `token`)
+    - API Key (query parameter: `api_key`)
+    
+    ## Rate Limits
+    
+    - **Public Channels**: 100 subscriptions per connection
+    - **Private Channels**: 50 subscriptions per connection  
+    - **Connection Limit**: 10 connections per IP
+    - **Message Rate**: 1000 messages per minute per connection
+    
+  contact:
+    name: Finalex API Support
+    url: https://finalex.io/support
+    email: api-support@finalex.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  production:
+    host: ws.finalex.io
+    protocol: wss
+    description: Production WebSocket server
+    security:
+      - $ref: '#/components/securitySchemes/jwtAuth'
+      - $ref: '#/components/securitySchemes/apiKey'
+  staging:
+    host: staging-ws.finalex.io
+    protocol: wss
+    description: Staging WebSocket server
+    security:
+      - $ref: '#/components/securitySchemes/jwtAuth'
+      - $ref: '#/components/securitySchemes/apiKey'
+  development:
+    host: localhost:8081
+    protocol: ws
+    description: Development WebSocket server
+
+defaultContentType: application/json
+
+channels:
+  # Public Market Data Channels
+  ticker:
+    address: ticker
+    messages:
+      subscribe:
+        $ref: '#/components/messages/TickerSubscribe'
+      update:
+        $ref: '#/components/messages/TickerUpdate'
+    description: |
+      Real-time ticker updates for trading pairs.
+      Provides price, volume, and 24h statistics.
+    parameters:
+      symbol:
+        $ref: '#/components/parameters/Symbol'
+
+  orderbook:
+    address: orderbook
+    messages:
+      subscribe:
+        $ref: '#/components/messages/OrderBookSubscribe'
+      snapshot:
+        $ref: '#/components/messages/OrderBookSnapshot'
+      update:
+        $ref: '#/components/messages/OrderBookUpdate'
+    description: |
+      Real-time order book updates with configurable depth.
+      Provides bid/ask levels and quantities.
+    parameters:
+      symbol:
+        $ref: '#/components/parameters/Symbol'
+      depth:
+        $ref: '#/components/parameters/Depth'
+
+  trades:
+    address: trades
+    messages:
+      subscribe:
+        $ref: '#/components/messages/TradesSubscribe'
+      trade:
+        $ref: '#/components/messages/TradeUpdate'
+    description: |
+      Real-time trade executions for a trading pair.
+      Shows all public trades as they happen.
+    parameters:
+      symbol:
+        $ref: '#/components/parameters/Symbol'
+
+  klines:
+    address: klines
+    messages:
+      subscribe:
+        $ref: '#/components/messages/KlineSubscribe'
+      update:
+        $ref: '#/components/messages/KlineUpdate'
+    description: |
+      Real-time candlestick/kline data for various timeframes.
+      Updates as new trades occur within the time interval.
+    parameters:
+      symbol:
+        $ref: '#/components/parameters/Symbol'
+      interval:
+        $ref: '#/components/parameters/Interval'
+
+  # Private User Channels (Authentication Required)
+  account:
+    address: account
+    messages:
+      subscribe:
+        $ref: '#/components/messages/AccountSubscribe'
+      update:
+        $ref: '#/components/messages/AccountUpdate'
+    description: |
+      Private channel for account balance and position updates.
+      Requires authentication.
+
+  orders:
+    address: orders
+    messages:
+      subscribe:
+        $ref: '#/components/messages/OrdersSubscribe'
+      update:
+        $ref: '#/components/messages/OrderUpdate'
+    description: |
+      Private channel for order status updates.
+      Receives updates when orders are created, filled, cancelled, etc.
+
+  userTrades:
+    address: user_trades
+    messages:
+      subscribe:
+        $ref: '#/components/messages/UserTradesSubscribe'
+      trade:
+        $ref: '#/components/messages/UserTradeUpdate'
+    description: |
+      Private channel for user's trade executions.
+      Shows detailed trade information including fees and roles.
+
+  notifications:
+    address: notifications
+    messages:
+      subscribe:
+        $ref: '#/components/messages/NotificationSubscribe'
+      notification:
+        $ref: '#/components/messages/NotificationUpdate'
+    description: |
+      Private channel for system notifications and alerts.
+      Includes security alerts, announcements, and trading notifications.
+
+operations:
+  # Subscription Operations
+  subscribeToTicker:
+    action: send
+    channel:
+      $ref: '#/channels/ticker'
+    summary: Subscribe to ticker updates
+    description: Subscribe to real-time price updates for a trading pair
+    message:
+      $ref: '#/components/messages/TickerSubscribe'
+
+  subscribeToOrderBook:
+    action: send
+    channel:
+      $ref: '#/channels/orderbook'
+    summary: Subscribe to order book updates
+    description: Subscribe to real-time order book changes
+    message:
+      $ref: '#/components/messages/OrderBookSubscribe'
+
+  subscribeToTrades:
+    action: send
+    channel:
+      $ref: '#/channels/trades'
+    summary: Subscribe to trade updates
+    description: Subscribe to real-time trade executions
+    message:
+      $ref: '#/components/messages/TradesSubscribe'
+
+  subscribeToKlines:
+    action: send
+    channel:
+      $ref: '#/channels/klines'
+    summary: Subscribe to kline updates
+    description: Subscribe to real-time candlestick data
+    message:
+      $ref: '#/components/messages/KlineSubscribe'
+
+  subscribeToAccount:
+    action: send
+    channel:
+      $ref: '#/channels/account'
+    summary: Subscribe to account updates
+    description: Subscribe to account balance and position changes
+    message:
+      $ref: '#/components/messages/AccountSubscribe'
+
+  subscribeToOrders:
+    action: send
+    channel:
+      $ref: '#/channels/orders'
+    summary: Subscribe to order updates
+    description: Subscribe to order status changes
+    message:
+      $ref: '#/components/messages/OrdersSubscribe'
+
+  subscribeToUserTrades:
+    action: send
+    channel:
+      $ref: '#/channels/userTrades'
+    summary: Subscribe to user trade updates
+    description: Subscribe to user's trade executions
+    message:
+      $ref: '#/components/messages/UserTradesSubscribe'
+
+  # Receive Operations
+  receiveTicker:
+    action: receive
+    channel:
+      $ref: '#/channels/ticker'
+    summary: Receive ticker updates
+    message:
+      $ref: '#/components/messages/TickerUpdate'
+
+  receiveOrderBookSnapshot:
+    action: receive
+    channel:
+      $ref: '#/channels/orderbook'
+    summary: Receive order book snapshot
+    message:
+      $ref: '#/components/messages/OrderBookSnapshot'
+
+  receiveOrderBookUpdate:
+    action: receive
+    channel:
+      $ref: '#/channels/orderbook'
+    summary: Receive order book update
+    message:
+      $ref: '#/components/messages/OrderBookUpdate'
+
+  receiveTrade:
+    action: receive
+    channel:
+      $ref: '#/channels/trades'
+    summary: Receive trade execution
+    message:
+      $ref: '#/components/messages/TradeUpdate'
+
+  receiveKline:
+    action: receive
+    channel:
+      $ref: '#/channels/klines'
+    summary: Receive kline update
+    message:
+      $ref: '#/components/messages/KlineUpdate'
+
+  receiveAccountUpdate:
+    action: receive
+    channel:
+      $ref: '#/channels/account'
+    summary: Receive account update
+    message:
+      $ref: '#/components/messages/AccountUpdate'
+
+  receiveOrderUpdate:
+    action: receive
+    channel:
+      $ref: '#/channels/orders'
+    summary: Receive order update
+    message:
+      $ref: '#/components/messages/OrderUpdate'
+
+  receiveUserTrade:
+    action: receive
+    channel:
+      $ref: '#/channels/userTrades'
+    summary: Receive user trade
+    message:
+      $ref: '#/components/messages/UserTradeUpdate'
+
+components:
+  parameters:
+    Symbol:
+      description: Trading pair symbol (e.g., BTC/USDT)
+      schema:
+        type: string
+        pattern: '^[A-Z0-9]+/[A-Z0-9]+$'
+        example: 'BTC/USDT'
+
+    Depth:
+      description: Order book depth (number of price levels)
+      schema:
+        type: integer
+        minimum: 5
+        maximum: 100
+        default: 20
+        example: 20
+
+    Interval:
+      description: Kline interval
+      schema:
+        type: string
+        enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+        default: '1m'
+        example: '1m'
+
+  messages:
+    # Subscription Messages
+    TickerSubscribe:
+      name: TickerSubscribe
+      title: Subscribe to Ticker
+      summary: Subscribe to ticker updates for a symbol
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SubscribeMessage'
+
+    OrderBookSubscribe:
+      name: OrderBookSubscribe
+      title: Subscribe to Order Book
+      summary: Subscribe to order book updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OrderBookSubscribeMessage'
+
+    TradesSubscribe:
+      name: TradesSubscribe
+      title: Subscribe to Trades
+      summary: Subscribe to trade updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SubscribeMessage'
+
+    KlineSubscribe:
+      name: KlineSubscribe
+      title: Subscribe to Klines
+      summary: Subscribe to kline updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/KlineSubscribeMessage'
+
+    AccountSubscribe:
+      name: AccountSubscribe
+      title: Subscribe to Account
+      summary: Subscribe to account updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BaseSubscribeMessage'
+
+    OrdersSubscribe:
+      name: OrdersSubscribe
+      title: Subscribe to Orders
+      summary: Subscribe to order updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BaseSubscribeMessage'
+
+    UserTradesSubscribe:
+      name: UserTradesSubscribe
+      title: Subscribe to User Trades
+      summary: Subscribe to user trade updates
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BaseSubscribeMessage'
+
+    NotificationSubscribe:
+      name: NotificationSubscribe
+      title: Subscribe to Notifications
+      summary: Subscribe to system notifications
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BaseSubscribeMessage'
+
+    # Update Messages
+    TickerUpdate:
+      name: TickerUpdate
+      title: Ticker Update
+      summary: Real-time ticker data
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TickerData'
+
+    OrderBookSnapshot:
+      name: OrderBookSnapshot
+      title: Order Book Snapshot
+      summary: Complete order book snapshot
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OrderBookSnapshot'
+
+    OrderBookUpdate:
+      name: OrderBookUpdate
+      title: Order Book Update
+      summary: Incremental order book update
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OrderBookUpdate'
+
+    TradeUpdate:
+      name: TradeUpdate
+      title: Trade Update
+      summary: Real-time trade execution
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TradeData'
+
+    KlineUpdate:
+      name: KlineUpdate
+      title: Kline Update
+      summary: Real-time kline/candlestick data
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/KlineData'
+
+    AccountUpdate:
+      name: AccountUpdate
+      title: Account Update
+      summary: Account balance and position changes
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/AccountData'
+
+    OrderUpdate:
+      name: OrderUpdate
+      title: Order Update
+      summary: Order status changes
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OrderData'
+
+    UserTradeUpdate:
+      name: UserTradeUpdate
+      title: User Trade Update
+      summary: User's trade execution
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/UserTradeData'
+
+    NotificationUpdate:
+      name: NotificationUpdate
+      title: Notification Update
+      summary: System notification
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/NotificationData'
+
+    # Error Messages
+    ErrorMessage:
+      name: ErrorMessage
+      title: Error Message
+      summary: WebSocket error response
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ErrorData'
+
+  schemas:
+    # Base Message Schemas
+    BaseMessage:
+      type: object
+      required:
+        - id
+        - type
+        - timestamp
+      properties:
+        id:
+          type: string
+          description: Unique message identifier
+          example: "msg_123456789"
+        type:
+          type: string
+          description: Message type
+        channel:
+          type: string
+          description: Channel name
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1672531200000
+
+    BaseSubscribeMessage:
+      type: object
+      required:
+        - method
+        - params
+      properties:
+        id:
+          type: string
+          description: Request identifier
+          example: "sub_001"
+        method:
+          type: string
+          enum: ['subscribe', 'unsubscribe']
+          description: Subscription method
+          example: "subscribe"
+        params:
+          type: object
+          required:
+            - channel
+          properties:
+            channel:
+              type: string
+              description: Channel name to subscribe to
+
+    SubscribeMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseSubscribeMessage'
+        - type: object
+          properties:
+            params:
+              type: object
+              required:
+                - channel
+                - symbol
+              properties:
+                channel:
+                  type: string
+                  example: "ticker"
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+
+    OrderBookSubscribeMessage:
+      allOf:
+        - $ref: '#/components/schemas/SubscribeMessage'
+        - type: object
+          properties:
+            params:
+              type: object
+              properties:
+                depth:
+                  type: integer
+                  minimum: 5
+                  maximum: 100
+                  default: 20
+                  example: 20
+
+    KlineSubscribeMessage:
+      allOf:
+        - $ref: '#/components/schemas/SubscribeMessage'
+        - type: object
+          properties:
+            params:
+              type: object
+              properties:
+                interval:
+                  type: string
+                  enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+                  example: "1m"
+
+    # Data Schemas
+    TickerData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['ticker']
+              example: "ticker"
+            channel:
+              type: string
+              enum: ['ticker']
+              example: "ticker"
+            data:
+              type: object
+              required:
+                - symbol
+                - price
+                - timestamp
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                price:
+                  type: string
+                  pattern: '^[0-9]+\.?[0-9]*$'
+                  example: "45678.90"
+                change_24h:
+                  type: string
+                  example: "1234.56"
+                change_percent_24h:
+                  type: string
+                  example: "2.78"
+                volume_24h:
+                  type: string
+                  example: "1234567.89"
+                high_24h:
+                  type: string
+                  example: "46000.00"
+                low_24h:
+                  type: string
+                  example: "44500.00"
+                bid:
+                  type: string
+                  example: "45678.50"
+                ask:
+                  type: string
+                  example: "45679.00"
+                timestamp:
+                  type: integer
+                  format: int64
+                  example: 1672531200000
+
+    OrderBookSnapshot:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['orderbook_snapshot']
+              example: "orderbook_snapshot"
+            channel:
+              type: string
+              enum: ['orderbook']
+              example: "orderbook"
+            data:
+              type: object
+              required:
+                - symbol
+                - bids
+                - asks
+                - sequence
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                bids:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: string
+                    minItems: 2
+                    maxItems: 2
+                  example: [["45678.50", "1.25000000"], ["45678.00", "2.50000000"]]
+                asks:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: string
+                    minItems: 2
+                    maxItems: 2
+                  example: [["45679.00", "0.75000000"], ["45679.50", "1.80000000"]]
+                sequence:
+                  type: integer
+                  format: int64
+                  example: 123456789
+
+    OrderBookUpdate:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['orderbook_update']
+              example: "orderbook_update"
+            channel:
+              type: string
+              enum: ['orderbook']
+              example: "orderbook"
+            data:
+              type: object
+              required:
+                - symbol
+                - side
+                - price
+                - quantity
+                - action
+                - sequence
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                  example: "buy"
+                price:
+                  type: string
+                  example: "45678.50"
+                quantity:
+                  type: string
+                  example: "1.25000000"
+                action:
+                  type: string
+                  enum: ['update', 'remove']
+                  example: "update"
+                sequence:
+                  type: integer
+                  format: int64
+                  example: 123456790
+
+    TradeData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['trade']
+              example: "trade"
+            channel:
+              type: string
+              enum: ['trades']
+              example: "trades"
+            data:
+              type: object
+              required:
+                - symbol
+                - trade_id
+                - price
+                - quantity
+                - side
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                trade_id:
+                  type: string
+                  example: "987654321"
+                price:
+                  type: string
+                  example: "45678.90"
+                quantity:
+                  type: string
+                  example: "0.50000000"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                  example: "buy"
+
+    KlineData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['kline']
+              example: "kline"
+            channel:
+              type: string
+              enum: ['klines']
+              example: "klines"
+            data:
+              type: object
+              required:
+                - symbol
+                - interval
+                - open_time
+                - close_time
+                - open
+                - high
+                - low
+                - close
+                - volume
+                - is_closed
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                interval:
+                  type: string
+                  example: "1m"
+                open_time:
+                  type: integer
+                  format: int64
+                  example: 1672531200000
+                close_time:
+                  type: integer
+                  format: int64
+                  example: 1672531259999
+                open:
+                  type: string
+                  example: "45600.00"
+                high:
+                  type: string
+                  example: "45700.00"
+                low:
+                  type: string
+                  example: "45550.00"
+                close:
+                  type: string
+                  example: "45678.90"
+                volume:
+                  type: string
+                  example: "123.45678900"
+                is_closed:
+                  type: boolean
+                  example: false
+
+    AccountData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['account_update']
+              example: "account_update"
+            channel:
+              type: string
+              enum: ['account']
+              example: "account"
+            data:
+              type: object
+              required:
+                - balances
+              properties:
+                balances:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - currency
+                      - available
+                      - locked
+                      - total
+                    properties:
+                      currency:
+                        type: string
+                        example: "BTC"
+                      available:
+                        type: string
+                        example: "1.25000000"
+                      locked:
+                        type: string
+                        example: "0.50000000"
+                      total:
+                        type: string
+                        example: "1.75000000"
+
+    OrderData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['order_update']
+              example: "order_update"
+            channel:
+              type: string
+              enum: ['orders']
+              example: "orders"
+            data:
+              type: object
+              required:
+                - order_id
+                - symbol
+                - side
+                - type
+                - status
+                - quantity
+                - price
+              properties:
+                order_id:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                  example: "buy"
+                type:
+                  type: string
+                  enum: ['market', 'limit', 'stop_limit']
+                  example: "limit"
+                status:
+                  type: string
+                  enum: ['pending', 'open', 'filled', 'cancelled', 'expired']
+                  example: "filled"
+                quantity:
+                  type: string
+                  example: "1.00000000"
+                price:
+                  type: string
+                  example: "45678.90"
+                filled_quantity:
+                  type: string
+                  example: "1.00000000"
+                remaining_quantity:
+                  type: string
+                  example: "0.00000000"
+                average_price:
+                  type: string
+                  example: "45678.90"
+                fees:
+                  type: string
+                  example: "0.00100000"
+                fee_currency:
+                  type: string
+                  example: "BTC"
+                created_at:
+                  type: integer
+                  format: int64
+                  example: 1672531100000
+                updated_at:
+                  type: integer
+                  format: int64
+                  example: 1672531200000
+
+    UserTradeData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['user_trade']
+              example: "user_trade"
+            channel:
+              type: string
+              enum: ['user_trades']
+              example: "user_trades"
+            data:
+              type: object
+              required:
+                - trade_id
+                - order_id
+                - symbol
+                - side
+                - quantity
+                - price
+                - fee
+                - fee_currency
+                - role
+              properties:
+                trade_id:
+                  type: string
+                  example: "trade_123456789"
+                order_id:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                  example: "buy"
+                quantity:
+                  type: string
+                  example: "0.50000000"
+                price:
+                  type: string
+                  example: "45678.90"
+                fee:
+                  type: string
+                  example: "0.00050000"
+                fee_currency:
+                  type: string
+                  example: "BTC"
+                role:
+                  type: string
+                  enum: ['maker', 'taker']
+                  example: "taker"
+
+    NotificationData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['notification']
+              example: "notification"
+            channel:
+              type: string
+              enum: ['notifications']
+              example: "notifications"
+            data:
+              type: object
+              required:
+                - notification_id
+                - category
+                - title
+                - message
+              properties:
+                notification_id:
+                  type: string
+                  format: uuid
+                  example: "notif_123e4567-e89b-12d3-a456-426614174000"
+                category:
+                  type: string
+                  enum: ['security', 'trading', 'system', 'promotion']
+                  example: "security"
+                title:
+                  type: string
+                  example: "Security Alert"
+                message:
+                  type: string
+                  example: "New login detected from unknown device"
+                priority:
+                  type: string
+                  enum: ['low', 'medium', 'high', 'critical']
+                  example: "high"
+                action_required:
+                  type: boolean
+                  example: true
+                action_url:
+                  type: string
+                  format: uri
+                  nullable: true
+                  example: "https://finalex.io/security/review"
+
+    ErrorData:
+      allOf:
+        - $ref: '#/components/schemas/BaseMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['error']
+              example: "error"
+            data:
+              type: object
+              required:
+                - code
+                - message
+              properties:
+                code:
+                  type: string
+                  enum: 
+                    - 'AUTHENTICATION_REQUIRED'
+                    - 'INVALID_TOKEN'
+                    - 'INVALID_CHANNEL'
+                    - 'INVALID_SYMBOL'
+                    - 'RATE_LIMIT_EXCEEDED'
+                    - 'SUBSCRIPTION_LIMIT'
+                    - 'INTERNAL_ERROR'
+                  example: "INVALID_CHANNEL"
+                message:
+                  type: string
+                  example: "Invalid channel name provided"
+                details:
+                  type: string
+                  nullable: true
+                  example: "Channel 'invalid_channel' does not exist"
+
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+
+    apiKey:
+      type: apiKey
+      in: query
+      name: api_key
+      description: API key for programmatic access

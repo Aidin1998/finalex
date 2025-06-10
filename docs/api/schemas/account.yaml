@@ -1,0 +1,746 @@
+# Account Management Schemas
+components:
+  schemas:
+    # Account Profile
+    AccountProfile:
+      type: object
+      required:
+        - id
+        - email
+        - username
+        - status
+        - created_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        username:
+          type: string
+          example: "john_doe"
+        first_name:
+          type: string
+          example: "John"
+        last_name:
+          type: string
+          example: "Doe"
+        phone:
+          type: string
+          example: "+1234567890"
+          nullable: true
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+        country:
+          type: string
+          example: "US"
+        status:
+          type: string
+          enum: [active, suspended, pending_verification]
+          example: "active"
+        kyc_level:
+          type: integer
+          minimum: 0
+          maximum: 3
+          example: 2
+        is_verified:
+          type: boolean
+          example: true
+        two_factor_enabled:
+          type: boolean
+          example: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        preferences:
+          $ref: '#/components/schemas/AccountPreferences'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AccountPreferences:
+      type: object
+      properties:
+        language:
+          type: string
+          example: "en"
+          default: "en"
+        timezone:
+          type: string
+          example: "UTC"
+          default: "UTC"
+        currency:
+          type: string
+          example: "USD"
+          default: "USD"
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+        ui_settings:
+          $ref: '#/components/schemas/UISettings'
+        trading_preferences:
+          $ref: '#/components/schemas/TradingPreferences'
+
+    NotificationPreferences:
+      type: object
+      properties:
+        email_notifications:
+          type: boolean
+          default: true
+        push_notifications:
+          type: boolean
+          default: true
+        sms_notifications:
+          type: boolean
+          default: false
+        trade_confirmations:
+          type: boolean
+          default: true
+        price_alerts:
+          type: boolean
+          default: true
+        security_alerts:
+          type: boolean
+          default: true
+        newsletter:
+          type: boolean
+          default: false
+        promotional:
+          type: boolean
+          default: false
+
+    UISettings:
+      type: object
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, auto]
+          default: "dark"
+        chart_type:
+          type: string
+          enum: [candlestick, line, area]
+          default: "candlestick"
+        default_trading_view:
+          type: string
+          enum: [spot, margin, futures]
+          default: "spot"
+        show_portfolio_balance:
+          type: boolean
+          default: true
+        advanced_trading_interface:
+          type: boolean
+          default: false
+
+    TradingPreferences:
+      type: object
+      properties:
+        default_order_type:
+          type: string
+          enum: [market, limit, stop_limit]
+          default: "limit"
+        confirmation_dialogs:
+          type: boolean
+          default: true
+        auto_logout_minutes:
+          type: integer
+          minimum: 5
+          maximum: 480
+          default: 60
+        preferred_trading_pairs:
+          type: array
+          items:
+            type: string
+          example: ["BTC/USDT", "ETH/USDT", "ADA/USDT"]
+
+    # Security Settings
+    SecuritySettings:
+      type: object
+      properties:
+        two_factor_enabled:
+          type: boolean
+          example: true
+        two_factor_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/TwoFactorMethod'
+        api_keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyInfo'
+        login_sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoginSession'
+        security_log:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityLogEntry'
+
+    TwoFactorMethod:
+      type: object
+      required:
+        - id
+        - type
+        - is_primary
+        - created_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        type:
+          type: string
+          enum: [totp, sms, email, hardware_key]
+          example: "totp"
+        name:
+          type: string
+          example: "Google Authenticator"
+        is_primary:
+          type: boolean
+          example: true
+        is_verified:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+
+    APIKeyInfo:
+      type: object
+      required:
+        - id
+        - name
+        - permissions
+        - status
+        - created_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          example: "Trading Bot Key"
+        key_prefix:
+          type: string
+          example: "pk_live_abc123"
+          description: "First 10 characters of the API key"
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [read, trade, withdraw]
+          example: ["read", "trade"]
+        status:
+          type: string
+          enum: [active, disabled, expired]
+          example: "active"
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+          example: ["192.168.1.100", "10.0.0.50"]
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    LoginSession:
+      type: object
+      required:
+        - id
+        - ip_address
+        - user_agent
+        - created_at
+        - is_current
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        ip_address:
+          type: string
+          example: "192.168.1.100"
+        user_agent:
+          type: string
+          example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        location:
+          type: string
+          example: "New York, NY, US"
+          nullable: true
+        device_type:
+          type: string
+          example: "Desktop"
+        is_current:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+        last_activity:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    SecurityLogEntry:
+      type: object
+      required:
+        - id
+        - event_type
+        - timestamp
+        - ip_address
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        event_type:
+          type: string
+          enum: 
+            - login_success
+            - login_failed
+            - logout
+            - password_change
+            - email_change
+            - 2fa_enabled
+            - 2fa_disabled
+            - api_key_created
+            - api_key_deleted
+            - withdrawal_request
+            - suspicious_activity
+          example: "login_success"
+        description:
+          type: string
+          example: "User logged in successfully"
+        ip_address:
+          type: string
+          example: "192.168.1.100"
+        user_agent:
+          type: string
+          example: "Mozilla/5.0..."
+        location:
+          type: string
+          example: "New York, NY, US"
+          nullable: true
+        risk_score:
+          type: number
+          minimum: 0
+          maximum: 100
+          example: 15
+        timestamp:
+          type: string
+          format: date-time
+
+    # Account Verification
+    KYCStatus:
+      type: object
+      required:
+        - level
+        - status
+        - updated_at
+      properties:
+        level:
+          type: integer
+          minimum: 0
+          maximum: 3
+          example: 2
+        status:
+          type: string
+          enum: [not_started, pending, approved, rejected, requires_review]
+          example: "approved"
+        submitted_documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/KYCDocument'
+        rejection_reason:
+          type: string
+          nullable: true
+        reviewer_notes:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+
+    KYCDocument:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - uploaded_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        type:
+          type: string
+          enum: [id_card, passport, driver_license, utility_bill, bank_statement, selfie]
+          example: "passport"
+        filename:
+          type: string
+          example: "passport_john_doe.pdf"
+        status:
+          type: string
+          enum: [uploaded, processing, approved, rejected]
+          example: "approved"
+        rejection_reason:
+          type: string
+          nullable: true
+        uploaded_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # Account Actions and Requests
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          maxLength: 50
+        last_name:
+          type: string
+          maxLength: 50
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+        date_of_birth:
+          type: string
+          format: date
+        country:
+          type: string
+          pattern: '^[A-Z]{2}$'
+
+    UpdatePreferencesRequest:
+      type: object
+      properties:
+        language:
+          type: string
+        timezone:
+          type: string
+        currency:
+          type: string
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+        ui_settings:
+          $ref: '#/components/schemas/UISettings'
+        trading_preferences:
+          $ref: '#/components/schemas/TradingPreferences'
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - current_password
+        - new_password
+      properties:
+        current_password:
+          type: string
+          minLength: 8
+        new_password:
+          type: string
+          minLength: 8
+          pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]'
+
+    ChangeEmailRequest:
+      type: object
+      required:
+        - new_email
+        - password
+      properties:
+        new_email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    CreateAPIKeyRequest:
+      type: object
+      required:
+        - name
+        - permissions
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [read, trade, withdraw]
+          minItems: 1
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          nullable: true
+
+    APIKeyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - api_key
+        - secret_key
+        - permissions
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        name:
+          type: string
+        api_key:
+          type: string
+          example: "pk_live_abc123def456ghi789"
+        secret_key:
+          type: string
+          example: "sk_live_xyz789uvw456rst123"
+          description: "This is only returned once during creation"
+        permissions:
+          type: array
+          items:
+            type: string
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # Account Statistics and Activity
+    AccountActivity:
+      type: object
+      properties:
+        login_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoginSession'
+        trade_summary:
+          $ref: '#/components/schemas/TradeSummary'
+        transaction_summary:
+          $ref: '#/components/schemas/TransactionSummary'
+        security_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityLogEntry'
+
+    TradeSummary:
+      type: object
+      properties:
+        total_trades:
+          type: integer
+          example: 150
+        total_volume:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        profit_loss:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        fees_paid:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        favorite_pairs:
+          type: array
+          items:
+            type: string
+          example: ["BTC/USDT", "ETH/USDT"]
+        last_trade_date:
+          type: string
+          format: date-time
+          nullable: true
+
+    TransactionSummary:
+      type: object
+      properties:
+        total_deposits:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        total_withdrawals:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        deposit_count:
+          type: integer
+          example: 25
+        withdrawal_count:
+          type: integer
+          example: 12
+        last_deposit_date:
+          type: string
+          format: date-time
+          nullable: true
+        last_withdrawal_date:
+          type: string
+          format: date-time
+          nullable: true
+
+    # Account Limits and Restrictions
+    AccountLimits:
+      type: object
+      properties:
+        kyc_level:
+          type: integer
+          example: 2
+        daily_withdrawal_limit:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        monthly_withdrawal_limit:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        daily_withdrawal_used:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        monthly_withdrawal_used:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        max_order_size:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        api_rate_limit:
+          type: integer
+          example: 1000
+          description: "Requests per minute"
+        can_trade:
+          type: boolean
+          example: true
+        can_withdraw:
+          type: boolean
+          example: true
+        can_deposit:
+          type: boolean
+          example: true
+        restrictions:
+          type: array
+          items:
+            type: string
+          example: []
+
+    # Referral System
+    ReferralInfo:
+      type: object
+      properties:
+        referral_code:
+          type: string
+          example: "REF123ABC"
+        referral_link:
+          type: string
+          format: uri
+          example: "https://exchange.com/signup?ref=REF123ABC"
+        total_referrals:
+          type: integer
+          example: 15
+        active_referrals:
+          type: integer
+          example: 8
+        total_commission_earned:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        commission_rate:
+          type: number
+          example: 0.2
+          description: "Commission rate as percentage (0.2 = 20%)"
+        referred_by:
+          type: string
+          nullable: true
+          example: "user123"
+
+    ReferralHistory:
+      type: object
+      properties:
+        referrals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferralRecord'
+        commissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommissionRecord'
+
+    ReferralRecord:
+      type: object
+      required:
+        - id
+        - username
+        - status
+        - registered_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        username:
+          type: string
+          example: "referred_user"
+        email:
+          type: string
+          format: email
+          example: "referred@example.com"
+        status:
+          type: string
+          enum: [pending, active, inactive]
+          example: "active"
+        kyc_completed:
+          type: boolean
+          example: true
+        first_trade_date:
+          type: string
+          format: date-time
+          nullable: true
+        total_volume:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        registered_at:
+          type: string
+          format: date-time
+
+    CommissionRecord:
+      type: object
+      required:
+        - id
+        - referral_id
+        - amount
+        - currency
+        - type
+        - created_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        referral_id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        referral_username:
+          type: string
+          example: "referred_user"
+        amount:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        currency:
+          type: string
+          example: "USDT"
+        type:
+          type: string
+          enum: [trade_commission, signup_bonus, milestone_bonus]
+          example: "trade_commission"
+        status:
+          type: string
+          enum: [pending, paid, cancelled]
+          example: "paid"
+        trade_id:
+          $ref: './common.yaml#/components/schemas/UUID'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true

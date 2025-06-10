@@ -1,0 +1,175 @@
+deposit:
+  post:
+    tags:
+      - Wallet
+    summary: Request cryptocurrency deposit
+    description: Request a cryptocurrency deposit to user's wallet
+    operationId: requestDeposit
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/wallet.yaml#/DepositRequest'
+    responses:
+      '200':
+        description: Deposit request created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/wallet.yaml#/DepositResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+withdrawal:
+  post:
+    tags:
+      - Wallet
+    summary: Request cryptocurrency withdrawal
+    description: Request a cryptocurrency withdrawal from user's wallet
+    operationId: requestWithdrawal
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/wallet.yaml#/WithdrawalRequest'
+    responses:
+      '200':
+        description: Withdrawal request created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/wallet.yaml#/WithdrawalResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        description: Insufficient balance or withdrawal restrictions
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/InsufficientFundsError'
+
+balance:
+  get:
+    tags:
+      - Wallet
+    summary: Get wallet balance
+    description: Get current wallet balance for all currencies
+    operationId: getWalletBalance
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: currency
+        in: query
+        description: Filter by specific currency
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+      - name: include_locked
+        in: query
+        description: Include locked balances
+        schema:
+          type: boolean
+          default: true
+    responses:
+      '200':
+        description: Wallet balance retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                balances:
+                  type: array
+                  items:
+                    $ref: '../schemas/wallet.yaml#/Balance'
+                total_value_usd:
+                  $ref: '../schemas/common.yaml#/Decimal'
+                last_updated:
+                  $ref: '../schemas/common.yaml#/Timestamp'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+transactions:
+  get:
+    tags:
+      - Wallet
+    summary: Get wallet transactions
+    description: Get transaction history for user's wallet
+    operationId: getWalletTransactions
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: currency
+        in: query
+        description: Filter by currency
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+      - name: type
+        in: query
+        description: Filter by transaction type
+        schema:
+          type: string
+          enum: [deposit, withdrawal, transfer, trade_settlement]
+      - name: status
+        in: query
+        description: Filter by status
+        schema:
+          type: string
+          enum: [pending, confirmed, failed, canceled]
+      - $ref: '../openapi.yaml#/components/parameters/StartTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/EndTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/LimitParam'
+      - $ref: '../openapi.yaml#/components/parameters/OffsetParam'
+    responses:
+      '200':
+        description: Wallet transactions retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/wallet.yaml#/Transaction'
+                pagination:
+                  $ref: '../schemas/common.yaml#/Pagination'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+validateAddress:
+  post:
+    tags:
+      - Wallet
+    summary: Validate cryptocurrency address
+    description: Validate a cryptocurrency address format and network
+    operationId: validateAddress
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/wallet.yaml#/AddressValidationRequest'
+    responses:
+      '200':
+        description: Address validation result
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/wallet.yaml#/AddressValidationResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'

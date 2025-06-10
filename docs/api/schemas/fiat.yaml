@@ -1,0 +1,600 @@
+FiatDepositRequest:
+  type: object
+  required:
+    - currency
+    - amount
+    - method
+  properties:
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Fiat currency code (ISO 4217)
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Deposit amount
+      example: "1000.00"
+    method:
+      type: string
+      enum: [bank_transfer, credit_card, debit_card, wire_transfer]
+      description: Payment method
+      example: bank_transfer
+    bankAccountId:
+      $ref: './common.yaml#/UUID'
+      description: Bank account ID (for bank transfers)
+    returnUrl:
+      type: string
+      format: uri
+      description: Return URL after payment
+      example: "https://app.finalex.com/deposit/callback"
+    metadata:
+      type: object
+      additionalProperties: true
+      description: Additional metadata
+
+FiatDepositResponse:
+  type: object
+  required:
+    - depositId
+    - currency
+    - amount
+    - method
+    - status
+    - createdAt
+  properties:
+    depositId:
+      $ref: './common.yaml#/UUID'
+      description: Deposit transaction ID
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Fiat currency code
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Deposit amount
+      example: "1000.00"
+    method:
+      type: string
+      description: Payment method used
+      example: bank_transfer
+    paymentUrl:
+      type: string
+      format: uri
+      description: Payment URL (for card payments)
+      example: "https://payment.provider.com/pay/abc123"
+    instructions:
+      type: string
+      description: Payment instructions
+      example: "Please transfer to account ABC123 with reference DEF456"
+    expiresAt:
+      type: string
+      format: date-time
+      description: Payment expiration time
+      example: "2024-01-01T12:00:00Z"
+    status:
+      type: string
+      enum: [pending, processing, completed, failed, expired, cancelled]
+      description: Deposit status
+      example: pending
+    createdAt:
+      type: string
+      format: date-time
+      description: Creation timestamp
+      example: "2024-01-01T10:00:00Z"
+
+FiatWithdrawalRequest:
+  type: object
+  required:
+    - currency
+    - amount
+    - bankAccountId
+    - twoFactorToken
+  properties:
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Fiat currency code (ISO 4217)
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Withdrawal amount
+      example: "500.00"
+    bankAccountId:
+      $ref: './common.yaml#/UUID'
+      description: Target bank account ID
+    twoFactorToken:
+      type: string
+      description: Two-factor authentication token
+      example: "123456"
+    reference:
+      type: string
+      maxLength: 255
+      description: Optional reference/memo
+      example: "Monthly savings transfer"
+    metadata:
+      type: object
+      additionalProperties: true
+      description: Additional metadata
+
+FiatWithdrawalResponse:
+  type: object
+  required:
+    - withdrawalId
+    - currency
+    - amount
+    - fee
+    - netAmount
+    - bankAccount
+    - status
+    - estimatedTime
+    - createdAt
+  properties:
+    withdrawalId:
+      $ref: './common.yaml#/UUID'
+      description: Withdrawal transaction ID
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Fiat currency code
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Withdrawal amount
+      example: "500.00"
+    fee:
+      $ref: './common.yaml#/Decimal'
+      description: Processing fee
+      example: "5.00"
+    netAmount:
+      $ref: './common.yaml#/Decimal'
+      description: Net amount after fees
+      example: "495.00"
+    bankAccount:
+      $ref: '#/BankAccount'
+      description: Target bank account details
+    status:
+      type: string
+      enum: [pending, processing, completed, failed, cancelled]
+      description: Withdrawal status
+      example: pending
+    estimatedTime:
+      type: string
+      description: Estimated processing time
+      example: "1-3 business days"
+    createdAt:
+      type: string
+      format: date-time
+      description: Creation timestamp
+      example: "2024-01-01T10:00:00Z"
+
+FiatDepositHistory:
+  type: object
+  required:
+    - deposits
+    - pagination
+  properties:
+    deposits:
+      type: array
+      items:
+        $ref: '#/FiatDepositStatus'
+    pagination:
+      $ref: './common.yaml#/Pagination'
+
+FiatWithdrawalHistory:
+  type: object
+  required:
+    - withdrawals
+    - pagination
+  properties:
+    withdrawals:
+      type: array
+      items:
+        $ref: '#/FiatWithdrawalStatus'
+    pagination:
+      $ref: './common.yaml#/Pagination'
+
+FiatDepositStatus:
+  type: object
+  required:
+    - depositId
+    - userId
+    - currency
+    - amount
+    - status
+    - paymentMethod
+    - createdAt
+    - updatedAt
+  properties:
+    depositId:
+      $ref: './common.yaml#/UUID'
+      description: Deposit ID
+    userId:
+      $ref: './common.yaml#/UUID'
+      description: User ID
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Currency code
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Deposit amount
+      example: "1000.00"
+    status:
+      type: string
+      enum: [pending, processing, completed, failed, expired, cancelled]
+      description: Current status
+      example: completed
+    paymentMethod:
+      type: string
+      description: Payment method used
+      example: bank_transfer
+    providerId:
+      type: string
+      description: Payment provider ID
+      example: provider_bank_001
+    externalRef:
+      type: string
+      description: External reference number
+      example: TXN123456789
+    failureReason:
+      type: string
+      description: Failure reason (if failed)
+    estimatedTime:
+      type: string
+      description: Estimated processing time
+      example: "Instant"
+    createdAt:
+      type: string
+      format: date-time
+      description: Creation timestamp
+      example: "2024-01-01T10:00:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: Last update timestamp
+      example: "2024-01-01T10:30:00Z"
+    completedAt:
+      type: string
+      format: date-time
+      description: Completion timestamp
+      example: "2024-01-01T10:30:00Z"
+
+FiatWithdrawalStatus:
+  type: object
+  required:
+    - withdrawalId
+    - userId
+    - currency
+    - amount
+    - fee
+    - netAmount
+    - status
+    - bankAccountId
+    - createdAt
+    - updatedAt
+  properties:
+    withdrawalId:
+      $ref: './common.yaml#/UUID'
+      description: Withdrawal ID
+    userId:
+      $ref: './common.yaml#/UUID'
+      description: User ID
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Currency code
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Withdrawal amount
+      example: "500.00"
+    fee:
+      $ref: './common.yaml#/Decimal'
+      description: Processing fee
+      example: "5.00"
+    netAmount:
+      $ref: './common.yaml#/Decimal'
+      description: Net amount after fees
+      example: "495.00"
+    status:
+      type: string
+      enum: [pending, processing, completed, failed, cancelled]
+      description: Current status
+      example: processing
+    bankAccountId:
+      $ref: './common.yaml#/UUID'
+      description: Target bank account ID
+    externalRef:
+      type: string
+      description: External reference number
+      example: WTH987654321
+    failureReason:
+      type: string
+      description: Failure reason (if failed)
+    estimatedTime:
+      type: string
+      description: Estimated processing time
+      example: "1-3 business days"
+    createdAt:
+      type: string
+      format: date-time
+      description: Creation timestamp
+      example: "2024-01-01T10:00:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: Last update timestamp
+      example: "2024-01-01T11:00:00Z"
+    completedAt:
+      type: string
+      format: date-time
+      description: Completion timestamp
+      example: "2024-01-01T13:00:00Z"
+
+BankAccount:
+  type: object
+  required:
+    - id
+    - accountName
+    - accountNumber
+    - bankName
+    - currency
+    - status
+    - createdAt
+  properties:
+    id:
+      $ref: './common.yaml#/UUID'
+      description: Bank account ID
+    accountName:
+      type: string
+      description: Account holder name
+      example: "John Doe"
+    accountNumber:
+      type: string
+      description: Account number (masked)
+      example: "**** **** **** 1234"
+    bankName:
+      type: string
+      description: Bank name
+      example: "Chase Bank"
+    bankCode:
+      type: string
+      description: Bank code/routing number
+      example: "021000021"
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Account currency
+      example: USD
+    country:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      description: Country code (ISO 3166-1 alpha-2)
+      example: US
+    iban:
+      type: string
+      description: IBAN (for international accounts)
+      example: "GB82WEST12345698765432"
+    swiftCode:
+      type: string
+      description: SWIFT/BIC code
+      example: "CHASUS33"
+    status:
+      type: string
+      enum: [pending, verified, rejected]
+      description: Verification status
+      example: verified
+    isDefault:
+      type: boolean
+      description: Whether this is the default account
+      example: false
+    createdAt:
+      type: string
+      format: date-time
+      description: Creation timestamp
+      example: "2024-01-01T10:00:00Z"
+    verifiedAt:
+      type: string
+      format: date-time
+      description: Verification timestamp
+      example: "2024-01-01T12:00:00Z"
+
+AddBankAccountRequest:
+  type: object
+  required:
+    - accountName
+    - accountNumber
+    - bankName
+    - currency
+    - country
+  properties:
+    accountName:
+      type: string
+      maxLength: 100
+      description: Account holder name
+      example: "John Doe"
+    accountNumber:
+      type: string
+      maxLength: 50
+      description: Bank account number
+      example: "1234567890"
+    bankName:
+      type: string
+      maxLength: 100
+      description: Bank name
+      example: "Chase Bank"
+    bankCode:
+      type: string
+      maxLength: 20
+      description: Bank code/routing number
+      example: "021000021"
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Account currency
+      example: USD
+    country:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      description: Country code (ISO 3166-1 alpha-2)
+      example: US
+    iban:
+      type: string
+      maxLength: 34
+      description: IBAN (for international accounts)
+      example: "GB82WEST12345698765432"
+    swiftCode:
+      type: string
+      maxLength: 11
+      description: SWIFT/BIC code
+      example: "CHASUS33"
+    isDefault:
+      type: boolean
+      description: Set as default account
+      example: false
+
+BankAccountValidation:
+  type: object
+  required:
+    - bankAccountId
+    - status
+    - validatedAt
+  properties:
+    bankAccountId:
+      $ref: './common.yaml#/UUID'
+      description: Bank account ID
+    status:
+      type: string
+      enum: [valid, invalid, pending]
+      description: Validation status
+      example: valid
+    errorCode:
+      type: string
+      description: Error code (if invalid)
+      example: INVALID_ACCOUNT_NUMBER
+    errorMessage:
+      type: string
+      description: Error message (if invalid)
+      example: "Invalid account number format"
+    validatedAt:
+      type: string
+      format: date-time
+      description: Validation timestamp
+      example: "2024-01-01T12:00:00Z"
+
+FiatExchangeRate:
+  type: object
+  required:
+    - baseCurrency
+    - targetCurrency
+    - rate
+    - timestamp
+  properties:
+    baseCurrency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Base currency code
+      example: USD
+    targetCurrency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Target currency code
+      example: EUR
+    rate:
+      $ref: './common.yaml#/Decimal'
+      description: Exchange rate
+      example: "0.85"
+    inverseRate:
+      $ref: './common.yaml#/Decimal'
+      description: Inverse exchange rate
+      example: "1.176"
+    timestamp:
+      type: string
+      format: date-time
+      description: Rate timestamp
+      example: "2024-01-01T12:00:00Z"
+    source:
+      type: string
+      description: Rate source
+      example: "ECB"
+
+FeeCalculationRequest:
+  type: object
+  required:
+    - transactionType
+    - currency
+    - amount
+  properties:
+    transactionType:
+      type: string
+      enum: [deposit, withdrawal]
+      description: Transaction type
+      example: withdrawal
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Currency code
+      example: USD
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Transaction amount
+      example: "1000.00"
+    paymentMethod:
+      type: string
+      description: Payment method
+      example: bank_transfer
+    priority:
+      type: string
+      enum: [standard, express]
+      description: Processing priority
+      example: standard
+
+FiatFeeCalculation:
+  type: object
+  required:
+    - amount
+    - fee
+    - netAmount
+    - feeBreakdown
+  properties:
+    amount:
+      $ref: './common.yaml#/Decimal'
+      description: Original amount
+      example: "1000.00"
+    fee:
+      $ref: './common.yaml#/Decimal'
+      description: Total fee
+      example: "10.00"
+    netAmount:
+      $ref: './common.yaml#/Decimal'
+      description: Net amount after fees
+      example: "990.00"
+    feeBreakdown:
+      type: array
+      description: Detailed fee breakdown
+      items:
+        type: object
+        required:
+          - type
+          - amount
+          - description
+        properties:
+          type:
+            type: string
+            description: Fee type
+            example: "processing_fee"
+          amount:
+            $ref: './common.yaml#/Decimal'
+            description: Fee amount
+            example: "5.00"
+          description:
+            type: string
+            description: Fee description
+            example: "Processing fee for bank transfer"
+    currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: Currency code
+      example: USD

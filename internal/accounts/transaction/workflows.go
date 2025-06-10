@@ -14,6 +14,7 @@ import (
 	walletInterfaces "github.com/Aidin1998/finalex/internal/wallet/interfaces"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -113,24 +114,22 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 		zap.String("transaction_id", xaTx.ID.String()),
 		zap.String("user_id", userID),
 		zap.String("symbol", orderRequest.Symbol),
-		zap.String("side", orderRequest.Side),
-		zap.Float64("quantity", orderRequest.Quantity),
-		zap.Float64("price", orderRequest.Price))
+		zap.String("side", orderRequest.Side), zap.String("quantity", orderRequest.Quantity.String()),
+		zap.String("price", orderRequest.Price.String()))
 	// Step 1: Reserve funds in bookkeeper (parse base/quote currencies from symbol)
 	baseCurrency, quoteCurrency, err := dto.parseSymbolCurrencies(orderRequest.Symbol)
 	if err != nil {
 		dto.xaManager.Abort(ctx, xaTx)
 		return nil, fmt.Errorf("failed to parse symbol currencies: %w", err)
 	}
-
 	var currency string
-	var reserveAmount float64
+	var reserveAmount decimal.Decimal
 	if orderRequest.Side == "BUY" {
 		// For BUY orders, reserve quote currency (e.g., USDT for BTC/USDT)
 		currency = quoteCurrency
-		reserveAmount = orderRequest.Quantity * orderRequest.Price
+		reserveAmount = orderRequest.Quantity.Mul(orderRequest.Price)
 		// Fix: Use LockFundsXA for XA transactions
-		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
+		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount.InexactFloat64()); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
 			return nil, fmt.Errorf("failed to reserve funds: %w", err)
 		}
@@ -138,7 +137,7 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 		// For SELL orders, reserve base currency (e.g., BTC for BTC/USDT)
 		currency = baseCurrency
 		reserveAmount = orderRequest.Quantity
-		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount); err != nil {
+		if err := bookkeeperXA.LockFundsXA(ctx, xaTx.XID, userID, currency, reserveAmount.InexactFloat64()); err != nil {
 			dto.xaManager.Abort(ctx, xaTx)
 			return nil, fmt.Errorf("failed to reserve funds: %w", err)
 		}
@@ -169,15 +168,14 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 		Quantity:  orderRequest.Quantity,
 		CreatedAt: time.Now(),
 	}
-
 	// Step 4: Capture trade for settlement (construct TradeCapture)
 	tradeCapture := settlement.TradeCapture{
 		TradeID:   trade.ID.String(),
 		UserID:    trade.UserID.String(),
 		Symbol:    trade.Symbol,
 		Side:      trade.Side,
-		Quantity:  trade.Quantity,
-		Price:     trade.Price,
+		Quantity:  trade.Quantity.InexactFloat64(),
+		Price:     trade.Price.InexactFloat64(),
 		AssetType: "crypto",
 		MatchedAt: trade.CreatedAt,
 	}
@@ -191,14 +189,13 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 		dto.xaManager.Abort(ctx, xaTx)
 		return nil, fmt.Errorf("failed to process settlement: %w", err)
 	}
-
 	// Step 6: Update account balances (simulate transfer)
 	description := "Trade settlement"
-	if err := bookkeeperXA.TransferFunds(ctx, xaTx.XID, userID, userID, currency, trade.Quantity, description); err != nil {
+	if err := bookkeeperXA.TransferFunds(ctx, xaTx.XID, userID, userID, currency, trade.Quantity.InexactFloat64(), description); err != nil {
 		dto.xaManager.Abort(ctx, xaTx)
 		return nil, fmt.Errorf("failed to transfer base currency: %w", err)
 	}
-	if err := bookkeeperXA.TransferFunds(ctx, xaTx.XID, userID, userID, currency, trade.Quantity*trade.Price, description); err != nil {
+	if err := bookkeeperXA.TransferFunds(ctx, xaTx.XID, userID, userID, currency, trade.Quantity.Mul(trade.Price).InexactFloat64(), description); err != nil {
 		dto.xaManager.Abort(ctx, xaTx)
 		return nil, fmt.Errorf("failed to transfer quote currency: %w", err)
 	}
@@ -213,9 +210,8 @@ func (dto *DistributedTransactionOrchestrator) ComplexTradeExecutionWorkflow(
 
 	dto.logger.Info("Complex trade execution workflow completed successfully",
 		zap.String("transaction_id", xaTx.ID.String()),
-		zap.String("trade_id", trade.ID.String()),
-		zap.Float64("executed_quantity", trade.Quantity),
-		zap.Float64("executed_price", trade.Price))
+		zap.String("trade_id", trade.ID.String()), zap.String("executed_quantity", trade.Quantity.String()),
+		zap.String("executed_price", trade.Price.String()))
 
 	return trade, nil
 }

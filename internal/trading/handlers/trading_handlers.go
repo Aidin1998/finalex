@@ -141,13 +141,12 @@ func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 
 	// Create order model
 	order := &models.Order{
-		ID:          uuid.New(),
-		UserID:      userUUID,
-		Symbol:      req.Symbol,
-		Side:        req.Side,
-		Type:        req.Type,
-		Quantity:    req.Quantity.InexactFloat64(),
-		Price:       req.Price.InexactFloat64(),
+		ID:     uuid.New(),
+		UserID: userUUID,
+		Symbol: req.Symbol,
+		Side:   req.Side,
+		Type:   req.Type, Quantity: req.Quantity,
+		Price:       req.Price,
 		TimeInForce: req.TimeInForce,
 		Status:      "NEW",
 		CreatedAt:   time.Now(),
@@ -191,13 +190,12 @@ func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 		ClientOrderID: req.ClientOrderID,
 		Symbol:        placedOrder.Symbol,
 		Side:          placedOrder.Side,
-		Type:          placedOrder.Type,
-		Quantity:      decimal.NewFromFloat(placedOrder.Quantity),
-		Price:         decimal.NewFromFloat(placedOrder.Price),
-		Status:        placedOrder.Status,
-		TimeInForce:   placedOrder.TimeInForce,
-		CreatedAt:     placedOrder.CreatedAt,
-		Fills:         []OrderFill{}, // TODO: Add fills from trade results
+		Type:          placedOrder.Type, Quantity: placedOrder.Quantity,
+		Price:       placedOrder.Price,
+		Status:      placedOrder.Status,
+		TimeInForce: placedOrder.TimeInForce,
+		CreatedAt:   placedOrder.CreatedAt,
+		Fills:       []OrderFill{}, // TODO: Add fills from trade results
 	}
 
 	h.logger.Info("Order placed successfully",
@@ -402,11 +400,10 @@ func (h *TradingHandler) CancelOrder(c *gin.Context) {
 	}
 
 	response := CancelOrderResponse{
-		OrderID:      orderID,
-		Symbol:       order.Symbol,
-		Status:       order.Status,
-		ExecutedQty:  decimal.NewFromFloat(order.FilledQuantity),
-		RemainingQty: decimal.NewFromFloat(order.Quantity - order.FilledQuantity),
+		OrderID: orderID,
+		Symbol:  order.Symbol,
+		Status:  order.Status, ExecutedQty: order.FilledQuantity,
+		RemainingQty: order.Quantity.Sub(order.FilledQuantity),
 		CancelledAt:  time.Now(),
 	}
 

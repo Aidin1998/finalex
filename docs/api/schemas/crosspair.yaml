@@ -1,0 +1,444 @@
+CreateCrossPairOrderRequest:
+  type: object
+  properties:
+    from_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    to_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    side:
+      type: string
+      enum: [BUY, SELL]
+      example: "BUY"
+    execution_strategy:
+      type: string
+      enum: [MARKET, BEST_PRICE, TWAP, VWAP]
+      default: "BEST_PRICE"
+      example: "BEST_PRICE"
+    time_limit:
+      type: integer
+      description: Maximum execution time in seconds
+      minimum: 60
+      maximum: 3600
+      default: 300
+    slippage_tolerance:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Maximum acceptable slippage percentage
+      example: "0.5"
+    prefer_liquid_routes:
+      type: boolean
+      default: true
+      description: Prefer more liquid trading routes
+    max_hops:
+      type: integer
+      minimum: 1
+      maximum: 5
+      default: 3
+      description: Maximum number of intermediate pairs
+    client_order_id:
+      type: string
+      maxLength: 50
+      description: Client-specified order ID
+  required:
+    - from_currency
+    - to_currency
+    - amount
+    - side
+
+CrossPairOrder:
+  type: object
+  properties:
+    id:
+      $ref: '../schemas/common.yaml#/UUID'
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    from_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    to_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    side:
+      type: string
+      enum: [BUY, SELL]
+    execution_strategy:
+      type: string
+      enum: [MARKET, BEST_PRICE, TWAP, VWAP]
+    status:
+      type: string
+      enum: [PENDING, EXECUTING, COMPLETED, FAILED, CANCELED, PARTIALLY_COMPLETED]
+    progress:
+      type: object
+      properties:
+        completed_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        remaining_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        average_rate:
+          $ref: '../schemas/common.yaml#/Decimal'
+        estimated_completion_time:
+          $ref: '../schemas/common.yaml#/Timestamp'
+        current_step:
+          type: integer
+        total_steps:
+          type: integer
+    execution_path:
+      type: array
+      items:
+        $ref: '#/ExecutionStep'
+    time_limit:
+      type: integer
+    slippage_tolerance:
+      $ref: '../schemas/common.yaml#/Decimal'
+    actual_slippage:
+      $ref: '../schemas/common.yaml#/Decimal'
+    total_fees:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee_breakdown:
+      type: array
+      items:
+        type: object
+        properties:
+          step:
+            type: integer
+          fee_amount:
+            $ref: '../schemas/common.yaml#/Decimal'
+          fee_currency:
+            $ref: '../schemas/common.yaml#/Currency'
+          fee_type:
+            type: string
+            enum: [TRADING, CONVERSION, NETWORK]
+    client_order_id:
+      type: string
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    started_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    completed_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    failure_reason:
+      type: string
+      description: Reason for failure (if status is FAILED)
+  required:
+    - id
+    - user_id
+    - from_currency
+    - to_currency
+    - amount
+    - side
+    - execution_strategy
+    - status
+    - created_at
+    - updated_at
+
+ExecutionStep:
+  type: object
+  properties:
+    step_number:
+      type: integer
+    from_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    to_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    trading_pair:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    amount_in:
+      $ref: '../schemas/common.yaml#/Decimal'
+    amount_out:
+      $ref: '../schemas/common.yaml#/Decimal'
+    rate:
+      $ref: '../schemas/common.yaml#/Decimal'
+    status:
+      type: string
+      enum: [PENDING, EXECUTING, COMPLETED, FAILED]
+    order_id:
+      $ref: '../schemas/common.yaml#/UUID'
+      description: Associated spot order ID
+    executed_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    estimated_liquidity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    actual_liquidity:
+      $ref: '../schemas/common.yaml#/Decimal'
+  required:
+    - step_number
+    - from_currency
+    - to_currency
+    - trading_pair
+    - amount_in
+    - status
+
+CrossPairQuote:
+  type: object
+  properties:
+    from_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    to_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    side:
+      type: string
+      enum: [BUY, SELL]
+    estimated_output:
+      $ref: '../schemas/common.yaml#/Decimal'
+    rate:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price_impact:
+      $ref: '../schemas/common.yaml#/Decimal'
+    estimated_fees:
+      $ref: '../schemas/common.yaml#/Decimal'
+    execution_path:
+      type: array
+      items:
+        type: object
+        properties:
+          step:
+            type: integer
+          from_currency:
+            $ref: '../schemas/common.yaml#/Currency'
+          to_currency:
+            $ref: '../schemas/common.yaml#/Currency'
+          trading_pair:
+            $ref: '../schemas/common.yaml#/TradingSymbol'
+          rate:
+            $ref: '../schemas/common.yaml#/Decimal'
+          liquidity:
+            $ref: '../schemas/common.yaml#/Decimal'
+          estimated_slippage:
+            $ref: '../schemas/common.yaml#/Decimal'
+    alternative_routes:
+      type: array
+      items:
+        type: object
+        properties:
+          route_id:
+            type: string
+          estimated_output:
+            $ref: '../schemas/common.yaml#/Decimal'
+          rate:
+            $ref: '../schemas/common.yaml#/Decimal'
+          path_length:
+            type: integer
+          total_liquidity:
+            $ref: '../schemas/common.yaml#/Decimal'
+          estimated_execution_time:
+            type: integer
+    valid_until:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    market_conditions:
+      type: object
+      properties:
+        volatility_level:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, VERY_HIGH]
+        liquidity_status:
+          type: string
+          enum: [EXCELLENT, GOOD, FAIR, POOR]
+        recommended_strategy:
+          type: string
+          enum: [MARKET, BEST_PRICE, TWAP, VWAP]
+  required:
+    - from_currency
+    - to_currency
+    - amount
+    - side
+    - estimated_output
+    - rate
+    - valid_until
+
+TradingRoute:
+  type: object
+  properties:
+    id:
+      type: string
+    from_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    to_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    path:
+      type: array
+      items:
+        $ref: '../schemas/common.yaml#/TradingSymbol'
+    hops:
+      type: integer
+    total_liquidity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    average_spread:
+      $ref: '../schemas/common.yaml#/Decimal'
+    enabled:
+      type: boolean
+    priority:
+      type: integer
+      description: Route priority (lower is higher priority)
+    performance_metrics:
+      type: object
+      properties:
+        success_rate:
+          $ref: '../schemas/common.yaml#/Decimal'
+        average_execution_time:
+          type: integer
+        volume_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        last_used:
+          $ref: '../schemas/common.yaml#/Timestamp'
+    constraints:
+      type: object
+      properties:
+        min_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        max_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        max_slippage:
+          $ref: '../schemas/common.yaml#/Decimal'
+  required:
+    - id
+    - from_currency
+    - to_currency
+    - path
+    - hops
+    - enabled
+
+EngineStatus:
+  type: object
+  properties:
+    status:
+      type: string
+      enum: [ACTIVE, DEGRADED, MAINTENANCE, OFFLINE]
+    uptime:
+      type: string
+      example: "72h30m15s"
+    version:
+      type: string
+      example: "1.2.3"
+    active_orders:
+      type: integer
+    processed_orders_24h:
+      type: integer
+    success_rate_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    average_execution_time:
+      type: integer
+      description: Average execution time in milliseconds
+    route_status:
+      type: object
+      properties:
+        total_routes:
+          type: integer
+        active_routes:
+          type: integer
+        disabled_routes:
+          type: integer
+    liquidity_status:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          currency:
+            $ref: '../schemas/common.yaml#/Currency'
+          available_liquidity:
+            $ref: '../schemas/common.yaml#/Decimal'
+          utilization:
+            $ref: '../schemas/common.yaml#/Decimal'
+          status:
+            type: string
+            enum: [HEALTHY, WARNING, CRITICAL]
+    recent_errors:
+      type: array
+      items:
+        type: object
+        properties:
+          timestamp:
+            $ref: '../schemas/common.yaml#/Timestamp'
+          error_type:
+            type: string
+          message:
+            type: string
+          order_id:
+            $ref: '../schemas/common.yaml#/UUID'
+    last_updated:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - status
+    - uptime
+    - version
+    - active_orders
+    - last_updated
+
+TradingMetrics:
+  type: object
+  properties:
+    period:
+      type: string
+      enum: [1h, 6h, 24h, 7d, 30d]
+      example: "24h"
+    total_orders:
+      type: integer
+    completed_orders:
+      type: integer
+    failed_orders:
+      type: integer
+    canceled_orders:
+      type: integer
+    success_rate:
+      $ref: '../schemas/common.yaml#/Decimal'
+    total_volume:
+      $ref: '../schemas/common.yaml#/Decimal'
+    average_order_size:
+      $ref: '../schemas/common.yaml#/Decimal'
+    average_execution_time:
+      type: integer
+      description: Average execution time in milliseconds
+    median_execution_time:
+      type: integer
+    max_execution_time:
+      type: integer
+    average_slippage:
+      $ref: '../schemas/common.yaml#/Decimal'
+    max_slippage:
+      $ref: '../schemas/common.yaml#/Decimal'
+    total_fees_collected:
+      $ref: '../schemas/common.yaml#/Decimal'
+    unique_users:
+      type: integer
+    currency_breakdown:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          volume:
+            $ref: '../schemas/common.yaml#/Decimal'
+          order_count:
+            type: integer
+          average_size:
+            $ref: '../schemas/common.yaml#/Decimal'
+    route_performance:
+      type: array
+      items:
+        type: object
+        properties:
+          route_id:
+            type: string
+          usage_count:
+            type: integer
+          success_rate:
+            $ref: '../schemas/common.yaml#/Decimal'
+          average_execution_time:
+            type: integer
+          total_volume:
+            $ref: '../schemas/common.yaml#/Decimal'
+    error_breakdown:
+      type: object
+      additionalProperties:
+        type: integer
+    timestamp:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - period
+    - total_orders
+    - completed_orders
+    - success_rate
+    - timestamp

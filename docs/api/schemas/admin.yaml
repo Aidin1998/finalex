@@ -1,0 +1,505 @@
+# Admin Management Schemas
+components:
+  schemas:
+    # User Management
+    AdminUser:
+      type: object
+      required:
+        - id
+        - email
+        - username
+        - role
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          example: "john_doe"
+        first_name:
+          type: string
+          example: "John"
+        last_name:
+          type: string
+          example: "Doe"
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        kyc_level:
+          type: integer
+          minimum: 0
+          maximum: 3
+          example: 2
+        is_verified:
+          type: boolean
+          example: true
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        profile:
+          $ref: '#/components/schemas/UserProfile'
+        statistics:
+          $ref: '#/components/schemas/UserStatistics'
+
+    UserRole:
+      type: string
+      enum:
+        - user
+        - trader
+        - vip
+        - admin
+        - super_admin
+      example: "user"
+
+    UserStatus:
+      type: string
+      enum:
+        - active
+        - suspended
+        - banned
+        - pending_verification
+        - inactive
+      example: "active"
+
+    UserProfile:
+      type: object
+      properties:
+        phone:
+          type: string
+          example: "+1234567890"
+        country:
+          type: string
+          example: "US"
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+        address:
+          $ref: '#/components/schemas/Address'
+        preferences:
+          $ref: '#/components/schemas/UserPreferences'
+
+    UserStatistics:
+      type: object
+      properties:
+        total_trades:
+          type: integer
+          example: 150
+        total_volume:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        total_fees_paid:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        referral_count:
+          type: integer
+          example: 5
+        last_trade_date:
+          type: string
+          format: date-time
+          nullable: true
+
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+          example: "123 Main St"
+        city:
+          type: string
+          example: "New York"
+        state:
+          type: string
+          example: "NY"
+        postal_code:
+          type: string
+          example: "10001"
+        country:
+          type: string
+          example: "US"
+
+    UserPreferences:
+      type: object
+      properties:
+        language:
+          type: string
+          example: "en"
+        timezone:
+          type: string
+          example: "UTC"
+        notifications:
+          $ref: '#/components/schemas/NotificationSettings'
+        ui_theme:
+          type: string
+          enum: [light, dark, auto]
+          example: "dark"
+
+    NotificationSettings:
+      type: object
+      properties:
+        email_notifications:
+          type: boolean
+          example: true
+        push_notifications:
+          type: boolean
+          example: true
+        trade_notifications:
+          type: boolean
+          example: true
+        price_alerts:
+          type: boolean
+          example: false
+
+    # System Management
+    SystemSettings:
+      type: object
+      properties:
+        maintenance_mode:
+          type: boolean
+          example: false
+        trading_enabled:
+          type: boolean
+          example: true
+        withdrawal_enabled:
+          type: boolean
+          example: true
+        deposit_enabled:
+          type: boolean
+          example: true
+        registration_enabled:
+          type: boolean
+          example: true
+        fee_settings:
+          $ref: '#/components/schemas/FeeSettings'
+        limits:
+          $ref: '#/components/schemas/SystemLimits'
+
+    FeeSettings:
+      type: object
+      properties:
+        maker_fee:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        taker_fee:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        withdrawal_fees:
+          type: object
+          additionalProperties:
+            $ref: './common.yaml#/components/schemas/Decimal'
+        deposit_fees:
+          type: object
+          additionalProperties:
+            $ref: './common.yaml#/components/schemas/Decimal'
+
+    SystemLimits:
+      type: object
+      properties:
+        daily_withdrawal_limit:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        monthly_withdrawal_limit:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        max_order_size:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        min_order_size:
+          $ref: './common.yaml#/components/schemas/Decimal'
+
+    # Admin Actions
+    AdminAction:
+      type: object
+      required:
+        - id
+        - admin_id
+        - action_type
+        - target_type
+        - target_id
+        - timestamp
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        admin_id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        admin_username:
+          type: string
+          example: "admin_user"
+        action_type:
+          $ref: '#/components/schemas/AdminActionType'
+        target_type:
+          type: string
+          enum: [user, order, transaction, system]
+          example: "user"
+        target_id:
+          type: string
+          example: "user_123"
+        description:
+          type: string
+          example: "Suspended user for suspicious activity"
+        metadata:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+    AdminActionType:
+      type: string
+      enum:
+        - user_suspend
+        - user_unsuspend
+        - user_ban
+        - user_unban
+        - order_cancel
+        - transaction_freeze
+        - transaction_unfreeze
+        - system_maintenance
+        - fee_update
+        - limit_update
+        - announcement_create
+      example: "user_suspend"
+
+    # Reports and Analytics
+    PlatformStatistics:
+      type: object
+      properties:
+        total_users:
+          type: integer
+          example: 10000
+        active_users_24h:
+          type: integer
+          example: 1500
+        total_volume_24h:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        total_trades_24h:
+          type: integer
+          example: 5000
+        total_fees_collected_24h:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        top_trading_pairs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TradingPairStats'
+
+    TradingPairStats:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "BTC/USDT"
+        volume_24h:
+          $ref: './common.yaml#/components/schemas/Decimal'
+        trades_24h:
+          type: integer
+          example: 1200
+        price_change_24h:
+          $ref: './common.yaml#/components/schemas/Decimal'
+
+    # User Management Requests
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - username
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+        password:
+          type: string
+          minLength: 8
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        kyc_level:
+          type: integer
+          minimum: 0
+          maximum: 3
+
+    UserActionRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum: [suspend, unsuspend, ban, unban, verify, unverify]
+        reason:
+          type: string
+          maxLength: 500
+        duration:
+          type: integer
+          description: "Duration in hours for temporary actions"
+          minimum: 1
+
+    # System Configuration
+    UpdateSystemSettingsRequest:
+      type: object
+      properties:
+        maintenance_mode:
+          type: boolean
+        trading_enabled:
+          type: boolean
+        withdrawal_enabled:
+          type: boolean
+        deposit_enabled:
+          type: boolean
+        registration_enabled:
+          type: boolean
+        fee_settings:
+          $ref: '#/components/schemas/FeeSettings'
+        limits:
+          $ref: '#/components/schemas/SystemLimits'
+
+    # Announcements
+    Announcement:
+      type: object
+      required:
+        - id
+        - title
+        - content
+        - type
+        - status
+        - created_at
+      properties:
+        id:
+          $ref: './common.yaml#/components/schemas/UUID'
+        title:
+          type: string
+          maxLength: 200
+          example: "Scheduled Maintenance"
+        content:
+          type: string
+          example: "We will be performing scheduled maintenance..."
+        type:
+          type: string
+          enum: [maintenance, update, promotion, warning, info]
+          example: "maintenance"
+        status:
+          type: string
+          enum: [draft, published, archived]
+          example: "published"
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+          example: "medium"
+        start_date:
+          type: string
+          format: date-time
+          nullable: true
+        end_date:
+          type: string
+          format: date-time
+          nullable: true
+        target_audience:
+          type: array
+          items:
+            type: string
+            enum: [all, verified, vip, traders]
+          example: ["all"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateAnnouncementRequest:
+      type: object
+      required:
+        - title
+        - content
+        - type
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        content:
+          type: string
+        type:
+          type: string
+          enum: [maintenance, update, promotion, warning, info]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+          default: "medium"
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        target_audience:
+          type: array
+          items:
+            type: string
+            enum: [all, verified, vip, traders]
+          default: ["all"]
+
+    # Lists and Pagination
+    AdminUserList:
+      allOf:
+        - $ref: './common.yaml#/components/schemas/PaginationResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminUser'
+
+    AdminActionList:
+      allOf:
+        - $ref: './common.yaml#/components/schemas/PaginationResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminAction'
+
+    AnnouncementList:
+      allOf:
+        - $ref: './common.yaml#/components/schemas/PaginationResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Announcement'

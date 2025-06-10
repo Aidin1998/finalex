@@ -1,0 +1,198 @@
+ProblemDetails:
+  type: object
+  properties:
+    type:
+      type: string
+      format: uri
+      description: A URI reference that identifies the problem type
+      example: "https://api.finalex.io/problems/validation-error"
+    title:
+      type: string
+      description: A short, human-readable summary of the problem type
+      example: "Validation Error"
+    status:
+      type: integer
+      description: The HTTP status code
+      example: 400
+    detail:
+      type: string
+      description: A human-readable explanation specific to this occurrence
+      example: "The 'amount' field must be a positive number"
+    instance:
+      type: string
+      description: A URI reference that identifies the specific occurrence
+      example: "/api/v1/trading/orders"
+    timestamp:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    trace_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    validation_errors:
+      type: array
+      items:
+        $ref: '#/ValidationError'
+      description: Detailed validation errors (when applicable)
+  required:
+    - type
+    - title
+    - status
+    - detail
+    - timestamp
+
+ValidationError:
+  type: object
+  properties:
+    field:
+      type: string
+      description: The field that failed validation
+      example: "amount"
+    message:
+      type: string
+      description: Human-readable error message
+      example: "must be a positive number"
+    code:
+      type: string
+      description: Machine-readable error code
+      example: "POSITIVE_NUMBER_REQUIRED"
+    value:
+      description: The invalid value that was provided
+      example: "-10.5"
+  required:
+    - field
+    - message
+    - code
+
+InsufficientFundsError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/insufficient-funds"]
+        title:
+          type: string
+          enum: ["Insufficient Funds"]
+        status:
+          type: integer
+          enum: [400]
+        available_balance:
+          $ref: '../schemas/common.yaml#/Decimal'
+        required_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        currency:
+          $ref: '../schemas/common.yaml#/Currency'
+
+InvalidOrderError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/invalid-order"]
+        title:
+          type: string
+          enum: ["Invalid Order"]
+        status:
+          type: integer
+          enum: [400]
+        order_constraints:
+          type: object
+          properties:
+            min_quantity:
+              $ref: '../schemas/common.yaml#/Decimal'
+            max_quantity:
+              $ref: '../schemas/common.yaml#/Decimal'
+            min_price:
+              $ref: '../schemas/common.yaml#/Decimal'
+            max_price:
+              $ref: '../schemas/common.yaml#/Decimal'
+            min_notional:
+              $ref: '../schemas/common.yaml#/Decimal'
+
+MarketClosedError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/market-closed"]
+        title:
+          type: string
+          enum: ["Market Closed"]
+        status:
+          type: integer
+          enum: [400]
+        market_status:
+          type: string
+          enum: [closed, suspended, maintenance]
+        next_open_time:
+          $ref: '../schemas/common.yaml#/Timestamp'
+
+KYCRequiredError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/kyc-required"]
+        title:
+          type: string
+          enum: ["KYC Verification Required"]
+        status:
+          type: integer
+          enum: [403]
+        kyc_level_required:
+          type: string
+          enum: [basic, intermediate, advanced]
+        current_kyc_level:
+          type: string
+          enum: [none, basic, intermediate, advanced]
+
+MFARequiredError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/mfa-required"]
+        title:
+          type: string
+          enum: ["Multi-Factor Authentication Required"]
+        status:
+          type: integer
+          enum: [403]
+        mfa_methods:
+          type: array
+          items:
+            type: string
+            enum: [totp, sms, email]
+
+RateLimitError:
+  allOf:
+    - $ref: '#/ProblemDetails'
+    - type: object
+      properties:
+        type:
+          type: string
+          enum: ["https://api.finalex.io/problems/rate-limit-exceeded"]
+        title:
+          type: string
+          enum: ["Rate Limit Exceeded"]
+        status:
+          type: integer
+          enum: [429]
+        limit:
+          type: integer
+          description: Requests allowed per time window
+        remaining:
+          type: integer
+          description: Requests remaining in current window
+        reset_time:
+          $ref: '../schemas/common.yaml#/Timestamp'
+        retry_after:
+          type: integer
+          description: Seconds to wait before next request

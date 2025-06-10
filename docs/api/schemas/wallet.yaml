@@ -1,0 +1,340 @@
+DepositRequest:
+  type: object
+  properties:
+    asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+      description: Blockchain network
+      example: "TRC20"
+      enum: [BTC, ETH, TRC20, BEP20, POLYGON, ARBITRUM, OPTIMISM, AVALANCHE]
+    generate_address:
+      type: boolean
+      default: false
+      description: Generate new deposit address
+    memo_required:
+      type: boolean
+      description: Whether this deposit requires a memo/tag
+  required:
+    - asset
+    - network
+
+DepositResponse:
+  type: object
+  properties:
+    deposit_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+    address:
+      type: string
+      description: Deposit address
+    memo:
+      type: string
+      description: Memo/tag for deposit (if required)
+    qr_code:
+      type: string
+      description: Base64 encoded QR code for the address
+    min_deposit:
+      $ref: '../schemas/common.yaml#/Decimal'
+    confirmations_required:
+      type: integer
+      description: Number of confirmations required
+    estimated_arrival_time:
+      type: string
+      description: Estimated time for deposit to be credited
+      example: "10-30 minutes"
+    warning_message:
+      type: string
+      description: Important warnings about the deposit
+    expires_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+      description: Address expiration time (if temporary)
+  required:
+    - deposit_id
+    - asset
+    - network
+    - address
+    - min_deposit
+    - confirmations_required
+
+WithdrawalRequest:
+  type: object
+  properties:
+    asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+      description: Blockchain network
+      example: "TRC20"
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    address:
+      type: string
+      description: Destination address
+    memo:
+      type: string
+      description: Memo/tag for withdrawal (if required)
+    two_factor_code:
+      type: string
+      pattern: '^[0-9]{6}$'
+      description: 2FA code for security verification
+    client_withdrawal_id:
+      type: string
+      maxLength: 50
+      description: Client-specified withdrawal ID
+    priority:
+      type: string
+      enum: [LOW, NORMAL, HIGH]
+      default: "NORMAL"
+      description: Transaction priority (affects fees)
+  required:
+    - asset
+    - network
+    - amount
+    - address
+    - two_factor_code
+
+WithdrawalResponse:
+  type: object
+  properties:
+    withdrawal_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    net_amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    address:
+      type: string
+    memo:
+      type: string
+    status:
+      type: string
+      enum: [PENDING, PROCESSING, SENT, CONFIRMED, FAILED, CANCELED]
+    tx_hash:
+      type: string
+      description: Blockchain transaction hash
+    estimated_completion_time:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    confirmations:
+      type: integer
+      description: Current confirmations
+    confirmations_required:
+      type: integer
+      description: Required confirmations
+    client_withdrawal_id:
+      type: string
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - withdrawal_id
+    - asset
+    - network
+    - amount
+    - fee
+    - net_amount
+    - address
+    - status
+    - created_at
+
+Balance:
+  type: object
+  properties:
+    currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    available:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Available balance for trading/withdrawal
+    locked:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Locked balance (in orders, pending withdrawals)
+    total:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Total balance (available + locked)
+    usd_value:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: USD equivalent value
+    last_updated:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    details:
+      type: object
+      properties:
+        in_orders:
+          $ref: '../schemas/common.yaml#/Decimal'
+        pending_deposits:
+          $ref: '../schemas/common.yaml#/Decimal'
+        pending_withdrawals:
+          $ref: '../schemas/common.yaml#/Decimal'
+        margin_used:
+          $ref: '../schemas/common.yaml#/Decimal'
+        staking_locked:
+          $ref: '../schemas/common.yaml#/Decimal'
+  required:
+    - currency
+    - available
+    - locked
+    - total
+    - usd_value
+    - last_updated
+
+Transaction:
+  type: object
+  properties:
+    id:
+      $ref: '../schemas/common.yaml#/UUID'
+    type:
+      type: string
+      enum: [deposit, withdrawal, transfer, trade_settlement, fee, rebate, staking_reward]
+    currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    status:
+      type: string
+      enum: [pending, confirmed, failed, canceled, processing]
+    description:
+      type: string
+      description: Human-readable description
+    reference:
+      type: string
+      description: External reference (tx hash, order ID, etc.)
+    network:
+      type: string
+      description: Blockchain network (for crypto transactions)
+    address:
+      type: string
+      description: Address (for deposits/withdrawals)
+    memo:
+      type: string
+      description: Memo/tag (if applicable)
+    confirmations:
+      type: integer
+      description: Current confirmations (for crypto transactions)
+    confirmations_required:
+      type: integer
+      description: Required confirmations
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    completed_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    metadata:
+      type: object
+      description: Additional transaction metadata
+      properties:
+        block_height:
+          type: integer
+        gas_used:
+          type: integer
+        gas_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+        internal_transfer:
+          type: boolean
+        counterparty:
+          type: string
+  required:
+    - id
+    - type
+    - currency
+    - amount
+    - status
+    - created_at
+    - updated_at
+
+AddressValidationRequest:
+  type: object
+  properties:
+    address:
+      type: string
+      description: Address to validate
+    currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+      description: Blockchain network
+  required:
+    - address
+    - currency
+    - network
+
+AddressValidationResponse:
+  type: object
+  properties:
+    valid:
+      type: boolean
+      description: Whether the address is valid
+    normalized_address:
+      type: string
+      description: Normalized/checksummed address
+    address_type:
+      type: string
+      enum: [P2PKH, P2SH, BECH32, CONTRACT, MULTISIG]
+      description: Address type
+    requires_memo:
+      type: boolean
+      description: Whether this address requires a memo
+    warnings:
+      type: array
+      items:
+        type: string
+      description: Validation warnings
+    network_info:
+      type: object
+      properties:
+        chain_id:
+          type: integer
+        explorer_url:
+          type: string
+        min_confirmations:
+          type: integer
+        avg_block_time:
+          type: integer
+          description: Average block time in seconds
+  required:
+    - valid
+
+DepositAddress:
+  type: object
+  properties:
+    currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    network:
+      type: string
+    address:
+      type: string
+    memo:
+      type: string
+      description: Memo/tag (if required)
+    qr_code:
+      type: string
+      description: Base64 encoded QR code
+    is_default:
+      type: boolean
+      description: Whether this is the default address
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    last_used:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    total_deposits:
+      type: integer
+      description: Total number of deposits to this address
+    total_amount:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Total amount deposited to this address
+  required:
+    - currency
+    - network
+    - address
+    - is_default
+    - created_at

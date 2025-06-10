@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finalex API Documentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #0a0a0a;
+            color: #e1e1e1;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 2rem 0;
+            text-align: center;
+            border-bottom: 1px solid #333;
+        }
+
+        .header h1 {
+            color: #00d4ff;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #b0b0b0;
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        .nav-tabs {
+            display: flex;
+            background-color: #1a1a1a;
+            border-bottom: 1px solid #333;
+            overflow-x: auto;
+        }
+
+        .nav-tab {
+            background: none;
+            border: none;
+            color: #b0b0b0;
+            padding: 1rem 2rem;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+            border-bottom: 3px solid transparent;
+        }
+
+        .nav-tab:hover {
+            color: #00d4ff;
+            background-color: #2a2a2a;
+        }
+
+        .nav-tab.active {
+            color: #00d4ff;
+            border-bottom-color: #00d4ff;
+            background-color: #2a2a2a;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 2rem 0;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .api-section {
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid #333;
+        }
+
+        .api-section h2 {
+            color: #00d4ff;
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .api-section h3 {
+            color: #ffffff;
+            margin: 1.5rem 0 1rem 0;
+            font-size: 1.2rem;
+        }
+
+        .api-section p {
+            color: #b0b0b0;
+            margin-bottom: 1rem;
+        }
+
+        .code-block {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'Fira Code', 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+        }
+
+        .code-block pre {
+            margin: 0;
+            color: #e6edf3;
+        }
+
+        .endpoint {
+            display: flex;
+            align-items: center;
+            margin: 1rem 0;
+            padding: 0.5rem;
+            background-color: #2a2a2a;
+            border-radius: 4px;
+            border-left: 4px solid #00d4ff;
+        }
+
+        .method {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 1rem;
+            font-size: 0.8rem;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .method.get { background-color: #198754; }
+        .method.post { background-color: #0d6efd; }
+        .method.put { background-color: #fd7e14; }
+        .method.delete { background-color: #dc3545; }
+        .method.ws { background-color: #6f42c1; }
+
+        .path {
+            font-family: 'Fira Code', monospace;
+            color: #e1e1e1;
+            flex: 1;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .feature-card {
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-2px);
+            border-color: #00d4ff;
+        }
+
+        .feature-card h3 {
+            color: #00d4ff;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card p {
+            color: #b0b0b0;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #00d4ff;
+            color: #000;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn:hover {
+            background-color: #00bde5;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+
+        .status-online { background-color: #28a745; }
+        .status-offline { background-color: #dc3545; }
+
+        .iframe-container {
+            width: 100%;
+            height: 800px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .nav-tabs {
+                flex-wrap: wrap;
+            }
+            
+            .nav-tab {
+                padding: 0.75rem 1rem;
+                font-size: 0.9rem;
+            }
+            
+            .api-section {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Finalex API Documentation</h1>
+            <p>Comprehensive REST and WebSocket APIs for cryptocurrency exchange operations</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="showTab('overview')">Overview</button>
+            <button class="nav-tab" onclick="showTab('rest-api')">REST API</button>
+            <button class="nav-tab" onclick="showTab('websocket')">WebSocket API</button>
+            <button class="nav-tab" onclick="showTab('integration')">Integration Guide</button>
+            <button class="nav-tab" onclick="showTab('examples')">Code Examples</button>
+            <button class="nav-tab" onclick="showTab('testing')">API Testing</button>
+        </div>
+
+        <!-- Overview Tab -->
+        <div id="overview" class="tab-content active">
+            <div class="api-section">
+                <h2>Welcome to Finalex API</h2>
+                <p>The Finalex API provides comprehensive access to our cryptocurrency exchange platform. Built with performance, security, and developer experience in mind.</p>
+                
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h3>🔄 Real-time Trading</h3>
+                        <p>Execute trades instantly with our high-performance matching engine. Support for spot trading, cross-pair routing, and advanced order types.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>💰 Wallet Management</h3>
+                        <p>Secure cryptocurrency wallet operations with multi-network support, automated deposits, and configurable withdrawal policies.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>📊 Market Data</h3>
+                        <p>Access real-time and historical market data including tickers, order books, trade history, and candlestick charts.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>🔐 Enterprise Security</h3>
+                        <p>Multiple authentication methods, HMAC signatures, rate limiting, and comprehensive compliance features.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>⚡ WebSocket Streams</h3>
+                        <p>Real-time data streams for market data, account updates, order status, and trade notifications with low latency.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>🛡️ Compliance Ready</h3>
+                        <p>Built-in AML/KYC workflows, transaction monitoring, risk management, and regulatory reporting tools.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Quick Start</h2>
+                <h3>1. Authentication</h3>
+                <div class="code-block">
+                    <pre>POST /api/v1/auth/login
+{
+  "email": "user@example.com",
+  "password": "your_password"
+}</pre>
+                </div>
+
+                <h3>2. Get Market Data</h3>
+                <div class="code-block">
+                    <pre>GET /api/v1/market/ticker/BTC-USDT</pre>
+                </div>
+
+                <h3>3. Place an Order</h3>
+                <div class="code-block">
+                    <pre>POST /api/v1/trading/orders
+Authorization: Bearer &lt;your_token&gt;
+{
+  "symbol": "BTC/USDT",
+  "side": "buy",
+  "type": "limit",
+  "quantity": "0.001",
+  "price": "45000.00"
+}</pre>
+                </div>
+
+                <h3>4. Connect to WebSocket</h3>
+                <div class="code-block">
+                    <pre>const ws = new WebSocket('wss://ws.finalex.io?token=&lt;your_token&gt;');
+ws.send(JSON.stringify({
+  method: 'subscribe',
+  params: { channel: 'ticker', symbol: 'BTC/USDT' }
+}));</pre>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>API Status</h2>
+                <div class="endpoint">
+                    <span class="status-indicator status-online"></span>
+                    <span class="method get">REST</span>
+                    <span class="path">https://api.finalex.io - Production Ready</span>
+                </div>
+                <div class="endpoint">
+                    <span class="status-indicator status-online"></span>
+                    <span class="method ws">WSS</span>
+                    <span class="path">wss://ws.finalex.io - Real-time Streaming</span>
+                </div>
+                <div class="endpoint">
+                    <span class="status-indicator status-online"></span>
+                    <span class="method get">DOCS</span>
+                    <span class="path">https://docs.finalex.io - Interactive Documentation</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- REST API Tab -->
+        <div id="rest-api" class="tab-content">
+            <div class="api-section">
+                <h2>Interactive REST API Documentation</h2>
+                <p>Explore all REST endpoints with interactive Swagger UI. Test requests directly from the documentation.</p>
+                <div style="margin: 1rem 0;">
+                    <a href="/swagger/index.html" target="_blank" class="btn">Open Swagger UI</a>
+                    <a href="/docs/api/openapi.yaml" target="_blank" class="btn btn-secondary">Download OpenAPI Spec</a>
+                </div>
+            </div>
+
+            <div class="iframe-container">
+                <iframe src="/swagger/index.html" title="Swagger UI"></iframe>
+            </div>
+
+            <div class="api-section">
+                <h2>Main API Endpoints</h2>
+                
+                <h3>Authentication</h3>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/auth/login</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/auth/register</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/auth/logout</span>
+                </div>
+
+                <h3>Trading</h3>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/trading/pairs</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/trading/orders</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/trading/orders</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method delete">DELETE</span>
+                    <span class="path">/api/v1/trading/orders/{id}</span>
+                </div>
+
+                <h3>Market Data</h3>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/market/ticker/{symbol}</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/market/orderbook/{symbol}</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/market/trades/{symbol}</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/market/klines/{symbol}</span>
+                </div>
+
+                <h3>Wallet</h3>
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/api/v1/wallet/balance</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/wallet/deposit</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/api/v1/wallet/withdraw</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- WebSocket API Tab -->
+        <div id="websocket" class="tab-content">
+            <div class="api-section">
+                <h2>WebSocket API Documentation</h2>
+                <p>Real-time streaming API using WebSocket connections for live market data and account updates.</p>
+                
+                <h3>Connection</h3>
+                <div class="code-block">
+                    <pre>// Production
+wss://ws.finalex.io?token=&lt;jwt_token&gt;
+
+// With API Key
+wss://ws.finalex.io?api_key=&lt;api_key&gt;</pre>
+                </div>
+
+                <h3>Message Format</h3>
+                <div class="code-block">
+                    <pre>{
+  "id": "unique_message_id",
+  "type": "message_type",
+  "channel": "channel_name",
+  "data": {},
+  "timestamp": 1672531200000
+}</pre>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Available Channels</h2>
+                
+                <h3>Public Channels</h3>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">ticker - Real-time price updates</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">orderbook - Order book changes</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">trades - Public trade executions</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">klines - Candlestick data</span>
+                </div>
+
+                <h3>Private Channels (Authentication Required)</h3>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">account - Balance and position updates</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">orders - Order status changes</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">user_trades - User's trade executions</span>
+                </div>
+                <div class="endpoint">
+                    <span class="method ws">SUB</span>
+                    <span class="path">notifications - System notifications</span>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Subscription Example</h2>
+                <div class="code-block">
+                    <pre>// Subscribe to BTC/USDT ticker
+{
+  "id": "sub_001",
+  "method": "subscribe",
+  "params": {
+    "channel": "ticker",
+    "symbol": "BTC/USDT"
+  }
+}
+
+// Ticker update response
+{
+  "type": "ticker",
+  "channel": "ticker",
+  "data": {
+    "symbol": "BTC/USDT",
+    "price": "45678.90",
+    "change_24h": "1234.56",
+    "change_percent_24h": "2.78",
+    "volume_24h": "1234567.89",
+    "timestamp": 1672531200000
+  }
+}</pre>
+                </div>
+                
+                <div style="margin: 1rem 0;">
+                    <a href="/docs/websocket-api.md" target="_blank" class="btn">View Full WebSocket Documentation</a>
+                    <a href="/docs/api/asyncapi.yaml" target="_blank" class="btn btn-secondary">Download AsyncAPI Spec</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Integration Guide Tab -->
+        <div id="integration" class="tab-content">
+            <div class="api-section">
+                <h2>Integration Guide</h2>
+                <p>Step-by-step guide to integrate with the Finalex API for common use cases.</p>
+                
+                <div style="margin: 1rem 0;">
+                    <a href="/docs/integration-guide.md" target="_blank" class="btn">View Integration Guide</a>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Common Integration Patterns</h2>
+                
+                <h3>1. Trading Bot Integration</h3>
+                <div class="code-block">
+                    <pre>// 1. Authenticate with API key
+const auth = {
+  apiKey: 'your_api_key',
+  secretKey: 'your_secret_key'
+};
+
+// 2. Subscribe to market data
+ws.send(JSON.stringify({
+  method: 'subscribe',
+  params: { channel: 'ticker', symbol: 'BTC/USDT' }
+}));
+
+// 3. Place orders based on strategy
+async function placeOrder(side, quantity, price) {
+  const response = await fetch('/api/v1/trading/orders', {
+    method: 'POST',
+    headers: {
+      'X-API-Key': auth.apiKey,
+      'X-API-Signature': calculateHMAC(requestBody, auth.secretKey)
+    },
+    body: JSON.stringify({ symbol: 'BTC/USDT', side, quantity, price })
+  });
+  return response.json();
+}</pre>
+                </div>
+
+                <h3>2. Portfolio Management</h3>
+                <div class="code-block">
+                    <pre>// Get current balances
+const balances = await fetch('/api/v1/wallet/balance', {
+  headers: { 'Authorization': `Bearer ${token}` }
+});
+
+// Subscribe to balance updates
+ws.send(JSON.stringify({
+  method: 'subscribe',
+  params: { channel: 'account' }
+}));
+
+// Calculate portfolio value
+function calculatePortfolioValue(balances, prices) {
+  return balances.reduce((total, balance) => {
+    const price = prices[balance.currency] || 0;
+    return total + (parseFloat(balance.available) * price);
+  }, 0);
+}</pre>
+                </div>
+
+                <h3>3. Market Data Analysis</h3>
+                <div class="code-block">
+                    <pre>// Get historical data
+const klines = await fetch('/api/v1/market/klines/BTC-USDT?interval=1h&limit=100');
+
+// Subscribe to real-time updates
+ws.send(JSON.stringify({
+  method: 'subscribe',
+  params: { channel: 'klines', symbol: 'BTC/USDT', interval: '1m' }
+}));
+
+// Technical analysis
+function calculateMovingAverage(prices, period) {
+  return prices.slice(-period).reduce((sum, price) => sum + price, 0) / period;
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Code Examples Tab -->
+        <div id="examples" class="tab-content">
+            <div class="api-section">
+                <h2>Code Examples</h2>
+                <p>Ready-to-use code examples in multiple programming languages.</p>
+            </div>
+
+            <div class="api-section">
+                <h2>JavaScript/Node.js</h2>
+                <div class="code-block">
+                    <pre>const WebSocket = require('ws');
+const axios = require('axios');
+
+class FinalexAPI {
+  constructor(apiKey, secretKey) {
+    this.apiKey = apiKey;
+    this.secretKey = secretKey;
+    this.baseURL = 'https://api.finalex.io';
+    this.wsURL = 'wss://ws.finalex.io';
+  }
+
+  async authenticateWithJWT(email, password) {
+    const response = await axios.post(`${this.baseURL}/api/v1/auth/login`, {
+      email, password
+    });
+    this.token = response.data.access_token;
+    return this.token;
+  }
+
+  connectWebSocket() {
+    this.ws = new WebSocket(`${this.wsURL}?token=${this.token}`);
+    
+    this.ws.on('open', () => {
+      console.log('Connected to Finalex WebSocket');
+    });
+    
+    this.ws.on('message', (data) => {
+      const message = JSON.parse(data);
+      this.handleMessage(message);
+    });
+  }
+
+  subscribe(channel, symbol = null) {
+    const params = { channel };
+    if (symbol) params.symbol = symbol;
+    
+    this.ws.send(JSON.stringify({
+      method: 'subscribe',
+      params
+    }));
+  }
+
+  async placeOrder(symbol, side, type, quantity, price = null) {
+    const orderData = { symbol, side, type, quantity };
+    if (price) orderData.price = price;
+
+    const response = await axios.post(
+      `${this.baseURL}/api/v1/trading/orders`,
+      orderData,
+      { headers: { 'Authorization': `Bearer ${this.token}` } }
+    );
+    
+    return response.data;
+  }
+}
+
+// Usage
+const api = new FinalexAPI('your_api_key', 'your_secret_key');
+await api.authenticateWithJWT('user@example.com', 'password');
+api.connectWebSocket();
+api.subscribe('ticker', 'BTC/USDT');</pre>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Python</h2>
+                <div class="code-block">
+                    <pre>import asyncio
+import websockets
+import json
+import requests
+import hmac
+import hashlib
+import time
+
+class FinalexAPI:
+    def __init__(self, api_key=None, secret_key=None):
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.base_url = 'https://api.finalex.io'
+        self.ws_url = 'wss://ws.finalex.io'
+        self.token = None
+
+    def authenticate_jwt(self, email, password):
+        response = requests.post(f'{self.base_url}/api/v1/auth/login', {
+            'email': email,
+            'password': password
+        })
+        self.token = response.json()['access_token']
+        return self.token
+
+    async def connect_websocket(self):
+        uri = f"{self.ws_url}?token={self.token}"
+        self.websocket = await websockets.connect(uri)
+        
+        # Start listening for messages
+        asyncio.create_task(self.listen_messages())
+
+    async def listen_messages(self):
+        async for message in self.websocket:
+            data = json.loads(message)
+            await self.handle_message(data)
+
+    async def subscribe(self, channel, symbol=None):
+        params = {'channel': channel}
+        if symbol:
+            params['symbol'] = symbol
+            
+        message = {
+            'method': 'subscribe',
+            'params': params
+        }
+        
+        await self.websocket.send(json.dumps(message))
+
+    def place_order(self, symbol, side, order_type, quantity, price=None):
+        order_data = {
+            'symbol': symbol,
+            'side': side,
+            'type': order_type,
+            'quantity': quantity
+        }
+        if price:
+            order_data['price'] = price
+
+        headers = {'Authorization': f'Bearer {self.token}'}
+        response = requests.post(
+            f'{self.base_url}/api/v1/trading/orders',
+            json=order_data,
+            headers=headers
+        )
+        
+        return response.json()
+
+    async def handle_message(self, message):
+        print(f"Received: {message}")
+
+# Usage
+async def main():
+    api = FinalexAPI()
+    api.authenticate_jwt('user@example.com', 'password')
+    await api.connect_websocket()
+    await api.subscribe('ticker', 'BTC/USDT')
+    
+    # Keep connection alive
+    await asyncio.sleep(3600)
+
+asyncio.run(main())</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Testing Tab -->
+        <div id="testing" class="tab-content">
+            <div class="api-section">
+                <h2>API Testing Tools</h2>
+                <p>Test the Finalex API using various tools and environments.</p>
+                
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h3>Swagger UI</h3>
+                        <p>Interactive API documentation with built-in testing capabilities.</p>
+                        <a href="/swagger/index.html" target="_blank" class="btn">Open Swagger UI</a>
+                    </div>
+                    <div class="feature-card">
+                        <h3>Postman Collection</h3>
+                        <p>Pre-configured Postman collection with all API endpoints.</p>
+                        <a href="/docs/postman-collection.json" target="_blank" class="btn">Download Collection</a>
+                    </div>
+                    <div class="feature-card">
+                        <h3>WebSocket Tester</h3>
+                        <p>Test WebSocket connections and message flows.</p>
+                        <a href="/ws-tester.html" target="_blank" class="btn">Open WS Tester</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-section">
+                <h2>Testing Environment</h2>
+                <h3>Sandbox API</h3>
+                <div class="code-block">
+                    <pre>Base URL: https://sandbox-api.finalex.io
+WebSocket: wss://sandbox-ws.finalex.io
+
+// Test credentials
+Email: test@finalex.io
+Password: TestPassword123!</pre>
+                </div>
+
+                <h3>Rate Limits (Sandbox)</h3>
+                <ul style="color: #b0b0b0; margin-left: 2rem;">
+                    <li>Public endpoints: 1000 requests/minute</li>
+                    <li>Private endpoints: 500 requests/minute</li>
+                    <li>WebSocket connections: 20 per IP</li>
+                    <li>WebSocket subscriptions: 200 per connection</li>
+                </ul>
+            </div>
+
+            <div class="api-section">
+                <h2>cURL Examples</h2>
+                
+                <h3>Authentication</h3>
+                <div class="code-block">
+                    <pre>curl -X POST https://api.finalex.io/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "your_password"
+  }'</pre>
+                </div>
+
+                <h3>Get Market Data</h3>
+                <div class="code-block">
+                    <pre>curl -X GET https://api.finalex.io/api/v1/market/ticker/BTC-USDT</pre>
+                </div>
+
+                <h3>Place Order</h3>
+                <div class="code-block">
+                    <pre>curl -X POST https://api.finalex.io/api/v1/trading/orders \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTC/USDT",
+    "side": "buy",
+    "type": "limit",
+    "quantity": "0.001",
+    "price": "45000.00"
+  }'</pre>
+                </div>
+
+                <h3>WebSocket Testing with wscat</h3>
+                <div class="code-block">
+                    <pre># Install wscat
+npm install -g wscat
+
+# Connect to WebSocket
+wscat -c "wss://ws.finalex.io?token=YOUR_JWT_TOKEN"
+
+# Subscribe to ticker
+> {"method":"subscribe","params":{"channel":"ticker","symbol":"BTC/USDT"}}</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // Hide all tab contents
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(content => content.classList.remove('active'));
+            
+            // Remove active class from all tabs
+            const tabs = document.querySelectorAll('.nav-tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+
+        // Auto-refresh status indicators
+        function updateStatus() {
+            // This would typically make actual API calls to check status
+            // For demo purposes, we'll just simulate online status
+            const indicators = document.querySelectorAll('.status-indicator');
+            indicators.forEach(indicator => {
+                if (Math.random() > 0.1) { // 90% chance of being online
+                    indicator.className = 'status-indicator status-online';
+                } else {
+                    indicator.className = 'status-indicator status-offline';
+                }
+            });
+        }
+
+        // Update status every 30 seconds
+        setInterval(updateStatus, 30000);
+        
+        // Initialize
+        updateStatus();
+    </script>
+</body>
+</html>

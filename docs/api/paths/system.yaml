@@ -1,0 +1,78 @@
+health:
+  get:
+    tags:
+      - System
+    summary: Health check
+    description: Returns the health status of the API service
+    operationId: healthCheck
+    responses:
+      '200':
+        description: Service is healthy
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [healthy, unhealthy, warning]
+                  example: "healthy"
+                timestamp:
+                  $ref: '../schemas/common.yaml#/Timestamp'
+                version:
+                  type: string
+                  example: "1.0.0"
+                uptime:
+                  type: string
+                  example: "72h30m15s"
+                checks:
+                  type: object
+                  properties:
+                    database:
+                      type: string
+                      enum: [healthy, unhealthy]
+                    redis:
+                      type: string
+                      enum: [healthy, unhealthy]
+                    external_apis:
+                      type: string
+                      enum: [healthy, unhealthy]
+      '503':
+        description: Service is unhealthy
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/ProblemDetails'
+
+version:
+  get:
+    tags:
+      - System
+    summary: API version information
+    description: Returns API version and build information
+    operationId: getVersion
+    responses:
+      '200':
+        description: Version information
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service:
+                  type: string
+                  example: "Finalex CEX"
+                version:
+                  type: string
+                  example: "1.0.0"
+                build:
+                  type: string
+                  example: "development"
+                commit:
+                  type: string
+                  example: "abc123def456"
+                time:
+                  $ref: '../schemas/common.yaml#/Timestamp'
+                go_version:
+                  type: string
+                  example: "go1.21.0"

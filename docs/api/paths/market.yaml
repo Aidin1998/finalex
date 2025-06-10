@@ -1,0 +1,299 @@
+ticker_24hr:
+  get:
+    tags:
+      - Market Data
+    summary: Get 24hr ticker statistics
+    description: Retrieve 24hr ticker price change statistics for a specific trading pair
+    operationId: getTicker24hr
+    security: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol (e.g., BTCUSDT, ETHBTC)
+        schema:
+          type: string
+          example: BTCUSDT
+    responses:
+      '200':
+        description: 24hr ticker statistics retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/market.yaml#/TickerData'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+ticker_all:
+  get:
+    tags:
+      - Market Data
+    summary: Get all ticker statistics
+    description: Retrieve 24hr ticker statistics for all active trading pairs
+    operationId: getAllTickers
+    security: []
+    responses:
+      '200':
+        description: All ticker statistics retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/market.yaml#/TickerData'
+
+orderbook:
+  get:
+    tags:
+      - Market Data
+    summary: Get order book
+    description: Retrieve current order book for a trading pair
+    operationId: getOrderBook
+    security: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+      - name: limit
+        in: query
+        required: false
+        description: Number of price levels to return
+        schema:
+          type: integer
+          minimum: 5
+          maximum: 1000
+          default: 100
+          example: 20
+    responses:
+      '200':
+        description: Order book retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/market.yaml#/OrderBook'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+trades:
+  get:
+    tags:
+      - Market Data
+    summary: Get recent trades
+    description: Retrieve recent trades for a trading pair
+    operationId: getRecentTrades
+    security: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+      - name: limit
+        in: query
+        required: false
+        description: Number of trades to return
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 500
+          example: 100
+    responses:
+      '200':
+        description: Recent trades retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/market.yaml#/RecentTrade'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+klines:
+  get:
+    tags:
+      - Market Data
+    summary: Get candlestick data
+    description: Retrieve kline/candlestick data for a trading pair
+    operationId: getKlines
+    security: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+      - name: interval
+        in: query
+        required: true
+        description: Kline interval
+        schema:
+          type: string
+          enum: [1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M]
+          example: 1h
+      - name: limit
+        in: query
+        required: false
+        description: Number of klines to return
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 500
+          example: 100
+      - name: startTime
+        in: query
+        required: false
+        description: Start time in milliseconds
+        schema:
+          type: integer
+          format: int64
+          example: 1640995200000
+      - name: endTime
+        in: query
+        required: false
+        description: End time in milliseconds
+        schema:
+          type: integer
+          format: int64
+          example: 1640998800000
+    responses:
+      '200':
+        description: Kline data retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/market.yaml#/Kline'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+exchange_info:
+  get:
+    tags:
+      - Market Data
+    summary: Get exchange information
+    description: Retrieve current exchange trading rules and symbol information
+    operationId: getExchangeInfo
+    security: []
+    responses:
+      '200':
+        description: Exchange information retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/market.yaml#/ExchangeInfo'
+
+prices:
+  get:
+    tags:
+      - Market Data
+    summary: Get symbol prices
+    description: Retrieve current symbol prices for all or specific trading pairs
+    operationId: getSymbolPrices
+    security: []
+    parameters:
+      - name: symbol
+        in: query
+        required: false
+        description: Specific symbol to get price for
+        schema:
+          type: string
+          example: BTCUSDT
+    responses:
+      '200':
+        description: Symbol prices retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../schemas/market.yaml#/SymbolPrice'
+                - type: array
+                  items:
+                    $ref: '../schemas/market.yaml#/SymbolPrice'
+
+market_stats:
+  get:
+    tags:
+      - Market Data
+    summary: Get market statistics
+    description: Retrieve comprehensive market statistics for a trading pair
+    operationId: getMarketStats
+    security: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+    responses:
+      '200':
+        description: Market statistics retrieved successfully
+        headers:
+          X-RateLimit-Remaining:
+            $ref: '../openapi.yaml#/components/headers/X-RateLimit-Remaining'
+          X-Response-Time:
+            $ref: '../openapi.yaml#/components/headers/X-Response-Time'
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/market.yaml#/MarketStats'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'

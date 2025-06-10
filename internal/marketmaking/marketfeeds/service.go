@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/shopspring/decimal"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -75,11 +76,11 @@ func (s *Service) Start() error {
 		// Initialize price
 		s.prices[pair.Symbol] = &models.MarketPrice{
 			Symbol:    pair.Symbol,
-			Price:     0,
-			Change24h: 0,
-			Volume24h: 0,
-			High24h:   0,
-			Low24h:    0,
+			Price:     decimal.Zero,
+			Change24h: decimal.Zero,
+			Volume24h: decimal.Zero,
+			High24h:   decimal.Zero,
+			Low24h:    decimal.Zero,
 			UpdatedAt: time.Now(),
 		}
 
@@ -185,13 +186,14 @@ func (s *Service) AddExternalPrice(ctx context.Context, symbol string, price flo
 
 	// Update price
 	now := time.Now()
+	priceDecimal := decimal.NewFromFloat(price)
 	s.prices[symbol] = &models.MarketPrice{
 		Symbol:    symbol,
-		Price:     price,
-		Change24h: 0, // Would be calculated based on previous price
-		Volume24h: 0, // Would be updated based on trades
-		High24h:   price,
-		Low24h:    price,
+		Price:     priceDecimal,
+		Change24h: decimal.Zero, // Would be calculated based on previous price
+		Volume24h: decimal.Zero, // Would be updated based on trades
+		High24h:   priceDecimal,
+		Low24h:    priceDecimal,
 		UpdatedAt: now,
 	}
 
@@ -200,11 +202,11 @@ func (s *Service) AddExternalPrice(ctx context.Context, symbol string, price flo
 		// In a real implementation, this would aggregate candles based on the interval
 		candle := &models.Candle{
 			Timestamp: now,
-			Open:      price,
-			High:      price,
-			Low:       price,
-			Close:     price,
-			Volume:    0,
+			Open:      priceDecimal,
+			High:      priceDecimal,
+			Low:       priceDecimal,
+			Close:     priceDecimal,
+			Volume:    decimal.Zero,
 		}
 		s.candles[symbol][interval] = append(s.candles[symbol][interval], candle)
 	}
@@ -242,28 +244,40 @@ func (s *Service) fetchExternalPrices() {
 	// For now, we'll just update the prices with random values
 	for symbol, price := range s.prices {
 		// Update price with a small random change
-		newPrice := price.Price * (1 + (float64(time.Now().UnixNano()%200-100) / 10000))
-		if newPrice <= 0 {
-			newPrice = 0.01
+		randomFactor := decimal.NewFromFloat(1 + (float64(time.Now().UnixNano()%200-100) / 10000))
+		newPrice := price.Price.Mul(randomFactor)
+
+		minPrice := decimal.NewFromFloat(0.01)
+		if newPrice.LessThanOrEqual(decimal.Zero) {
+			newPrice = minPrice
 		}
 
 		// Update high and low
 		high := price.High24h
-		if newPrice > high {
+		if newPrice.GreaterThan(high) {
 			high = newPrice
 		}
 		low := price.Low24h
-		if low == 0 || newPrice < low {
+		if low.Equal(decimal.Zero) || newPrice.LessThan(low) {
 			low = newPrice
 		}
+
+		// Calculate price change percentage
+		priceChange := decimal.Zero
+		if !price.Price.Equal(decimal.Zero) {
+			priceChange = newPrice.Sub(price.Price).Div(price.Price).Mul(decimal.NewFromInt(100))
+		}
+
+		// Calculate volume change
+		volumeChange := decimal.NewFromFloat(float64(time.Now().UnixNano()%1000) / 100)
 
 		// Update price
 		now := time.Now()
 		s.prices[symbol] = &models.MarketPrice{
 			Symbol:    symbol,
 			Price:     newPrice,
-			Change24h: (newPrice - price.Price) / price.Price * 100,
-			Volume24h: price.Volume24h + float64(time.Now().UnixNano()%1000)/100,
+			Change24h: priceChange,
+			Volume24h: price.Volume24h.Add(volumeChange),
 			High24h:   high,
 			Low24h:    low,
 			UpdatedAt: now,
@@ -272,13 +286,14 @@ func (s *Service) fetchExternalPrices() {
 		// Add candle
 		for interval := range s.candles[symbol] {
 			// In a real implementation, this would aggregate candles based on the interval
+			candleVolume := decimal.NewFromFloat(float64(time.Now().UnixNano()%1000) / 100)
 			candle := &models.Candle{
 				Timestamp: now,
 				Open:      price.Price,
 				High:      high,
 				Low:       low,
 				Close:     newPrice,
-				Volume:    float64(time.Now().UnixNano()%1000) / 100,
+				Volume:    candleVolume,
 			}
 			s.candles[symbol][interval] = append(s.candles[symbol][interval], candle)
 

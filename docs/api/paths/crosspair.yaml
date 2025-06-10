@@ -1,0 +1,253 @@
+orders:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get cross-pair orders
+    description: Retrieve cross-pair trading orders for the authenticated user
+    operationId: getCrossPairOrders
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+      - name: status
+        in: query
+        description: Filter by order status
+        schema:
+          type: string
+          enum: [PENDING, EXECUTING, COMPLETED, FAILED, CANCELED]
+      - $ref: '../openapi.yaml#/components/parameters/LimitParam'
+      - $ref: '../openapi.yaml#/components/parameters/OffsetParam'
+    responses:
+      '200':
+        description: Cross-pair orders retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/crosspair.yaml#/CrossPairOrder'
+                pagination:
+                  $ref: '../schemas/common.yaml#/Pagination'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+  post:
+    tags:
+      - Cross-Pair Trading
+    summary: Create cross-pair order
+    description: Create a new cross-pair trading order
+    operationId: createCrossPairOrder
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/crosspair.yaml#/CreateCrossPairOrderRequest'
+    responses:
+      '201':
+        description: Cross-pair order created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/CrossPairOrder'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        description: Insufficient balance or trading restrictions
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/InsufficientFundsError'
+
+order:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get cross-pair order details
+    description: Get detailed information about a specific cross-pair order
+    operationId: getCrossPairOrder
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: orderID
+        in: path
+        required: true
+        description: Cross-pair order ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Cross-pair order details retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/CrossPairOrder'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+  delete:
+    tags:
+      - Cross-Pair Trading
+    summary: Cancel cross-pair order
+    description: Cancel an existing cross-pair order
+    operationId: cancelCrossPairOrder
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    parameters:
+      - name: orderID
+        in: path
+        required: true
+        description: Cross-pair order ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Cross-pair order canceled successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/CrossPairOrder'
+      '400':
+        description: Order cannot be canceled
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/ProblemDetails'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+quote:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get cross-pair rate quote
+    description: Get a real-time quote for cross-pair trading
+    operationId: getCrossPairQuote
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: from_currency
+        in: query
+        required: true
+        description: Source currency
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+      - name: to_currency
+        in: query
+        required: true
+        description: Target currency
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+      - name: amount
+        in: query
+        required: true
+        description: Amount to convert
+        schema:
+          $ref: '../schemas/common.yaml#/Decimal'
+      - name: side
+        in: query
+        required: true
+        description: Trading side
+        schema:
+          type: string
+          enum: [BUY, SELL]
+    responses:
+      '200':
+        description: Quote retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/CrossPairQuote'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+routes:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get available trading routes
+    description: Get all available cross-pair trading routes
+    operationId: getCrossPairRoutes
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: from_currency
+        in: query
+        description: Source currency filter
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+      - name: to_currency
+        in: query
+        description: Target currency filter
+        schema:
+          $ref: '../schemas/common.yaml#/Currency'
+    responses:
+      '200':
+        description: Trading routes retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                routes:
+                  type: array
+                  items:
+                    $ref: '../schemas/crosspair.yaml#/TradingRoute'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+status:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get cross-pair engine status
+    description: Get current status of the cross-pair trading engine
+    operationId: getCrossPairEngineStatus
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Engine status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/EngineStatus'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+metrics:
+  get:
+    tags:
+      - Cross-Pair Trading
+    summary: Get cross-pair trading metrics
+    description: Get performance and trading metrics for cross-pair engine
+    operationId: getCrossPairMetrics
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Metrics retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/crosspair.yaml#/TradingMetrics'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'

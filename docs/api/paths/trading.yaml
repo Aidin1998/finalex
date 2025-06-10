@@ -1,0 +1,230 @@
+tradingPairs:
+  get:
+    tags:
+      - Trading
+    summary: Get trading pairs
+    description: Retrieve list of available trading pairs
+    operationId: getTradingPairs
+    parameters:
+      - name: status
+        in: query
+        description: Filter by trading pair status
+        schema:
+          type: string
+          enum: [active, inactive, suspended]
+      - $ref: '../openapi.yaml#/components/parameters/LimitParam'
+      - $ref: '../openapi.yaml#/components/parameters/OffsetParam'
+    responses:
+      '200':
+        description: Trading pairs retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/trading.yaml#/TradingPair'
+                pagination:
+                  $ref: '../schemas/common.yaml#/Pagination'
+
+tradingPair:
+  get:
+    tags:
+      - Trading
+    summary: Get trading pair details
+    description: Get detailed information about a specific trading pair
+    operationId: getTradingPair
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol (e.g., BTC/USDT)
+        schema:
+          type: string
+          example: "BTC/USDT"
+    responses:
+      '200':
+        description: Trading pair details retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/trading.yaml#/TradingPair'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+orders:
+  get:
+    tags:
+      - Trading
+    summary: Get user orders
+    description: Retrieve orders for the authenticated user
+    operationId: getUserOrders
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: symbol
+        in: query
+        description: Filter by trading pair symbol
+        schema:
+          type: string
+          example: "BTC/USDT"
+      - name: status
+        in: query
+        description: Filter by order status
+        schema:
+          type: string
+          enum: [NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED]
+      - name: side
+        in: query
+        description: Filter by order side
+        schema:
+          type: string
+          enum: [BUY, SELL]
+      - $ref: '../openapi.yaml#/components/parameters/StartTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/EndTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/LimitParam'
+      - $ref: '../openapi.yaml#/components/parameters/OffsetParam'
+    responses:
+      '200':
+        description: Orders retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/trading.yaml#/Order'
+                pagination:
+                  $ref: '../schemas/common.yaml#/Pagination'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+  post:
+    tags:
+      - Trading
+    summary: Place new order
+    description: Place a new trading order
+    operationId: placeOrder
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/trading.yaml#/PlaceOrderRequest'
+    responses:
+      '201':
+        description: Order placed successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/trading.yaml#/Order'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        description: Insufficient balance or trading restrictions
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/InsufficientFundsError'
+
+order:
+  get:
+    tags:
+      - Trading
+    summary: Get order details
+    description: Get detailed information about a specific order
+    operationId: getOrder
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Order ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Order details retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/trading.yaml#/Order'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+  delete:
+    tags:
+      - Trading
+    summary: Cancel order
+    description: Cancel an existing order
+    operationId: cancelOrder
+    security:
+      - BearerAuth: []
+      - HmacAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Order ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: Order canceled successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/trading.yaml#/Order'
+      '400':
+        description: Order cannot be canceled
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/ProblemDetails'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+orderbook:
+  get:
+    tags:
+      - Trading
+    summary: Get order book
+    description: Get current order book for a trading pair
+    operationId: getOrderBook
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: "BTC/USDT"
+      - name: depth
+        in: query
+        description: Order book depth (number of price levels)
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 20
+    responses:
+      '200':
+        description: Order book retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/trading.yaml#/OrderBook'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'

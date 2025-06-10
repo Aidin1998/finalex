@@ -6,6 +6,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/trading/repository"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // UserBehaviorMetrics tracks per-user trading behavior
@@ -47,23 +48,23 @@ func (s *AnalyticsService) CollectUserMetrics(ctx context.Context, userID string
 	if err != nil {
 		return nil, err
 	}
-	var totalVolume, profitLoss, totalTradeSize float64
+	var totalVolume, profitLoss, totalTradeSize decimal.Decimal
 	numTrades := len(trades)
 	for _, t := range trades {
-		totalVolume += t.Quantity * t.Price
-		totalTradeSize += t.Quantity
+		totalVolume = totalVolume.Add(t.Quantity.Mul(t.Price))
+		totalTradeSize = totalTradeSize.Add(t.Quantity)
 		// P&L calculation would require more context (buy/sell, cost basis, etc.)
 	}
-	avgTradeSize := 0.0
+	avgTradeSize := decimal.Zero
 	if numTrades > 0 {
-		avgTradeSize = totalTradeSize / float64(numTrades)
+		avgTradeSize = totalTradeSize.Div(decimal.NewFromInt(int64(numTrades)))
 	}
 	return &UserBehaviorMetrics{
 		UserID:           userID,
-		TotalVolume:      totalVolume,
+		TotalVolume:      totalVolume.InexactFloat64(),
 		TotalTrades:      numTrades,
-		ProfitLoss:       profitLoss, // TODO: implement real P&L logic
-		AverageTradeSize: avgTradeSize,
+		ProfitLoss:       profitLoss.InexactFloat64(), // TODO: implement real P&L logic
+		AverageTradeSize: avgTradeSize.InexactFloat64(),
 	}, nil
 }
 

@@ -1,0 +1,150 @@
+UUID:
+  type: string
+  format: uuid
+  example: "123e4567-e89b-12d3-a456-426614174000"
+
+Decimal:
+  type: string
+  pattern: '^-?\d+(\.\d+)?$'
+  example: "123.456789"
+  description: Decimal number represented as string for precision
+
+Timestamp:
+  type: string
+  format: date-time
+  example: "2025-06-10T10:30:00Z"
+
+Currency:
+  type: string
+  pattern: '^[A-Z]{3,10}$'
+  example: "BTC"
+  description: Currency code (3-10 uppercase letters)
+
+TradingSymbol:
+  type: string
+  pattern: '^[A-Z]{2,10}/[A-Z]{2,10}$'
+  example: "BTC/USDT"
+  description: Trading pair symbol in format BASE/QUOTE
+
+StandardResponse:
+  type: object
+  properties:
+    data:
+      type: object
+      description: Response data
+    message:
+      type: string
+      description: Human-readable message
+      example: "Operation completed successfully"
+    timestamp:
+      $ref: '#/Timestamp'
+    trace_id:
+      $ref: '#/UUID'
+  required:
+    - data
+    - timestamp
+
+PaginatedResponse:
+  type: object
+  properties:
+    data:
+      type: array
+      items:
+        type: object
+      description: Array of data items
+    pagination:
+      $ref: '#/Pagination'
+    message:
+      type: string
+      example: "Data retrieved successfully"
+    timestamp:
+      $ref: '#/Timestamp'
+    trace_id:
+      $ref: '#/UUID'
+  required:
+    - data
+    - pagination
+    - timestamp
+
+Pagination:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 1000
+      example: 50
+    offset:
+      type: integer
+      minimum: 0
+      example: 0
+    total:
+      type: integer
+      minimum: 0
+      example: 1500
+    has_next:
+      type: boolean
+      example: true
+    has_previous:
+      type: boolean
+      example: false
+  required:
+    - limit
+    - offset
+    - total
+    - has_next
+    - has_previous
+
+ErrorResponse:
+  type: object
+  properties:
+    type:
+      type: string
+      format: uri
+      example: "https://api.finalex.io/problems/validation-error"
+    title:
+      type: string
+      example: "Validation Error"
+    status:
+      type: integer
+      example: 400
+    detail:
+      type: string
+      example: "The request contains invalid parameters"
+    instance:
+      type: string
+      example: "/api/v1/trading/orders"
+    timestamp:
+      $ref: '#/Timestamp'
+    trace_id:
+      $ref: '#/UUID'
+  required:
+    - type
+    - title
+    - status
+    - detail
+    - timestamp
+
+Address:
+  type: object
+  properties:
+    street:
+      type: string
+      maxLength: 100
+    city:
+      type: string
+      maxLength: 50
+    state:
+      type: string
+      maxLength: 50
+    postal_code:
+      type: string
+      maxLength: 20
+    country:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      example: "US"
+  required:
+    - street
+    - city
+    - country

@@ -1,0 +1,166 @@
+check:
+  post:
+    tags:
+      - Compliance
+    summary: Perform compliance check
+    description: Perform a comprehensive compliance check for a transaction or user
+    operationId: performComplianceCheck
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/compliance.yaml#/ComplianceCheckRequest'
+    responses:
+      '200':
+        description: Compliance check completed
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/compliance.yaml#/ComplianceCheckResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+userStatus:
+  get:
+    tags:
+      - Compliance
+    summary: Get user compliance status
+    description: Get current compliance status for a specific user
+    operationId: getUserComplianceStatus
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: User compliance status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/compliance.yaml#/UserComplianceStatus'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+alerts:
+  get:
+    tags:
+      - Compliance
+    summary: Get compliance alerts
+    description: Retrieve compliance monitoring alerts
+    operationId: getComplianceAlerts
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: severity
+        in: query
+        description: Filter by alert severity
+        schema:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+      - name: status
+        in: query
+        description: Filter by alert status
+        schema:
+          type: string
+          enum: [OPEN, INVESTIGATING, RESOLVED, FALSE_POSITIVE]
+      - name: type
+        in: query
+        description: Filter by alert type
+        schema:
+          type: string
+          enum: [AML, SANCTIONS, FRAUD, MARKET_ABUSE, SUSPICIOUS_ACTIVITY]
+      - $ref: '../openapi.yaml#/components/parameters/StartTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/EndTimeParam'
+      - $ref: '../openapi.yaml#/components/parameters/LimitParam'
+      - $ref: '../openapi.yaml#/components/parameters/OffsetParam'
+    responses:
+      '200':
+        description: Compliance alerts retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../schemas/compliance.yaml#/ComplianceAlert'
+                pagination:
+                  $ref: '../schemas/common.yaml#/Pagination'
+                summary:
+                  type: object
+                  properties:
+                    total_open:
+                      type: integer
+                    critical_alerts:
+                      type: integer
+                    high_priority:
+                      type: integer
+                    avg_resolution_time:
+                      type: integer
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+  post:
+    tags:
+      - Compliance
+    summary: Create compliance alert
+    description: Create a new compliance alert
+    operationId: createComplianceAlert
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/compliance.yaml#/CreateAlertRequest'
+    responses:
+      '201':
+        description: Compliance alert created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/compliance.yaml#/ComplianceAlert'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+manipulationDetect:
+  post:
+    tags:
+      - Compliance
+    summary: Detect market manipulation
+    description: Analyze trading patterns for potential market manipulation
+    operationId: detectMarketManipulation
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/compliance.yaml#/ManipulationDetectionRequest'
+    responses:
+      '200':
+        description: Manipulation detection analysis completed
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/compliance.yaml#/ManipulationDetectionResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'

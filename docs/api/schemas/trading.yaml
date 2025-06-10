@@ -1,0 +1,405 @@
+TradingPair:
+  type: object
+  properties:
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    base_asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    quote_asset:
+      $ref: '../schemas/common.yaml#/Currency'
+    status:
+      type: string
+      enum: [ACTIVE, INACTIVE, SUSPENDED, MAINTENANCE]
+      example: "ACTIVE"
+    min_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    max_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    quantity_step:
+      $ref: '../schemas/common.yaml#/Decimal'
+    min_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    max_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price_step:
+      $ref: '../schemas/common.yaml#/Decimal'
+    min_notional:
+      $ref: '../schemas/common.yaml#/Decimal'
+    max_notional:
+      $ref: '../schemas/common.yaml#/Decimal'
+    base_precision:
+      type: integer
+      minimum: 0
+      maximum: 18
+      example: 8
+    quote_precision:
+      type: integer
+      minimum: 0
+      maximum: 18
+      example: 2
+    maker_fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    taker_fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    trading_hours:
+      type: object
+      properties:
+        timezone:
+          type: string
+          example: "UTC"
+        schedule:
+          type: array
+          items:
+            type: object
+            properties:
+              day:
+                type: string
+                enum: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+              open:
+                type: string
+                pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$'
+                example: "09:00"
+              close:
+                type: string
+                pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$'
+                example: "17:00"
+              closed:
+                type: boolean
+                default: false
+    statistics:
+      type: object
+      properties:
+        last_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+        price_change_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        price_change_percentage_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        high_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        low_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        volume_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        quote_volume_24h:
+          $ref: '../schemas/common.yaml#/Decimal'
+        bid_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+        ask_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+        spread:
+          $ref: '../schemas/common.yaml#/Decimal'
+        spread_percentage:
+          $ref: '../schemas/common.yaml#/Decimal'
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - symbol
+    - base_asset
+    - quote_asset
+    - status
+    - min_quantity
+    - max_quantity
+    - quantity_step
+    - min_price
+    - max_price
+    - price_step
+    - min_notional
+    - base_precision
+    - quote_precision
+    - maker_fee
+    - taker_fee
+
+PlaceOrderRequest:
+  type: object
+  properties:
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    side:
+      type: string
+      enum: [BUY, SELL]
+      example: "BUY"
+    type:
+      type: string
+      enum: [LIMIT, MARKET, STOP_LIMIT, STOP_MARKET, IOC, FOK, ICEBERG, HIDDEN, GTD, OCO, TRAILING_STOP, TWAP, VWAP]
+      example: "LIMIT"
+    quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Required for LIMIT orders
+    stop_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: Required for STOP orders
+    time_in_force:
+      type: string
+      enum: [GTC, IOC, FOK, GTD]
+      default: "GTC"
+      example: "GTC"
+    display_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+      description: For ICEBERG orders
+    expires_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+      description: Required for GTD orders
+    reduce_only:
+      type: boolean
+      default: false
+      description: For margin/futures positions
+    post_only:
+      type: boolean
+      default: false
+      description: Order will only be placed if it adds liquidity
+    client_order_id:
+      type: string
+      maxLength: 50
+      description: Client-specified order ID
+    advanced_options:
+      type: object
+      properties:
+        self_trade_prevention:
+          type: string
+          enum: [NONE, EXPIRE_TAKER, EXPIRE_MAKER, EXPIRE_BOTH]
+          default: "EXPIRE_TAKER"
+        trailing_percent:
+          $ref: '../schemas/common.yaml#/Decimal'
+          description: For TRAILING_STOP orders
+        trailing_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+          description: For TRAILING_STOP orders
+        oco_stop_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+          description: Stop price for OCO orders
+        oco_stop_limit_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+          description: Stop limit price for OCO orders
+        twap_duration:
+          type: integer
+          description: TWAP execution duration in minutes
+        vwap_target_volume:
+          $ref: '../schemas/common.yaml#/Decimal'
+          description: Target volume for VWAP orders
+  required:
+    - symbol
+    - side
+    - type
+    - quantity
+
+Order:
+  type: object
+  properties:
+    id:
+      $ref: '../schemas/common.yaml#/UUID'
+    user_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    side:
+      type: string
+      enum: [BUY, SELL]
+    type:
+      type: string
+      enum: [LIMIT, MARKET, STOP_LIMIT, STOP_MARKET, IOC, FOK, ICEBERG, HIDDEN, GTD, OCO, TRAILING_STOP, TWAP, VWAP]
+    status:
+      type: string
+      enum: [NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED, TRIGGERED]
+    quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    filled_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    remaining_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    average_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    stop_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    time_in_force:
+      type: string
+      enum: [GTC, IOC, FOK, GTD]
+    display_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    client_order_id:
+      type: string
+    reduce_only:
+      type: boolean
+    post_only:
+      type: boolean
+    fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    created_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    updated_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    filled_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    expires_at:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    trades:
+      type: array
+      items:
+        $ref: '#/Trade'
+    rejection_reason:
+      type: string
+      description: Reason for rejection (if status is REJECTED)
+    advanced_info:
+      type: object
+      properties:
+        self_trade_prevention:
+          type: string
+          enum: [NONE, EXPIRE_TAKER, EXPIRE_MAKER, EXPIRE_BOTH]
+        trailing_percent:
+          $ref: '../schemas/common.yaml#/Decimal'
+        trailing_amount:
+          $ref: '../schemas/common.yaml#/Decimal'
+        current_stop_price:
+          $ref: '../schemas/common.yaml#/Decimal'
+        oco_orders:
+          type: array
+          items:
+            $ref: '../schemas/common.yaml#/UUID'
+        parent_order_id:
+          $ref: '../schemas/common.yaml#/UUID'
+        child_orders:
+          type: array
+          items:
+            $ref: '../schemas/common.yaml#/UUID'
+  required:
+    - id
+    - user_id
+    - symbol
+    - side
+    - type
+    - status
+    - quantity
+    - filled_quantity
+    - remaining_quantity
+    - created_at
+    - updated_at
+
+Trade:
+  type: object
+  properties:
+    id:
+      $ref: '../schemas/common.yaml#/UUID'
+    order_id:
+      $ref: '../schemas/common.yaml#/UUID'
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    side:
+      type: string
+      enum: [BUY, SELL]
+    quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee:
+      $ref: '../schemas/common.yaml#/Decimal'
+    fee_currency:
+      $ref: '../schemas/common.yaml#/Currency'
+    is_maker:
+      type: boolean
+      description: Whether this trade was the maker (liquidity provider)
+    trade_time:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    counterparty_order_id:
+      $ref: '../schemas/common.yaml#/UUID'
+      description: Order ID of the counterparty
+  required:
+    - id
+    - order_id
+    - symbol
+    - side
+    - quantity
+    - price
+    - fee
+    - fee_currency
+    - is_maker
+    - trade_time
+
+OrderBook:
+  type: object
+  properties:
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    timestamp:
+      $ref: '../schemas/common.yaml#/Timestamp'
+    sequence:
+      type: integer
+      description: Order book sequence number for synchronization
+    bids:
+      type: array
+      items:
+        $ref: '#/OrderBookLevel'
+      description: Buy orders (highest price first)
+    asks:
+      type: array
+      items:
+        $ref: '#/OrderBookLevel'
+      description: Sell orders (lowest price first)
+    checksum:
+      type: string
+      description: CRC32 checksum for data integrity verification
+  required:
+    - symbol
+    - timestamp
+    - sequence
+    - bids
+    - asks
+
+OrderBookLevel:
+  type: array
+  items:
+    - $ref: '../schemas/common.yaml#/Decimal'  # price
+    - $ref: '../schemas/common.yaml#/Decimal'  # quantity
+    - type: integer  # number of orders
+  minItems: 3
+  maxItems: 3
+  example: ["50000.00", "1.5", 3]
+
+MarketStatistics:
+  type: object
+  properties:
+    symbol:
+      $ref: '../schemas/common.yaml#/TradingSymbol'
+    last_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price_change_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    price_change_percentage_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    high_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    low_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    volume_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    quote_volume_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    open_24h:
+      $ref: '../schemas/common.yaml#/Decimal'
+    bid_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    bid_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    ask_price:
+      $ref: '../schemas/common.yaml#/Decimal'
+    ask_quantity:
+      $ref: '../schemas/common.yaml#/Decimal'
+    spread:
+      $ref: '../schemas/common.yaml#/Decimal'
+    spread_percentage:
+      $ref: '../schemas/common.yaml#/Decimal'
+    trade_count_24h:
+      type: integer
+    timestamp:
+      $ref: '../schemas/common.yaml#/Timestamp'
+  required:
+    - symbol
+    - last_price
+    - timestamp

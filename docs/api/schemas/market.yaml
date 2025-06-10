@@ -1,0 +1,478 @@
+TickerData:
+  type: object
+  required:
+    - symbol
+    - lastPrice
+    - priceChange
+    - priceChangePercent
+    - volume
+    - quoteVolume
+    - high
+    - low
+    - open
+    - close
+    - timestamp
+    - count
+  properties:
+    symbol:
+      type: string
+      description: Trading pair symbol
+      example: BTCUSDT
+    lastPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Last traded price
+      example: "50000.00"
+    priceChange:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr price change
+      example: "1234.56"
+    priceChangePercent:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr price change percentage
+      example: "2.53"
+    weightedAvgPrice:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr weighted average price
+      example: "49876.54"
+    prevClosePrice:
+      $ref: './common.yaml#/Decimal'
+      description: Previous close price
+      example: "48765.44"
+    bidPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Best bid price
+      example: "49999.99"
+    bidQty:
+      $ref: './common.yaml#/Decimal'
+      description: Best bid quantity
+      example: "1.5"
+    askPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Best ask price
+      example: "50000.01"
+    askQty:
+      $ref: './common.yaml#/Decimal'
+      description: Best ask quantity
+      example: "2.0"
+    open:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr opening price
+      example: "48765.44"
+    high:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr high price
+      example: "51000.00"
+    low:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr low price
+      example: "49000.00"
+    close:
+      $ref: './common.yaml#/Decimal'
+      description: Last price (same as lastPrice)
+      example: "50000.00"
+    volume:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr base asset volume
+      example: "1234.567"
+    quoteVolume:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr quote asset volume
+      example: "61728350.00"
+    openTime:
+      type: integer
+      format: int64
+      description: 24hr open time in milliseconds
+      example: 1640908800000
+    closeTime:
+      type: integer
+      format: int64
+      description: 24hr close time in milliseconds
+      example: 1640995199999
+    timestamp:
+      type: integer
+      format: int64
+      description: Ticker timestamp in milliseconds
+      example: 1640995200000
+    count:
+      type: integer
+      description: Number of trades in 24hr
+      example: 12345
+
+OrderBook:
+  type: object
+  required:
+    - symbol
+    - lastUpdateId
+    - bids
+    - asks
+  properties:
+    symbol:
+      type: string
+      description: Trading pair symbol
+      example: BTCUSDT
+    lastUpdateId:
+      type: integer
+      format: int64
+      description: Last update ID for the order book
+      example: 1234567890
+    bids:
+      type: array
+      description: Bid orders (price, quantity)
+      items:
+        type: array
+        items:
+          type: string
+        minItems: 2
+        maxItems: 2
+        example: ["50000.00", "1.5"]
+    asks:
+      type: array
+      description: Ask orders (price, quantity)
+      items:
+        type: array
+        items:
+          type: string
+        minItems: 2
+        maxItems: 2
+        example: ["50001.00", "1.2"]
+    depth:
+      type: integer
+      description: Order book depth
+      example: 20
+
+RecentTrade:
+  type: object
+  required:
+    - id
+    - price
+    - qty
+    - quoteQty
+    - time
+    - isBuyerMaker
+  properties:
+    id:
+      type: integer
+      format: int64
+      description: Trade ID
+      example: 123456789
+    price:
+      $ref: './common.yaml#/Decimal'
+      description: Trade price
+      example: "50000.00"
+    qty:
+      $ref: './common.yaml#/Decimal'
+      description: Trade quantity
+      example: "0.001"
+    quoteQty:
+      $ref: './common.yaml#/Decimal'
+      description: Quote asset quantity
+      example: "50.00"
+    time:
+      type: integer
+      format: int64
+      description: Trade time in milliseconds
+      example: 1640995200000
+    isBuyerMaker:
+      type: boolean
+      description: Whether the buyer is maker
+      example: false
+
+Kline:
+  type: array
+  description: Kline/Candlestick data
+  items:
+    oneOf:
+      - type: integer
+        format: int64
+        description: Open time
+      - type: string
+        description: Open price
+      - type: string
+        description: High price
+      - type: string
+        description: Low price
+      - type: string
+        description: Close price
+      - type: string
+        description: Volume
+      - type: integer
+        format: int64
+        description: Close time
+      - type: string
+        description: Quote asset volume
+      - type: integer
+        description: Number of trades
+      - type: string
+        description: Taker buy base asset volume
+      - type: string
+        description: Taker buy quote asset volume
+      - type: string
+        description: Unused field, ignore
+  minItems: 12
+  maxItems: 12
+  example: [
+    1640995200000,
+    "50000.00",
+    "51000.00",
+    "49500.00",
+    "50500.00",
+    "123.456",
+    1640995259999,
+    "6234567.89",
+    1234,
+    "61.728",
+    "3117283.95",
+    "0"
+  ]
+
+ExchangeInfo:
+  type: object
+  required:
+    - timezone
+    - serverTime
+    - rateLimits
+    - exchangeFilters
+    - symbols
+  properties:
+    timezone:
+      type: string
+      description: Exchange timezone
+      example: UTC
+    serverTime:
+      type: integer
+      format: int64
+      description: Current server time in milliseconds
+      example: 1640995200000
+    rateLimits:
+      type: array
+      description: Rate limit rules
+      items:
+        $ref: '#/RateLimit'
+    exchangeFilters:
+      type: array
+      description: Exchange-wide filters
+      items:
+        type: object
+        additionalProperties: true
+    symbols:
+      type: array
+      description: Trading symbols information
+      items:
+        $ref: '#/SymbolInfo'
+
+RateLimit:
+  type: object
+  required:
+    - rateLimitType
+    - interval
+    - intervalNum
+    - limit
+  properties:
+    rateLimitType:
+      type: string
+      enum: [REQUEST_WEIGHT, ORDERS, RAW_REQUESTS]
+      description: Rate limit type
+      example: REQUEST_WEIGHT
+    interval:
+      type: string
+      enum: [SECOND, MINUTE, DAY]
+      description: Time interval
+      example: MINUTE
+    intervalNum:
+      type: integer
+      description: Interval number
+      example: 1
+    limit:
+      type: integer
+      description: Limit value
+      example: 1200
+
+SymbolInfo:
+  type: object
+  required:
+    - symbol
+    - status
+    - baseAsset
+    - baseAssetPrecision
+    - quoteAsset
+    - quotePrecision
+    - orderTypes
+    - icebergAllowed
+    - ocoAllowed
+    - isSpotTradingAllowed
+    - isMarginTradingAllowed
+    - filters
+    - permissions
+  properties:
+    symbol:
+      type: string
+      description: Trading pair symbol
+      example: BTCUSDT
+    status:
+      type: string
+      enum: [TRADING, HALT, BREAK]
+      description: Symbol status
+      example: TRADING
+    baseAsset:
+      type: string
+      description: Base asset
+      example: BTC
+    baseAssetPrecision:
+      type: integer
+      description: Base asset precision
+      example: 8
+    quoteAsset:
+      type: string
+      description: Quote asset
+      example: USDT
+    quotePrecision:
+      type: integer
+      description: Quote asset precision
+      example: 8
+    quoteAssetPrecision:
+      type: integer
+      description: Quote asset precision (alternative)
+      example: 8
+    orderTypes:
+      type: array
+      description: Allowed order types
+      items:
+        type: string
+        enum: [LIMIT, LIMIT_MAKER, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT]
+      example: [LIMIT, MARKET, STOP_LOSS_LIMIT]
+    icebergAllowed:
+      type: boolean
+      description: Whether iceberg orders are allowed
+      example: true
+    ocoAllowed:
+      type: boolean
+      description: Whether OCO orders are allowed
+      example: true
+    isSpotTradingAllowed:
+      type: boolean
+      description: Whether spot trading is allowed
+      example: true
+    isMarginTradingAllowed:
+      type: boolean
+      description: Whether margin trading is allowed
+      example: true
+    filters:
+      type: array
+      description: Symbol filters
+      items:
+        type: object
+        additionalProperties: true
+    permissions:
+      type: array
+      description: Trading permissions
+      items:
+        type: string
+        enum: [SPOT, MARGIN, LEVERAGED, TRD_GRP_002, TRD_GRP_003]
+      example: [SPOT]
+
+SymbolPrice:
+  type: object
+  required:
+    - symbol
+    - price
+  properties:
+    symbol:
+      type: string
+      description: Trading pair symbol
+      example: BTCUSDT
+    price:
+      $ref: './common.yaml#/Decimal'
+      description: Current price
+      example: "50000.00"
+
+MarketStats:
+  type: object
+  required:
+    - symbol
+    - priceChange
+    - priceChangePercent
+    - weightedAvgPrice
+    - prevClosePrice
+    - lastPrice
+    - lastQty
+    - bidPrice
+    - askPrice
+    - openPrice
+    - highPrice
+    - lowPrice
+    - volume
+    - quoteVolume
+    - openTime
+    - closeTime
+    - count
+  properties:
+    symbol:
+      type: string
+      description: Trading pair symbol
+      example: BTCUSDT
+    priceChange:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr price change
+      example: "1234.56"
+    priceChangePercent:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr price change percentage
+      example: "2.53"
+    weightedAvgPrice:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr weighted average price
+      example: "49876.54"
+    prevClosePrice:
+      $ref: './common.yaml#/Decimal'
+      description: Previous close price
+      example: "48765.44"
+    lastPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Last traded price
+      example: "50000.00"
+    lastQty:
+      $ref: './common.yaml#/Decimal'
+      description: Last traded quantity
+      example: "0.001"
+    bidPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Best bid price
+      example: "49999.99"
+    askPrice:
+      $ref: './common.yaml#/Decimal'
+      description: Best ask price
+      example: "50000.01"
+    openPrice:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr opening price
+      example: "48765.44"
+    highPrice:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr high price
+      example: "51000.00"
+    lowPrice:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr low price
+      example: "49000.00"
+    volume:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr base asset volume
+      example: "1234.567"
+    quoteVolume:
+      $ref: './common.yaml#/Decimal'
+      description: 24hr quote asset volume
+      example: "61728350.00"
+    openTime:
+      type: integer
+      format: int64
+      description: 24hr open time in milliseconds
+      example: 1640908800000
+    closeTime:
+      type: integer
+      format: int64
+      description: 24hr close time in milliseconds
+      example: 1640995199999
+    count:
+      type: integer
+      description: Number of trades in 24hr
+      example: 12345

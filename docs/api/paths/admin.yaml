@@ -1,0 +1,713 @@
+users:
+  get:
+    tags:
+      - Admin - User Management
+    summary: List users
+    description: Retrieve paginated list of users with filtering options
+    operationId: listUsers
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: page
+        in: query
+        required: false
+        description: Page number
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: limit
+        in: query
+        required: false
+        description: Items per page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      - name: search
+        in: query
+        required: false
+        description: Search by email, username, or name
+        schema:
+          type: string
+          maxLength: 100
+      - name: status
+        in: query
+        required: false
+        description: Filter by account status
+        schema:
+          type: string
+          enum: [active, inactive, suspended, banned]
+      - name: kycStatus
+        in: query
+        required: false
+        description: Filter by KYC status
+        schema:
+          type: string
+          enum: [pending, verified, rejected, expired]
+      - name: createdAfter
+        in: query
+        required: false
+        description: Filter by creation date (after)
+        schema:
+          type: string
+          format: date-time
+      - name: createdBefore
+        in: query
+        required: false
+        description: Filter by creation date (before)
+        schema:
+          type: string
+          format: date-time
+    responses:
+      '200':
+        description: Users retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/UserListResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  post:
+    tags:
+      - Admin - User Management
+    summary: Create user
+    description: Create a new user account with admin privileges
+    operationId: createUser
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/CreateUserRequest'
+    responses:
+      '201':
+        description: User created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/AdminUserResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '409':
+        $ref: '../openapi.yaml#/components/responses/Conflict'
+
+user_detail:
+  get:
+    tags:
+      - Admin - User Management
+    summary: Get user details
+    description: Retrieve detailed information about a specific user
+    operationId: getUserDetails
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: User details retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/AdminUserResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  put:
+    tags:
+      - Admin - User Management
+    summary: Update user
+    description: Update user account information and settings
+    operationId: updateUser
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/UpdateUserRequest'
+    responses:
+      '200':
+        description: User updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/AdminUserResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  delete:
+    tags:
+      - Admin - User Management
+    summary: Delete user
+    description: Soft delete a user account (deactivate)
+    operationId: deleteUser
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '204':
+        description: User deleted successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+user_status:
+  patch:
+    tags:
+      - Admin - User Management
+    summary: Update user status
+    description: Update user account status (active, suspended, banned)
+    operationId: updateUserStatus
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/UpdateUserStatusRequest'
+    responses:
+      '200':
+        description: User status updated successfully
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+user_sessions:
+  get:
+    tags:
+      - Admin - User Management
+    summary: Get user sessions
+    description: Retrieve active sessions for a specific user
+    operationId: getUserSessions
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: User sessions retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/admin.yaml#/UserSession'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  delete:
+    tags:
+      - Admin - User Management
+    summary: Invalidate user sessions
+    description: Invalidate all active sessions for a specific user
+    operationId: invalidateUserSessions
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '204':
+        description: User sessions invalidated successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+system_stats:
+  get:
+    tags:
+      - Admin - System Management
+    summary: Get system statistics
+    description: Retrieve comprehensive system statistics and metrics
+    operationId: getSystemStats
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: System statistics retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/SystemStats'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+system_health:
+  get:
+    tags:
+      - Admin - System Management
+    summary: Get system health
+    description: Retrieve system health status and service availability
+    operationId: getSystemHealth
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: System health retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/SystemHealth'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+maintenance_mode:
+  post:
+    tags:
+      - Admin - System Management
+    summary: Enable maintenance mode
+    description: Enable system maintenance mode to restrict access
+    operationId: enableMaintenanceMode
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/MaintenanceModeRequest'
+    responses:
+      '200':
+        description: Maintenance mode enabled successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  delete:
+    tags:
+      - Admin - System Management
+    summary: Disable maintenance mode
+    description: Disable system maintenance mode to restore normal operation
+    operationId: disableMaintenanceMode
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Maintenance mode disabled successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+cache_flush:
+  post:
+    tags:
+      - Admin - System Management
+    summary: Flush system cache
+    description: Clear system caches to force data refresh
+    operationId: flushCache
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/CacheFlushRequest'
+    responses:
+      '200':
+        description: Cache flushed successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+audit_log:
+  get:
+    tags:
+      - Admin - Audit & Monitoring
+    summary: Get system audit log
+    description: Retrieve system-wide audit log entries
+    operationId: getSystemAuditLog
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: action
+        in: query
+        required: false
+        description: Filter by action type
+        schema:
+          type: string
+          example: user.login
+      - name: userId
+        in: query
+        required: false
+        description: Filter by user ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+      - name: startTime
+        in: query
+        required: false
+        description: Start time filter
+        schema:
+          type: string
+          format: date-time
+      - name: endTime
+        in: query
+        required: false
+        description: End time filter
+        schema:
+          type: string
+          format: date-time
+      - $ref: '../openapi.yaml#/components/parameters/Page'
+      - $ref: '../openapi.yaml#/components/parameters/PerPage'
+    responses:
+      '200':
+        description: Audit log retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/AuditLogResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+trading_pairs:
+  get:
+    tags:
+      - Admin - Trading Management
+    summary: Get trading pairs
+    description: Retrieve all trading pairs with their configurations
+    operationId: getTradingPairs
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Trading pairs retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/admin.yaml#/TradingPair'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  post:
+    tags:
+      - Admin - Trading Management
+    summary: Create trading pair
+    description: Create a new trading pair
+    operationId: createTradingPair
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/CreateTradingPairRequest'
+    responses:
+      '201':
+        description: Trading pair created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/TradingPair'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+trading_pair:
+  put:
+    tags:
+      - Admin - Trading Management
+    summary: Update trading pair
+    description: Update trading pair configuration
+    operationId: updateTradingPair
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/UpdateTradingPairRequest'
+    responses:
+      '200':
+        description: Trading pair updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/TradingPair'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  delete:
+    tags:
+      - Admin - Trading Management
+    summary: Disable trading pair
+    description: Disable a trading pair (soft delete)
+    operationId: disableTradingPair
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: Trading pair symbol
+        schema:
+          type: string
+          example: BTCUSDT
+    responses:
+      '204':
+        description: Trading pair disabled successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+rate_limits:
+  get:
+    tags:
+      - Admin - System Management
+    summary: Get rate limit statistics
+    description: Retrieve current rate limiting statistics and configurations
+    operationId: getRateLimitStats
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Rate limit statistics retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/RateLimitStats'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+api_keys:
+  get:
+    tags:
+      - Admin - API Management
+    summary: List API keys
+    description: Retrieve list of API keys for a user or system-wide
+    operationId: listAPIKeys
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: userId
+        in: query
+        required: false
+        description: Filter by user ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+      - name: status
+        in: query
+        required: false
+        description: Filter by status
+        schema:
+          type: string
+          enum: [active, revoked, expired]
+      - $ref: '../openapi.yaml#/components/parameters/Page'
+      - $ref: '../openapi.yaml#/components/parameters/PerPage'
+    responses:
+      '200':
+        description: API keys retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/APIKeyListResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+  post:
+    tags:
+      - Admin - API Management
+    summary: Create API key
+    description: Create a new API key for a user
+    operationId: createAPIKey
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/admin.yaml#/CreateAPIKeyRequest'
+    responses:
+      '201':
+        description: API key created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/APIKeyResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+
+api_key:
+  delete:
+    tags:
+      - Admin - API Management
+    summary: Revoke API key
+    description: Revoke an API key to disable access
+    operationId: revokeAPIKey
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        description: API key ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '204':
+        description: API key revoked successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+api_key_usage:
+  get:
+    tags:
+      - Admin - API Management
+    summary: Get API key usage
+    description: Retrieve usage statistics for an API key
+    operationId: getAPIKeyUsage
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        description: API key ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+      - name: startTime
+        in: query
+        required: false
+        description: Start time for usage statistics
+        schema:
+          type: string
+          format: date-time
+      - name: endTime
+        in: query
+        required: false
+        description: End time for usage statistics
+        schema:
+          type: string
+          format: date-time
+    responses:
+      '200':
+        description: API key usage retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/admin.yaml#/APIKeyUsage'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/Forbidden'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'

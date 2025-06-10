@@ -1,0 +1,994 @@
+openapi: 3.0.3
+info:
+  title: Finalex Cryptocurrency Exchange API
+  version: 1.0.0
+  description: |
+    Comprehensive API documentation for the Finalex cryptocurrency exchange platform.
+    
+    This API provides complete access to all platform functionality including:
+    - User authentication and account management
+    - Trading operations (spot, cross-pair, advanced orders)
+    - Wallet and balance management
+    - Market data and analytics
+    - Compliance and risk management
+    - Administrative functions
+    
+    ## Real-time Data
+    
+    For real-time market data and account updates, use our WebSocket API:
+    - **WebSocket Endpoint**: `wss://ws.finalex.io`
+    - **AsyncAPI Documentation**: See `asyncapi.yaml` for complete WebSocket API specification
+    - **Supported Channels**: ticker, orderbook, trades, klines, account, orders, user_trades, notifications
+    
+    ## Authentication
+    
+    The API uses multiple authentication methods:
+    - **Bearer Token**: JWT tokens for user authentication
+    - **API Key**: For programmatic access with configurable permissions
+    - **HMAC Signature**: For high-security operations requiring request signing
+    
+    ### Authentication Examples
+    
+    **JWT Bearer Token:**
+    ```
+    Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+    ```
+    
+    **API Key:**
+    ```
+    X-API-Key: pk_live_abc123def456ghi789
+    X-API-Secret: sk_live_xyz789uvw456rst123
+    ```
+    
+    **HMAC Signature:**
+    ```
+    X-API-Key: pk_live_abc123def456ghi789
+    X-API-Timestamp: 1672531200000
+    X-API-Signature: calculated_hmac_signature
+    ```
+    
+    ## Rate Limiting
+    
+    All endpoints are rate limited based on user tier and endpoint sensitivity:
+    - **Basic Tier**: 100 requests/minute (public endpoints), 50 requests/minute (private)
+    - **Premium Tier**: 1000 requests/minute (public), 500 requests/minute (private)
+    - **VIP Tier**: 10000 requests/minute (public), 5000 requests/minute (private)
+    - **Admin**: 50000 requests/minute
+    
+    Rate limit headers are included in all responses:
+    ```
+    X-RateLimit-Limit: 1000
+    X-RateLimit-Remaining: 999
+    X-RateLimit-Reset: 1672531260
+    ```
+    
+    ## Error Handling
+    
+    All errors follow RFC 7807 Problem Details standard with consistent structure:
+    
+    ```json
+    {
+      "type": "https://finalex.io/problems/validation-error",
+      "title": "Validation Error",
+      "status": 400,
+      "detail": "The request contains invalid parameters",
+      "instance": "/api/v1/trading/orders",
+      "errors": [
+        {
+          "field": "quantity",
+          "code": "INVALID_FORMAT",
+          "message": "Quantity must be a positive decimal"
+        }
+      ],
+      "trace_id": "req_123e4567-e89b-12d3-a456-426614174000"
+    }
+    ```
+    
+    ## Pagination
+    
+    List endpoints support cursor-based pagination for optimal performance:
+    
+    **Request:**
+    ```
+    GET /api/v1/trading/orders?limit=50&cursor=eyJpZCI6IjEyMyJ9
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "data": [...],
+      "pagination": {
+        "limit": 50,
+        "has_more": true,
+        "next_cursor": "eyJpZCI6IjE3MyJ9",
+        "prev_cursor": "eyJpZCI6IjczIn0="
+      }
+    }
+    ```
+    
+    ## Webhooks
+    
+    Finalex supports webhooks for receiving real-time notifications about account events:
+    - Order status changes
+    - Trade executions
+    - Balance updates
+    - Security events
+    - Compliance alerts
+    
+    Configure webhooks through the admin API or user dashboard.
+    
+    ## WebSocket Integration
+    
+    For optimal real-time experience, combine REST and WebSocket APIs:
+    
+    1. **Authentication**: Use REST API to obtain JWT token
+    2. **Initial Data**: Fetch current state via REST endpoints
+    3. **Real-time Updates**: Connect to WebSocket for live updates
+    4. **Actions**: Execute trades and operations via REST API
+    
+    ### Example Integration Flow
+    
+    ```javascript
+    // 1. Authenticate and get initial data
+    const auth = await fetch('/api/v1/auth/login', { ... });
+    const token = auth.data.access_token;
+    
+    // 2. Get current account balance
+    const balance = await fetch('/api/v1/wallet/balance', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    // 3. Connect to WebSocket for real-time updates
+    const ws = new WebSocket(`wss://ws.finalex.io?token=${token}`);
+    ws.send(JSON.stringify({
+      method: 'subscribe',
+      params: { channel: 'account' }
+    }));
+    
+    // 4. Execute trades via REST while receiving updates via WebSocket
+    const order = await fetch('/api/v1/trading/orders', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ ... })
+    });
+    ```
+
+servers:
+  - url: https://api.finalex.io
+    description: Production server
+  - url: https://api-staging.finalex.io
+    description: Staging server
+  - url: http://localhost:8080
+    description: Development server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+  - HmacAuth: []
+
+paths:
+  # Health and System Endpoints
+  /health:
+    $ref: './paths/system.yaml#/health'
+  /version:
+    $ref: './paths/system.yaml#/version'
+  
+  # Authentication Endpoints
+  /api/v1/identities/register:
+    $ref: './paths/auth.yaml#/register'
+  /api/v1/identities/login:
+    $ref: './paths/auth.yaml#/login'
+  /api/v1/identities/logout:
+    $ref: './paths/auth.yaml#/logout'
+  /api/v1/identities/refresh:
+    $ref: './paths/auth.yaml#/refresh'
+  /api/v1/identities/me:
+    $ref: './paths/auth.yaml#/me'
+  /api/v1/identities/2fa/enable:
+    $ref: './paths/auth.yaml#/enable2fa'
+  /api/v1/identities/2fa/verify:
+    $ref: './paths/auth.yaml#/verify2fa'
+  /api/v1/identities/2fa/disable:
+    $ref: './paths/auth.yaml#/disable2fa'
+  /api/v1/identities/kyc/submit:
+    $ref: './paths/auth.yaml#/kycSubmit'
+  /api/v1/identities/kyc/status:
+    $ref: './paths/auth.yaml#/kycStatus'
+    
+  # Account Management
+  /api/v1/accounts:
+    $ref: './paths/accounts.yaml#/accounts'
+  /api/v1/accounts/{currency}:
+    $ref: './paths/accounts.yaml#/accountByCurrency'
+  /api/v1/accounts/{currency}/transactions:
+    $ref: './paths/accounts.yaml#/accountTransactions'
+    
+  # Trading Endpoints
+  /api/v1/trading/pairs:
+    $ref: './paths/trading.yaml#/tradingPairs'
+  /api/v1/trading/pairs/{symbol}:
+    $ref: './paths/trading.yaml#/tradingPair'
+  /api/v1/trading/orders:
+    $ref: './paths/trading.yaml#/orders'
+  /api/v1/trading/orders/{id}:
+    $ref: './paths/trading.yaml#/order'
+  /api/v1/trading/orderbook/{symbol}:
+    $ref: './paths/trading.yaml#/orderbook'
+    
+  # Cross-Pair Trading
+  /api/v1/crosspair/orders:
+    $ref: './paths/crosspair.yaml#/orders'
+  /api/v1/crosspair/orders/{orderID}:
+    $ref: './paths/crosspair.yaml#/order'
+  /api/v1/crosspair/quote:
+    $ref: './paths/crosspair.yaml#/quote'
+  /api/v1/crosspair/routes:
+    $ref: './paths/crosspair.yaml#/routes'
+  /api/v1/crosspair/status:
+    $ref: './paths/crosspair.yaml#/status'
+  /api/v1/crosspair/metrics:
+    $ref: './paths/crosspair.yaml#/metrics'
+    
+  # Market Data
+  /api/v1/market/prices:
+    $ref: './paths/market.yaml#/prices'
+  /api/v1/market/prices/{symbol}:
+    $ref: './paths/market.yaml#/price'
+  /api/v1/market/candles/{symbol}:
+    $ref: './paths/market.yaml#/candles'
+    
+  # Wallet Operations
+  /api/v1/wallet/deposit:
+    $ref: './paths/wallet.yaml#/deposit'
+  /api/v1/wallet/withdrawal:
+    $ref: './paths/wallet.yaml#/withdrawal'
+  /api/v1/wallet/balance:
+    $ref: './paths/wallet.yaml#/balance'
+  /api/v1/wallet/transactions:
+    $ref: './paths/wallet.yaml#/transactions'
+  /api/v1/wallet/address/validate:
+    $ref: './paths/wallet.yaml#/validateAddress'
+    
+  # Fiat Operations
+  /api/v1/fiat/deposit:
+    $ref: './paths/fiat.yaml#/deposit'
+  /api/v1/fiat/withdraw:
+    $ref: './paths/fiat.yaml#/withdrawal'
+  /api/v1/fiat/deposits:
+    $ref: './paths/fiat.yaml#/deposits'
+  /api/v1/fiat/withdrawals:
+    $ref: './paths/fiat.yaml#/withdrawals'
+    
+  # Compliance
+  /api/v1/compliance/check:
+    $ref: './paths/compliance.yaml#/check'
+  /api/v1/compliance/user/{user_id}:
+    $ref: './paths/compliance.yaml#/userStatus'
+  /api/v1/compliance/monitoring/alerts:
+    $ref: './paths/compliance.yaml#/alerts'
+  /api/v1/compliance/manipulation/detect:
+    $ref: './paths/compliance.yaml#/manipulationDetect'
+    
+  # Admin Endpoints
+  /api/v1/admin/users:
+    $ref: './paths/admin.yaml#/users'
+  /api/v1/admin/trading/pairs:
+    $ref: './paths/admin.yaml#/tradingPairs'
+  /api/v1/admin/risk/limits:
+    $ref: './paths/admin.yaml#/riskLimits'
+  /api/v1/admin/system/stats:
+    $ref: './paths/admin.yaml#/systemStats'
+  # WebSocket Endpoints
+  /ws:
+    get:
+      tags:
+        - WebSocket
+      summary: WebSocket Connection Endpoint
+      description: |
+        Establish a WebSocket connection for real-time data streaming.
+        
+        **Connection URL**: `wss://ws.finalex.io`
+        
+        **Authentication**: Pass JWT token or API key as query parameter
+        - `?token=<jwt_token>`
+        - `?api_key=<api_key>`
+        
+        **Supported Channels**:
+        - `ticker` - Real-time price updates
+        - `orderbook` - Order book changes  
+        - `trades` - Public trade executions
+        - `klines` - Candlestick data
+        - `account` - Account balance updates (auth required)
+        - `orders` - Order status changes (auth required)
+        - `user_trades` - User trade executions (auth required)
+        - `notifications` - System notifications (auth required)
+        
+        For complete WebSocket API documentation, see the AsyncAPI specification at `/asyncapi.yaml`
+      parameters:
+        - name: token
+          in: query
+          description: JWT authentication token
+          schema:
+            type: string
+            example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        - name: api_key
+          in: query
+          description: API key for authentication
+          schema:
+            type: string
+            example: "pk_live_abc123def456ghi789"
+      responses:
+        '101':
+          description: WebSocket connection established
+          headers:
+            Upgrade:
+              schema:
+                type: string
+                example: websocket
+            Connection:
+              schema:
+                type: string
+                example: Upgrade
+        '400':
+          description: Invalid WebSocket request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      callbacks:
+        onMessage:
+          '{$request.body#/callback_url}':
+            post:
+              requestBody:
+                description: WebSocket message received
+                content:
+                  application/json:
+                    schema:
+                      oneOf:
+                        - $ref: '#/components/schemas/TickerMessage'
+                        - $ref: '#/components/schemas/OrderBookMessage'
+                        - $ref: '#/components/schemas/TradeMessage'
+                        - $ref: '#/components/schemas/KlineMessage'
+                        - $ref: '#/components/schemas/AccountMessage'
+                        - $ref: '#/components/schemas/OrderMessage'
+                        - $ref: '#/components/schemas/UserTradeMessage'
+                        - $ref: '#/components/schemas/NotificationMessage'
+                        - $ref: '#/components/schemas/ErrorMessage'
+              responses:
+                '200':
+                  description: Message processed successfully
+
+  # WebSocket Documentation Endpoints
+  /websocket-docs:
+    get:
+      tags:
+        - Documentation
+      summary: WebSocket API Documentation
+      description: Get comprehensive WebSocket API documentation
+      responses:
+        '200':
+          description: WebSocket documentation
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '404':
+          description: Documentation not found
+
+  /asyncapi-spec:
+    get:
+      tags:
+        - Documentation  
+      summary: AsyncAPI Specification
+      description: Get AsyncAPI specification for WebSocket endpoints
+      responses:
+        '200':
+          description: AsyncAPI specification
+          content:
+            application/yaml:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from login endpoint
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for programmatic access
+    HmacAuth:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: HMAC signature for sensitive operations
+
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items to return (max 1000)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 50
+    OffsetParam:
+      name: offset
+      in: query
+      description: Number of items to skip
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    StartTimeParam:
+      name: start_time
+      in: query
+      description: Start time filter (ISO 8601)
+      schema:
+        type: string
+        format: date-time
+    EndTimeParam:
+      name: end_time
+      in: query
+      description: End time filter (ISO 8601)
+      schema:
+        type: string
+        format: date-time
+
+  responses:
+    BadRequest:
+      description: Bad request - validation errors
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/problem+json:
+          schema:
+            $ref: './schemas/errors.yaml#/ProblemDetails'
+
+  schemas:
+    # Common schemas
+    UUID:
+      type: string
+      format: uuid
+      example: "123e4567-e89b-12d3-a456-426614174000"
+    Decimal:
+      type: string
+      pattern: '^-?\d+(\.\d+)?$'
+      example: "123.456789"
+    Timestamp:
+      type: string
+      format: date-time
+      example: "2025-06-10T10:30:00Z"
+
+    # WebSocket Message Schemas
+    BaseWebSocketMessage:
+      type: object
+      required:
+        - id
+        - type
+        - timestamp
+      properties:
+        id:
+          type: string
+          description: Unique message identifier
+          example: "msg_123456789"
+        type:
+          type: string
+          description: Message type
+        channel:
+          type: string
+          description: Channel name
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1672531200000
+
+    TickerMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['ticker']
+            channel:
+              type: string
+              enum: ['ticker']
+            data:
+              type: object
+              required:
+                - symbol
+                - price
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                price:
+                  type: string
+                  example: "45678.90"
+                change_24h:
+                  type: string
+                  example: "1234.56"
+                change_percent_24h:
+                  type: string
+                  example: "2.78"
+                volume_24h:
+                  type: string
+                  example: "1234567.89"
+                high_24h:
+                  type: string
+                  example: "46000.00"
+                low_24h:
+                  type: string
+                  example: "44500.00"
+                bid:
+                  type: string
+                  example: "45678.50"
+                ask:
+                  type: string
+                  example: "45679.00"
+
+    OrderBookMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['orderbook_snapshot', 'orderbook_update']
+            channel:
+              type: string
+              enum: ['orderbook']
+            data:
+              type: object
+              required:
+                - symbol
+                - sequence
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                sequence:
+                  type: integer
+                  format: int64
+                  example: 123456789
+                bids:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: string
+                    minItems: 2
+                    maxItems: 2
+                  example: [["45678.50", "1.25000000"]]
+                asks:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: string
+                    minItems: 2
+                    maxItems: 2
+                  example: [["45679.00", "0.75000000"]]
+                # For update messages
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                price:
+                  type: string
+                quantity:
+                  type: string
+                action:
+                  type: string
+                  enum: ['update', 'remove']
+
+    TradeMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['trade']
+            channel:
+              type: string
+              enum: ['trades']
+            data:
+              type: object
+              required:
+                - symbol
+                - trade_id
+                - price
+                - quantity
+                - side
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                trade_id:
+                  type: string
+                  example: "987654321"
+                price:
+                  type: string
+                  example: "45678.90"
+                quantity:
+                  type: string
+                  example: "0.50000000"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+
+    KlineMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['kline']
+            channel:
+              type: string
+              enum: ['klines']
+            data:
+              type: object
+              required:
+                - symbol
+                - interval
+                - open_time
+                - close_time
+                - open
+                - high
+                - low
+                - close
+                - volume
+                - is_closed
+              properties:
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                interval:
+                  type: string
+                  example: "1m"
+                open_time:
+                  type: integer
+                  format: int64
+                  example: 1672531200000
+                close_time:
+                  type: integer
+                  format: int64
+                  example: 1672531259999
+                open:
+                  type: string
+                  example: "45600.00"
+                high:
+                  type: string
+                  example: "45700.00"
+                low:
+                  type: string
+                  example: "45550.00"
+                close:
+                  type: string
+                  example: "45678.90"
+                volume:
+                  type: string
+                  example: "123.45678900"
+                is_closed:
+                  type: boolean
+
+    AccountMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['account_update']
+            channel:
+              type: string
+              enum: ['account']
+            data:
+              type: object
+              required:
+                - balances
+              properties:
+                balances:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - currency
+                      - available
+                      - locked
+                      - total
+                    properties:
+                      currency:
+                        type: string
+                        example: "BTC"
+                      available:
+                        type: string
+                        example: "1.25000000"
+                      locked:
+                        type: string
+                        example: "0.50000000"
+                      total:
+                        type: string
+                        example: "1.75000000"
+
+    OrderMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['order_update']
+            channel:
+              type: string
+              enum: ['orders']
+            data:
+              type: object
+              required:
+                - order_id
+                - symbol
+                - side
+                - type
+                - status
+                - quantity
+                - price
+              properties:
+                order_id:
+                  type: string
+                  format: uuid
+                symbol:
+                  type: string
+                  example: "BTC/USDT"
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                type:
+                  type: string
+                  enum: ['market', 'limit', 'stop_limit']
+                status:
+                  type: string
+                  enum: ['pending', 'open', 'filled', 'cancelled', 'expired']
+                quantity:
+                  type: string
+                price:
+                  type: string
+                filled_quantity:
+                  type: string
+                remaining_quantity:
+                  type: string
+                average_price:
+                  type: string
+                fees:
+                  type: string
+                fee_currency:
+                  type: string
+                created_at:
+                  type: integer
+                  format: int64
+                updated_at:
+                  type: integer
+                  format: int64
+
+    UserTradeMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['user_trade']
+            channel:
+              type: string
+              enum: ['user_trades']
+            data:
+              type: object
+              required:
+                - trade_id
+                - order_id
+                - symbol
+                - side
+                - quantity
+                - price
+                - fee
+                - fee_currency
+                - role
+              properties:
+                trade_id:
+                  type: string
+                order_id:
+                  type: string
+                  format: uuid
+                symbol:
+                  type: string
+                side:
+                  type: string
+                  enum: ['buy', 'sell']
+                quantity:
+                  type: string
+                price:
+                  type: string
+                fee:
+                  type: string
+                fee_currency:
+                  type: string
+                role:
+                  type: string
+                  enum: ['maker', 'taker']
+
+    NotificationMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['notification']
+            channel:
+              type: string
+              enum: ['notifications']
+            data:
+              type: object
+              required:
+                - notification_id
+                - category
+                - title
+                - message
+              properties:
+                notification_id:
+                  type: string
+                  format: uuid
+                category:
+                  type: string
+                  enum: ['security', 'trading', 'system', 'promotion']
+                title:
+                  type: string
+                message:
+                  type: string
+                priority:
+                  type: string
+                  enum: ['low', 'medium', 'high', 'critical']
+                action_required:
+                  type: boolean
+                action_url:
+                  type: string
+                  format: uri
+                  nullable: true
+
+    ErrorMessage:
+      allOf:
+        - $ref: '#/components/schemas/BaseWebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: ['error']
+            data:
+              type: object
+              required:
+                - code
+                - message
+              properties:
+                code:
+                  type: string
+                  enum: 
+                    - 'AUTHENTICATION_REQUIRED'
+                    - 'INVALID_TOKEN'
+                    - 'INVALID_CHANNEL'
+                    - 'INVALID_SYMBOL'
+                    - 'RATE_LIMIT_EXCEEDED'
+                    - 'SUBSCRIPTION_LIMIT'
+                    - 'INTERNAL_ERROR'
+                message:
+                  type: string
+                details:
+                  type: string
+                  nullable: true
+
+    # WebSocket Subscription Requests
+    WebSocketSubscribeRequest:
+      type: object
+      required:
+        - method
+        - params
+      properties:
+        id:
+          type: string
+          description: Request identifier
+          example: "sub_001"
+        method:
+          type: string
+          enum: ['subscribe', 'unsubscribe']
+          example: "subscribe"
+        params:
+          type: object
+          required:
+            - channel
+          properties:
+            channel:
+              type: string
+              enum: ['ticker', 'orderbook', 'trades', 'klines', 'account', 'orders', 'user_trades', 'notifications']
+            symbol:
+              type: string
+              description: Required for public market data channels
+              example: "BTC/USDT"
+            depth:
+              type: integer
+              description: Order book depth (orderbook channel only)
+              minimum: 5
+              maximum: 100
+              default: 20
+            interval:
+              type: string
+              description: Kline interval (klines channel only)
+              enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+              default: '1m'
+
+tags:
+  - name: System
+    description: Health checks and system information
+  - name: Authentication
+    description: User authentication and authorization
+  - name: Accounts
+    description: Account and balance management
+  - name: Trading
+    description: Spot trading operations
+  - name: Cross-Pair Trading
+    description: Cross-pair trading operations
+  - name: Market Data
+    description: Market prices and data feeds
+  - name: Wallet
+    description: Wallet and cryptocurrency operations
+  - name: Fiat
+    description: Fiat currency operations
+  - name: Compliance
+    description: Compliance and risk management
+  - name: Admin
+    description: Administrative functions
+  - name: WebSocket
+    description: WebSocket connection and real-time data

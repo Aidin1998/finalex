@@ -1,0 +1,753 @@
+{
+  "info": {
+    "name": "Finalex Cryptocurrency Exchange API",
+    "description": "Comprehensive API collection for the Finalex cryptocurrency exchange platform including REST and WebSocket endpoints",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api.finalex.io",
+      "type": "string"
+    },
+    {
+      "key": "ws_url",
+      "value": "wss://ws.finalex.io",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "api_secret",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const responseJson = pm.response.json();",
+                  "    pm.collectionVariables.set('jwt_token', responseJson.access_token);",
+                  "    pm.test('Login successful', function () {",
+                  "        pm.expect(responseJson.access_token).to.not.be.undefined;",
+                  "    });",
+                  "} else {",
+                  "    pm.test('Login failed', function () {",
+                  "        pm.expect(pm.response.code).to.equal(200);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"username\": \"newuser\",\n  \"password\": \"SecurePassword123!\",\n  \"first_name\": \"New\",\n  \"last_name\": \"User\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Market Data",
+      "item": [
+        {
+          "name": "Get All Tickers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/ticker",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "ticker"]
+            }
+          }
+        },
+        {
+          "name": "Get Ticker by Symbol",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/ticker/BTC-USDT",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "ticker", "BTC-USDT"]
+            }
+          }
+        },
+        {
+          "name": "Get Order Book",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/orderbook/BTC-USDT?depth=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "orderbook", "BTC-USDT"],
+              "query": [
+                {
+                  "key": "depth",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Recent Trades",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/trades/BTC-USDT?limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "trades", "BTC-USDT"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Klines/Candlesticks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/klines/BTC-USDT?interval=1h&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "klines", "BTC-USDT"],
+              "query": [
+                {
+                  "key": "interval",
+                  "value": "1h"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Exchange Info",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/market/info",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "market", "info"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trading",
+      "item": [
+        {
+          "name": "Get Trading Pairs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/pairs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "pairs"]
+            }
+          }
+        },
+        {
+          "name": "Place Limit Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"BTC/USDT\",\n  \"side\": \"buy\",\n  \"type\": \"limit\",\n  \"quantity\": \"0.001\",\n  \"price\": \"45000.00\",\n  \"time_in_force\": \"GTC\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Place Market Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"symbol\": \"BTC/USDT\",\n  \"side\": \"sell\",\n  \"type\": \"market\",\n  \"quantity\": \"0.001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Get Open Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders?status=open",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "open"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Order by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders", "{{order_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders", "{{order_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel All Orders",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/orders?symbol=BTC/USDT",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "orders"],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "BTC/USDT"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Trade History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/trading/trades?symbol=BTC/USDT&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "trading", "trades"],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "BTC/USDT"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "Get Account Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/wallet/balance",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "wallet", "balance"]
+            }
+          }
+        },
+        {
+          "name": "Get Deposit Address",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"BTC\",\n  \"network\": \"bitcoin\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/wallet/deposit",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "wallet", "deposit"]
+            }
+          }
+        },
+        {
+          "name": "Withdraw Cryptocurrency",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"BTC\",\n  \"amount\": \"0.001\",\n  \"address\": \"bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\",\n  \"network\": \"bitcoin\",\n  \"tag\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/wallet/withdraw",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "wallet", "withdraw"]
+            }
+          }
+        },
+        {
+          "name": "Get Deposit History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/wallet/deposits?currency=BTC&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "wallet", "deposits"],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BTC"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Withdrawal History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/wallet/withdrawals?currency=BTC&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "wallet", "withdrawals"],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BTC"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Account Management",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/account/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "account", "profile"]
+            }
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"country\": \"US\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/account/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "account", "profile"]
+            }
+          }
+        },
+        {
+          "name": "Create API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Trading Bot Key\",\n  \"permissions\": [\"read\", \"trade\"],\n  \"ip_whitelist\": [\"192.168.1.100\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/account/api-keys",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "account", "api-keys"]
+            }
+          }
+        },
+        {
+          "name": "Get API Keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/account/api-keys",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "account", "api-keys"]
+            }
+          }
+        },
+        {
+          "name": "Delete API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/account/api-keys/{{api_key_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "account", "api-keys", "{{api_key_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "WebSocket Examples",
+      "item": [
+        {
+          "name": "WebSocket Connection Info",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/websocket/info",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "websocket", "info"]
+            }
+          },
+          "response": [
+            {
+              "name": "WebSocket Connection Info",
+              "body": "{\n  \"endpoint\": \"wss://ws.finalex.io\",\n  \"authentication\": {\n    \"jwt\": \"?token=<jwt_token>\",\n    \"api_key\": \"?api_key=<api_key>\"\n  },\n  \"channels\": {\n    \"public\": [\"ticker\", \"orderbook\", \"trades\", \"klines\"],\n    \"private\": [\"account\", \"orders\", \"user_trades\", \"notifications\"]\n  },\n  \"examples\": {\n    \"subscribe_ticker\": {\n      \"method\": \"subscribe\",\n      \"params\": {\n        \"channel\": \"ticker\",\n        \"symbol\": \"BTC/USDT\"\n      }\n    },\n    \"subscribe_orderbook\": {\n      \"method\": \"subscribe\",\n      \"params\": {\n        \"channel\": \"orderbook\",\n        \"symbol\": \"BTC/USDT\",\n        \"depth\": 20\n      }\n    },\n    \"subscribe_account\": {\n      \"method\": \"subscribe\",\n      \"params\": {\n        \"channel\": \"account\"\n      }\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Get Server Time",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/system/time",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "system", "time"]
+            }
+          }
+        },
+        {
+          "name": "Get API Version",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/system/version",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "system", "version"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-generate request ID for tracking",
+          "pm.request.headers.add({",
+          "    key: 'X-Request-ID',",
+          "    value: pm.utils.uuid()",
+          "});",
+          "",
+          "// Add timestamp for HMAC signatures",
+          "pm.request.headers.add({",
+          "    key: 'X-Timestamp',",
+          "    value: Date.now().toString()",
+          "});"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test for response time",
+          "pm.test('Response time is less than 2000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+          "});",
+          "",
+          "// Global test for valid JSON response",
+          "pm.test('Response is valid JSON', function () {",
+          "    pm.response.to.have.jsonBody();",
+          "});",
+          "",
+          "// Log response for debugging",
+          "console.log('Response Status:', pm.response.status);",
+          "console.log('Response Time:', pm.response.responseTime + 'ms');"
+        ]
+      }
+    }
+  ]
+}

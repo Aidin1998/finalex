@@ -1,0 +1,280 @@
+register:
+  post:
+    tags:
+      - Authentication
+    summary: Register a new user
+    description: Create a new user account with email and password
+    operationId: registerUser
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/RegisterRequest'
+    responses:
+      '201':
+        description: User registered successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/RegisterResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '409':
+        description: User already exists
+        content:
+          application/problem+json:
+            schema:
+              $ref: '../schemas/errors.yaml#/ProblemDetails'
+
+login:
+  post:
+    tags:
+      - Authentication
+    summary: User login
+    description: Authenticate user with email/username and password
+    operationId: loginUser
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/LoginRequest'
+    responses:
+      '200':
+        description: Login successful
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/LoginResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+logout:
+  post:
+    tags:
+      - Authentication
+    summary: User logout
+    description: Logout user and invalidate session
+    operationId: logoutUser
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Logout successful
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Logout successful"
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+refresh:
+  post:
+    tags:
+      - Authentication
+    summary: Refresh JWT token
+    description: Refresh an expired JWT token using refresh token
+    operationId: refreshToken
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/RefreshRequest'
+    responses:
+      '200':
+        description: Token refreshed successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/TokenResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+me:
+  get:
+    tags:
+      - Authentication
+    summary: Get current user profile
+    description: Get authenticated user's profile information
+    operationId: getCurrentUser
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: User profile retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/UserProfile'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+  put:
+    tags:
+      - Authentication
+    summary: Update user profile
+    description: Update authenticated user's profile information
+    operationId: updateCurrentUser
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/UpdateProfileRequest'
+    responses:
+      '200':
+        description: Profile updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/UserProfile'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+enable2fa:
+  post:
+    tags:
+      - Authentication
+    summary: Enable two-factor authentication
+    description: Enable 2FA for the authenticated user
+    operationId: enable2FA
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/Enable2FARequest'
+    responses:
+      '200':
+        description: 2FA enabled successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/Enable2FAResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+verify2fa:
+  post:
+    tags:
+      - Authentication
+    summary: Verify two-factor authentication
+    description: Verify 2FA code for authentication
+    operationId: verify2FA
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/Verify2FARequest'
+    responses:
+      '200':
+        description: 2FA verified successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                verified:
+                  type: boolean
+                  example: true
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+disable2fa:
+  post:
+    tags:
+      - Authentication
+    summary: Disable two-factor authentication
+    description: Disable 2FA for the authenticated user
+    operationId: disable2FA
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/auth.yaml#/Disable2FARequest'
+    responses:
+      '200':
+        description: 2FA disabled successfully
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "2FA disabled successfully"
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+kycSubmit:
+  post:
+    tags:
+      - Authentication
+    summary: Submit KYC information
+    description: Submit Know Your Customer verification documents
+    operationId: submitKYC
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../schemas/auth.yaml#/KYCSubmissionRequest'
+    responses:
+      '200':
+        description: KYC submitted successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/KYCSubmissionResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+kycStatus:
+  get:
+    tags:
+      - Authentication
+    summary: Get KYC verification status
+    description: Get current KYC verification status for authenticated user
+    operationId: getKYCStatus
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: KYC status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/auth.yaml#/KYCStatusResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'

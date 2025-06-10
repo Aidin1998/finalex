@@ -1,0 +1,556 @@
+profile:
+  get:
+    tags:
+      - Account Management
+    summary: Get user profile
+    description: Retrieve current user's profile information
+    operationId: getUserProfile
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: User profile retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserProfile'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  put:
+    tags:
+      - Account Management
+    summary: Update user profile
+    description: Update current user's profile information
+    operationId: updateUserProfile
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/UpdateProfileRequest'
+    responses:
+      '200':
+        description: User profile updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserProfile'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+change_password:
+  post:
+    tags:
+      - Account Management
+    summary: Change password
+    description: Change user's password with current password verification
+    operationId: changePassword
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/ChangePasswordRequest'
+    responses:
+      '200':
+        description: Password changed successfully
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+two_factor:
+  get:
+    tags:
+      - Account Management
+    summary: Get 2FA settings
+    description: Retrieve current 2FA configuration and status
+    operationId: get2FASettings
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: 2FA settings retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/TwoFactorSettings'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  post:
+    tags:
+      - Account Management
+    summary: Enable 2FA
+    description: Enable two-factor authentication for the account
+    operationId: enable2FA
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/Enable2FARequest'
+    responses:
+      '200':
+        description: 2FA enabled successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/Enable2FAResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  delete:
+    tags:
+      - Account Management
+    summary: Disable 2FA
+    description: Disable two-factor authentication for the account
+    operationId: disable2FA
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/Disable2FARequest'
+    responses:
+      '200':
+        description: 2FA disabled successfully
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+api_keys:
+  get:
+    tags:
+      - Account Management
+    summary: List user API keys
+    description: Retrieve list of API keys for the current user
+    operationId: listUserAPIKeys
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: API keys retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/account.yaml#/UserAPIKey'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  post:
+    tags:
+      - Account Management
+    summary: Create API key
+    description: Create a new API key for the current user
+    operationId: createUserAPIKey
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/CreateAPIKeyRequest'
+    responses:
+      '201':
+        description: API key created successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/CreateAPIKeyResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+api_key:
+  get:
+    tags:
+      - Account Management
+    summary: Get API key details
+    description: Retrieve details of a specific API key
+    operationId: getAPIKeyDetails
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        description: API key ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '200':
+        description: API key details retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserAPIKey'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  put:
+    tags:
+      - Account Management
+    summary: Update API key
+    description: Update API key permissions and settings
+    operationId: updateAPIKey
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        description: API key ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/UpdateAPIKeyRequest'
+    responses:
+      '200':
+        description: API key updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserAPIKey'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+  delete:
+    tags:
+      - Account Management
+    summary: Delete API key
+    description: Delete an API key and revoke access
+    operationId: deleteAPIKey
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        description: API key ID
+        schema:
+          $ref: '../schemas/common.yaml#/UUID'
+    responses:
+      '204':
+        description: API key deleted successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+sessions:
+  get:
+    tags:
+      - Account Management
+    summary: List active sessions
+    description: Retrieve list of active login sessions for the current user
+    operationId: listUserSessions
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Active sessions retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/account.yaml#/UserSession'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  delete:
+    tags:
+      - Account Management
+    summary: Terminate all sessions
+    description: Terminate all active sessions except the current one
+    operationId: terminateAllSessions
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: All sessions terminated successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+session:
+  delete:
+    tags:
+      - Account Management
+    summary: Terminate session
+    description: Terminate a specific active session
+    operationId: terminateSession
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        description: Session ID
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Session terminated successfully
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'
+
+preferences:
+  get:
+    tags:
+      - Account Management
+    summary: Get user preferences
+    description: Retrieve user's application preferences and settings
+    operationId: getUserPreferences
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: User preferences retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserPreferences'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  put:
+    tags:
+      - Account Management
+    summary: Update user preferences
+    description: Update user's application preferences and settings
+    operationId: updateUserPreferences
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/UpdatePreferencesRequest'
+    responses:
+      '200':
+        description: User preferences updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/UserPreferences'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+kyc_status:
+  get:
+    tags:
+      - Account Management
+    summary: Get KYC status
+    description: Retrieve current KYC verification status and requirements
+    operationId: getKYCStatus
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: KYC status retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/KYCStatus'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+kyc_submit:
+  post:
+    tags:
+      - Account Management
+    summary: Submit KYC documents
+    description: Submit documents and information for KYC verification
+    operationId: submitKYC
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../schemas/account.yaml#/KYCSubmissionRequest'
+    responses:
+      '200':
+        description: KYC documents submitted successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/KYCSubmissionResponse'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+notification_settings:
+  get:
+    tags:
+      - Account Management
+    summary: Get notification settings
+    description: Retrieve user's notification preferences
+    operationId: getNotificationSettings
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Notification settings retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/NotificationSettings'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+  put:
+    tags:
+      - Account Management
+    summary: Update notification settings
+    description: Update user's notification preferences
+    operationId: updateNotificationSettings
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/account.yaml#/UpdateNotificationSettingsRequest'
+    responses:
+      '200':
+        description: Notification settings updated successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/NotificationSettings'
+      '400':
+        $ref: '../openapi.yaml#/components/responses/BadRequest'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+activity_log:
+  get:
+    tags:
+      - Account Management
+    summary: Get account activity log
+    description: Retrieve user's account activity history
+    operationId: getAccountActivityLog
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: action
+        in: query
+        required: false
+        description: Filter by action type
+        schema:
+          type: string
+          example: login
+      - name: startTime
+        in: query
+        required: false
+        description: Start time filter
+        schema:
+          type: string
+          format: date-time
+      - name: endTime
+        in: query
+        required: false
+        description: End time filter
+        schema:
+          type: string
+          format: date-time
+      - $ref: '../openapi.yaml#/components/parameters/Page'
+      - $ref: '../openapi.yaml#/components/parameters/PerPage'
+    responses:
+      '200':
+        description: Activity log retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/ActivityLogResponse'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+balances:
+  get:
+    tags:
+      - Account Management
+    summary: Get account balances
+    description: Retrieve all currency balances for the user
+    operationId: getAccountBalances
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Account balances retrieved successfully
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../schemas/account.yaml#/AccountBalance'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+
+balance:
+  get:
+    tags:
+      - Account Management
+    summary: Get specific currency balance
+    description: Retrieve balance for a specific currency
+    operationId: getCurrencyBalance
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: currency
+        in: path
+        required: true
+        description: Currency code
+        schema:
+          type: string
+          pattern: '^[A-Z]{3,10}$'
+          example: BTC
+    responses:
+      '200':
+        description: Currency balance retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '../schemas/account.yaml#/AccountBalance'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/Unauthorized'
+      '404':
+        $ref: '../openapi.yaml#/components/responses/NotFound'

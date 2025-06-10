@@ -8,6 +8,7 @@ import (
 
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -376,7 +377,6 @@ func (w *WalletXAResource) CreateWithdrawalRequest(ctx context.Context, userID u
 		zap.String("operation_id", opID),
 		zap.String("wallet_id", walletID),
 		zap.Float64("amount", amount))
-
 	// Return a placeholder withdrawal request
 	// The actual creation will happen during commit
 	return &models.WithdrawalRequest{
@@ -384,7 +384,7 @@ func (w *WalletXAResource) CreateWithdrawalRequest(ctx context.Context, userID u
 		UserID:    userID,
 		WalletID:  walletID,
 		Asset:     asset,
-		Amount:    amount,
+		Amount:    decimal.NewFromFloat(amount),
 		ToAddress: toAddress,
 		Status:    "pending",
 		CreatedAt: time.Now(),
@@ -710,8 +710,8 @@ func (w *WalletXAResource) executeCreateWithdrawal(tx *gorm.DB, ctx context.Cont
 		UserID:    userID,
 		WalletID:  walletID,
 		Asset:     asset,
-		Amount:    amount,
 		ToAddress: toAddress,
+		Amount:    decimal.NewFromFloat(amount),
 		Status:    "pending",
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),

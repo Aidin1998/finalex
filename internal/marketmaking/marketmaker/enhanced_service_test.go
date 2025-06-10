@@ -9,6 +9,7 @@ import (
 	common "github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -35,14 +36,14 @@ func (m *MockTradingAPI) GetOrderBook(pair string, depth int) (*models.OrderBook
 	return args.Get(0).(*models.OrderBookSnapshot), args.Error(1)
 }
 
-func (m *MockTradingAPI) GetInventory(pair string) (float64, error) {
+func (m *MockTradingAPI) GetInventory(pair string) (decimal.Decimal, error) {
 	args := m.Called(pair)
-	return args.Get(0).(float64), args.Error(1)
+	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
-func (m *MockTradingAPI) GetAccountBalance() (float64, error) {
+func (m *MockTradingAPI) GetAccountBalance() (decimal.Decimal, error) {
 	args := m.Called()
-	return args.Get(0).(float64), args.Error(1)
+	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
 func (m *MockTradingAPI) GetOpenOrders(pair string) ([]*models.Order, error) {

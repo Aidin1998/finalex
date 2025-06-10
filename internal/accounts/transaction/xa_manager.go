@@ -50,6 +50,22 @@ const (
 	XAErrorRB_ROLLBACK XAErrorCode = 100 // Transaction was rolled back
 )
 
+// String returns the string representation of XAErrorCode
+func (e XAErrorCode) String() string {
+	switch e {
+	case XAErrorRMFAIL:
+		return "RM_FAIL"
+	case XAErrorXAER_NOTA:
+		return "XAER_NOTA"
+	case XAErrorXAER_PROTO:
+		return "XAER_PROTO"
+	case XAErrorRB_ROLLBACK:
+		return "RB_ROLLBACK"
+	default:
+		return fmt.Sprintf("UNKNOWN_%d", int(e))
+	}
+}
+
 // XA Flags
 type XAFlag int
 
