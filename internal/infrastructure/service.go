@@ -22,6 +22,13 @@ import (
 	"go.uber.org/zap"
 )
 
+type txContextKey struct{ name string }
+
+var (
+	txIDKey    = &txContextKey{"transaction_id"}
+	txStateKey = &txContextKey{"transaction_state"}
+)
+
 type serviceImpl struct {
 	logger          *zap.Logger
 	mu              sync.RWMutex
@@ -34,7 +41,6 @@ type serviceImpl struct {
 	marketMakingSvc marketmaking.Service
 	serverSvc       *server.Service
 	wsService       *ws.Service
-	wsServer        *http.Server
 	handlers        map[string]map[string]http.HandlerFunc
 	middlewares     []func(http.Handler) http.Handler
 
@@ -386,8 +392,8 @@ func (s *serviceImpl) BeginTransaction(ctx context.Context) (context.Context, er
 	txID := uuid.New().String()
 
 	// Add transaction ID to context
-	txCtx := context.WithValue(ctx, "transaction_id", txID)
-	txCtx = context.WithValue(txCtx, "transaction_state", "active")
+	txCtx := context.WithValue(ctx, txIDKey, txID)
+	txCtx = context.WithValue(txCtx, txStateKey, "active")
 
 	s.logger.Debug("Transaction begun",
 		zap.String("transaction_id", txID))
@@ -398,13 +404,13 @@ func (s *serviceImpl) BeginTransaction(ctx context.Context) (context.Context, er
 // CommitTransaction commits a transaction
 func (s *serviceImpl) CommitTransaction(ctx context.Context) error {
 	// Get transaction ID from context
-	txID, ok := ctx.Value("transaction_id").(string)
+	txID, ok := ctx.Value(txIDKey).(string)
 	if !ok {
 		return fmt.Errorf("no active transaction found in context")
 	}
 
 	// Check transaction state
-	state, ok := ctx.Value("transaction_state").(string)
+	state, ok := ctx.Value(txStateKey).(string)
 	if !ok || state != "active" {
 		return fmt.Errorf("transaction %s is not in active state", txID)
 	}
@@ -418,13 +424,13 @@ func (s *serviceImpl) CommitTransaction(ctx context.Context) error {
 // RollbackTransaction rolls back a transaction
 func (s *serviceImpl) RollbackTransaction(ctx context.Context) error {
 	// Get transaction ID from context
-	txID, ok := ctx.Value("transaction_id").(string)
+	txID, ok := ctx.Value(txIDKey).(string)
 	if !ok {
 		return fmt.Errorf("no active transaction found in context")
 	}
 
 	// Check transaction state
-	state, ok := ctx.Value("transaction_state").(string)
+	state, ok := ctx.Value(txStateKey).(string)
 	if !ok || state != "active" {
 		return fmt.Errorf("transaction %s is not in active state", txID)
 	}

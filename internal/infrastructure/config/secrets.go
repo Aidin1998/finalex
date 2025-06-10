@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"go.uber.org/zap"
 )
 
@@ -265,8 +267,7 @@ func (p *VaultSecretProvider) Close() error {
 type AWSSecretsProvider struct {
 	config AWSSecretsConfig
 	logger *zap.Logger
-	// Note: In a real implementation, this would use the AWS SDK
-	// For now, this is a placeholder structure
+	client *secretsmanager.Client
 }
 
 // NewAWSSecretsProvider creates a new AWS Secrets Manager provider
@@ -274,114 +275,58 @@ func NewAWSSecretsProvider(config AWSSecretsConfig, logger *zap.Logger) (*AWSSec
 	if config.Region == "" {
 		return nil, fmt.Errorf("AWS region is required")
 	}
-
+	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(config.Region))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	client := secretsmanager.NewFromConfig(awsCfg)
 	return &AWSSecretsProvider{
 		config: config,
 		logger: logger.Named("aws-secrets"),
+		client: client,
 	}, nil
 }
 
 // GetSecret retrieves a secret from AWS Secrets Manager
 func (p *AWSSecretsProvider) GetSecret(ctx context.Context, key string) (string, error) {
-	// For production, this would use the AWS SDK v2
-	// Example implementation:
-	/*
-		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(p.config.Region))
-		if err != nil {
-			return "", fmt.Errorf("failed to load AWS config: %w", err)
-		}
-
-		client := secretsmanager.NewFromConfig(cfg)
-
-		input := &secretsmanager.GetSecretValueInput{
-			SecretId: aws.String(key),
-		}
-
-		result, err := client.GetSecretValue(ctx, input)
-		if err != nil {
-			return "", fmt.Errorf("failed to get secret from AWS Secrets Manager: %w", err)
-		}
-
-		if result.SecretString != nil {
-			return *result.SecretString, nil
-		}
-
-		if result.SecretBinary != nil {
-			return string(result.SecretBinary), nil
-		}
-
-		return "", fmt.Errorf("secret has no value")
-	*/
-
-	// Temporary implementation using environment variables as fallback
-	p.logger.Warn("AWS Secrets Manager not fully implemented, falling back to environment variables",
-		zap.String("key", key))
-
-	envKey := strings.ToUpper(strings.ReplaceAll(key, "/", "_"))
-	if value := os.Getenv("AWS_SECRET_" + envKey); value != "" {
-		return value, nil
+	input := &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(key),
 	}
-
-	return "", fmt.Errorf("AWS Secrets Manager provider not fully implemented and secret not found in environment")
+	result, err := p.client.GetSecretValue(ctx, input)
+	if err != nil {
+		p.logger.Error("Failed to get secret from AWS Secrets Manager", zap.String("key", key), zap.Error(err))
+		return "", fmt.Errorf("failed to get secret from AWS Secrets Manager: %w", err)
+	}
+	if result.SecretString != nil {
+		return *result.SecretString, nil
+	}
+	if result.SecretBinary != nil {
+		return string(result.SecretBinary), nil
+	}
+	return "", fmt.Errorf("secret has no value")
 }
 
 // ListSecrets lists all secrets with the given prefix
 func (p *AWSSecretsProvider) ListSecrets(ctx context.Context, prefix string) (map[string]string, error) {
-	// For production, this would use the AWS SDK v2
-	// Example implementation:
-	/*
-		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(p.config.Region))
-		if err != nil {
-			return nil, fmt.Errorf("failed to load AWS config: %w", err)
-		}
-
-		client := secretsmanager.NewFromConfig(cfg)
-
-		input := &secretsmanager.ListSecretsInput{
-			IncludePlannedDeletion: aws.Bool(false),
-		}
-
-		secrets := make(map[string]string)
-		paginator := secretsmanager.NewListSecretsPaginator(client, input)
-
-		for paginator.HasMorePages() {
-			output, err := paginator.NextPage(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to list secrets: %w", err)
-			}
-
-			for _, secret := range output.SecretList {
-				if secret.Name != nil && strings.HasPrefix(*secret.Name, prefix) {
-					value, err := p.GetSecret(ctx, *secret.Name)
-					if err != nil {
-						p.logger.Warn("Failed to retrieve secret value",
-							zap.String("secret", *secret.Name), zap.Error(err))
-						continue
-					}
-					secrets[*secret.Name] = value
-				}
-			}
-		}
-
-		return secrets, nil
-	*/
-
-	// Temporary implementation using environment variables as fallback
-	p.logger.Warn("AWS Secrets Manager not fully implemented, using environment fallback")
-
+	input := &secretsmanager.ListSecretsInput{}
 	secrets := make(map[string]string)
-	envPrefix := "AWS_SECRET_" + strings.ToUpper(strings.ReplaceAll(prefix, "/", "_"))
-
-	for _, env := range os.Environ() {
-		parts := strings.SplitN(env, "=", 2)
-		if len(parts) == 2 && strings.HasPrefix(parts[0], envPrefix) {
-			// Convert back to secret key format
-			key := strings.ToLower(strings.TrimPrefix(parts[0], "AWS_SECRET_"))
-			key = strings.ReplaceAll(key, "_", "/")
-			secrets[key] = parts[1]
+	paginator := secretsmanager.NewListSecretsPaginator(p.client, input)
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list secrets: %w", err)
+		}
+		for _, secret := range output.SecretList {
+			if secret.Name != nil && strings.HasPrefix(*secret.Name, prefix) {
+				value, err := p.GetSecret(ctx, *secret.Name)
+				if err != nil {
+					p.logger.Warn("Failed to retrieve secret value", zap.String("secret", *secret.Name), zap.Error(err))
+					continue
+				}
+				secrets[*secret.Name] = value
+			}
 		}
 	}
-
 	return secrets, nil
 }
 

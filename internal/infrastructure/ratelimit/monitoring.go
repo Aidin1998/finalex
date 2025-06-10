@@ -3,9 +3,12 @@
 package ratelimit
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
 
@@ -318,10 +322,13 @@ func (rhc *RedisHealthChecker) Check(ctx context.Context) error {
 
 // AlertManager handles rate limiting alerts
 type AlertManager struct {
-	url    string
-	logger *zap.Logger
-	alerts []Alert
-	mu     sync.RWMutex
+	url         string
+	logger      *zap.Logger
+	alerts      []Alert
+	mu          sync.RWMutex
+	config      *AlertConfig
+	httpClient  *http.Client
+	kafkaWriter *kafka.Writer
 }
 
 // Alert represents a rate limiting alert
@@ -337,11 +344,42 @@ type Alert struct {
 
 // NewAlertManager creates a new alert manager
 func NewAlertManager(url string, logger *zap.Logger) *AlertManager {
-	return &AlertManager{
-		url:    url,
-		logger: logger,
-		alerts: make([]Alert, 0),
+	return NewAlertManagerWithConfig(url, logger, &AlertConfig{
+		Enabled: true,
+		Channels: []AlertChannelConfig{
+			{Type: AlertChannelWebhook, Enabled: true, Config: map[string]interface{}{"url": url}},
+		},
+	})
+}
+
+// NewAlertManagerWithConfig creates a new alert manager with custom configuration
+func NewAlertManagerWithConfig(url string, logger *zap.Logger, config *AlertConfig) *AlertManager {
+	am := &AlertManager{
+		url:        url,
+		logger:     logger,
+		alerts:     make([]Alert, 0),
+		config:     config,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+
+	// Initialize Kafka writer if Kafka channel is enabled
+	for _, channel := range config.Channels {
+		if channel.Type == AlertChannelKafka && channel.Enabled {
+			if brokers, ok := channel.Config["brokers"].([]string); ok {
+				if topic, ok := channel.Config["topic"].(string); ok {
+					am.kafkaWriter = &kafka.Writer{
+						Addr:         kafka.TCP(brokers...),
+						Topic:        topic,
+						Balancer:     &kafka.LeastBytes{},
+						RequiredAcks: kafka.RequireOne,
+						Async:        true,
+					}
+				}
+			}
+		}
+	}
+
+	return am
 }
 
 // SendAlert sends an alert
@@ -351,15 +389,14 @@ func (am *AlertManager) SendAlert(alert Alert) error {
 
 	alert.Timestamp = time.Now()
 	am.alerts = append(am.alerts, alert)
-
 	am.logger.Warn("rate limiting alert",
 		zap.String("id", alert.ID),
 		zap.String("level", alert.Level),
 		zap.String("message", alert.Message),
 		zap.String("component", alert.Component))
 
-	// TODO: Implement actual alert sending to external systems
-	return nil
+	// Send alert to external systems
+	return am.sendToExternalSystems(alert)
 }
 
 // GetRecentAlerts returns recent alerts
@@ -377,6 +414,40 @@ func (am *AlertManager) GetRecentAlerts(since time.Duration) []Alert {
 	}
 
 	return recent
+}
+
+// AlertChannel represents different alert delivery channels
+type AlertChannel string
+
+const (
+	AlertChannelWebhook    AlertChannel = "webhook"
+	AlertChannelSlack      AlertChannel = "slack"
+	AlertChannelPagerDuty  AlertChannel = "pagerduty"
+	AlertChannelKafka      AlertChannel = "kafka"
+	AlertChannelPrometheus AlertChannel = "prometheus"
+)
+
+// AlertConfig holds configuration for alert delivery
+type AlertConfig struct {
+	Enabled  bool                 `json:"enabled"`
+	Channels []AlertChannelConfig `json:"channels"`
+	Rules    []AlertRule          `json:"rules"`
+}
+
+// AlertChannelConfig holds configuration for a specific alert channel
+type AlertChannelConfig struct {
+	Type    AlertChannel           `json:"type"`
+	Enabled bool                   `json:"enabled"`
+	Config  map[string]interface{} `json:"config"`
+}
+
+// AlertRule defines when to send alerts
+type AlertRule struct {
+	Name       string         `json:"name"`
+	Condition  string         `json:"condition"`
+	Severity   string         `json:"severity"`
+	Components []string       `json:"components"`
+	Channels   []AlertChannel `json:"channels"`
 }
 
 // MetricsRecorder provides utilities for recording rate limiting metrics
@@ -427,4 +498,229 @@ func (mr *MetricsRecorder) UpdateActiveKeys(keyType, algorithm string, count flo
 // UpdateCircuitBreakerState updates circuit breaker state
 func (mr *MetricsRecorder) UpdateCircuitBreakerState(strategy string, state int) {
 	circuitBreakerState.WithLabelValues(strategy).Set(float64(state))
+}
+
+// sendToExternalSystems sends alerts to configured external systems
+func (am *AlertManager) sendToExternalSystems(alert Alert) error {
+	if !am.config.Enabled {
+		return nil
+	}
+
+	var errors []string
+
+	for _, channel := range am.config.Channels {
+		if !channel.Enabled {
+			continue
+		}
+
+		var err error
+		switch channel.Type {
+		case AlertChannelWebhook:
+			err = am.sendWebhook(alert, channel.Config)
+		case AlertChannelSlack:
+			err = am.sendSlack(alert, channel.Config)
+		case AlertChannelPagerDuty:
+			err = am.sendPagerDuty(alert, channel.Config)
+		case AlertChannelKafka:
+			err = am.sendKafka(alert, channel.Config)
+		case AlertChannelPrometheus:
+			err = am.sendPrometheus(alert, channel.Config)
+		default:
+			am.logger.Warn("unknown alert channel type", zap.String("type", string(channel.Type)))
+			continue
+		}
+
+		if err != nil {
+			am.logger.Error("failed to send alert to channel",
+				zap.String("channel", string(channel.Type)),
+				zap.String("alert_id", alert.ID),
+				zap.Error(err))
+			errors = append(errors, fmt.Sprintf("%s: %v", channel.Type, err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to send to channels: %s", strings.Join(errors, ", "))
+	}
+
+	return nil
+}
+
+// sendWebhook sends alert via HTTP webhook
+func (am *AlertManager) sendWebhook(alert Alert, config map[string]interface{}) error {
+	url, ok := config["url"].(string)
+	if !ok || url == "" {
+		return fmt.Errorf("webhook URL not configured")
+	}
+
+	payload, err := json.Marshal(alert)
+	if err != nil {
+		return fmt.Errorf("failed to marshal alert: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add authentication if configured
+	if token, ok := config["auth_token"].(string); ok && token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := am.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send webhook: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// sendSlack sends alert to Slack
+func (am *AlertManager) sendSlack(alert Alert, config map[string]interface{}) error {
+	webhookURL, ok := config["webhook_url"].(string)
+	if !ok || webhookURL == "" {
+		return fmt.Errorf("slack webhook URL not configured")
+	}
+
+	color := "#ffaa00" // warning color
+	if alert.Level == "critical" {
+		color = "#ff0000" // red
+	}
+
+	slackPayload := map[string]interface{}{
+		"username": "Orbit CEX Rate Limiter",
+		"attachments": []map[string]interface{}{
+			{
+				"color":     color,
+				"title":     fmt.Sprintf("Rate Limiting Alert: %s", alert.Level),
+				"text":      alert.Message,
+				"timestamp": alert.Timestamp.Unix(),
+				"fields": []map[string]interface{}{
+					{"title": "Component", "value": alert.Component, "short": true},
+					{"title": "Alert ID", "value": alert.ID, "short": true},
+				},
+			},
+		},
+	}
+
+	payload, err := json.Marshal(slackPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal Slack payload: %w", err)
+	}
+
+	resp, err := am.httpClient.Post(webhookURL, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("failed to send Slack alert: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("slack returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// sendPagerDuty sends alert to PagerDuty
+func (am *AlertManager) sendPagerDuty(alert Alert, config map[string]interface{}) error {
+	integrationKey, ok := config["integration_key"].(string)
+	if !ok || integrationKey == "" {
+		return fmt.Errorf("pagerDuty integration key not configured")
+	}
+
+	severity := "warning"
+	if alert.Level == "critical" {
+		severity = "critical"
+	}
+
+	pdPayload := map[string]interface{}{
+		"routing_key":  integrationKey,
+		"event_action": "trigger",
+		"dedup_key":    alert.ID,
+		"payload": map[string]interface{}{
+			"summary":        alert.Message,
+			"source":         alert.Component,
+			"severity":       severity,
+			"timestamp":      alert.Timestamp.Format(time.RFC3339),
+			"custom_details": alert.Annotations,
+		},
+	}
+
+	payload, err := json.Marshal(pdPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal PagerDuty payload: %w", err)
+	}
+
+	resp, err := am.httpClient.Post("https://events.pagerduty.com/v2/enqueue", "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("failed to send PagerDuty alert: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("pagerDuty returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// sendKafka sends alert to Kafka topic
+func (am *AlertManager) sendKafka(alert Alert, config map[string]interface{}) error {
+	if am.kafkaWriter == nil {
+		return fmt.Errorf("kafka writer not initialized")
+	}
+
+	payload, err := json.Marshal(alert)
+	if err != nil {
+		return fmt.Errorf("failed to marshal alert for Kafka: %w", err)
+	}
+
+	message := kafka.Message{
+		Key:   []byte(alert.ID),
+		Value: payload,
+		Headers: []kafka.Header{
+			{Key: "alert_level", Value: []byte(alert.Level)},
+			{Key: "component", Value: []byte(alert.Component)},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return am.kafkaWriter.WriteMessages(ctx, message)
+}
+
+// sendPrometheus sends alert as a Prometheus metric
+func (am *AlertManager) sendPrometheus(alert Alert, config map[string]interface{}) error {
+	// Record the alert as a Prometheus metric
+	alertsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "orbit",
+			Subsystem: "ratelimit_alerts",
+			Name:      "total",
+			Help:      "Total number of rate limiting alerts",
+		},
+		[]string{"level", "component", "alert_id"},
+	)
+
+	// Register if not already registered
+	prometheus.MustRegister(alertsTotal)
+
+	alertsTotal.WithLabelValues(alert.Level, alert.Component, alert.ID).Inc()
+
+	return nil
+}
+
+// Close cleans up resources
+func (am *AlertManager) Close() error {
+	if am.kafkaWriter != nil {
+		return am.kafkaWriter.Close()
+	}
+	return nil
 }

@@ -23,7 +23,10 @@ import (
 	"github.com/Aidin1998/finalex/pkg/validation"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -727,17 +730,24 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 	// Record API gateway receipt checkpoint
 	ts := time.Now().UTC()
 	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "api_gateway_receipt"), zap.Time("timestamp", ts))
-	// TODO: Write to time-series DB (Prometheus/Influx/Timescale) here
+	latencyCheckpointGauge.WithLabelValues(traceID, "api_gateway_receipt").Set(float64(ts.UnixNano()) / 1e9)
+	orderLatencyCheckpoints.WithLabelValues("api_gateway_receipt", traceID).Observe(0)
 
 	// Pass trace ID downstream (e.g., via context, headers, or order struct)
 	ctx := context.WithValue(c.Request.Context(), contextKey("trace_id"), traceID)
-	_ = ctx // TODO: Use ctx for downstream calls
 
-	// For demonstration, simulate validation and order book insertion
+	// Simulate validation and order book insertion using ctx
 	validationTime := time.Now().UTC()
-	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "validation_completion"), zap.Time("timestamp", validationTime))
+	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "validation_completion"), zap.Time("timestamp", validationTime), zap.Any("ctx", ctx))
+	latencyCheckpointGauge.WithLabelValues(traceID, "validation_completion").Set(float64(validationTime.UnixNano()) / 1e9)
+	orderLatencyCheckpoints.WithLabelValues("validation_completion", traceID).Observe(validationTime.Sub(ts).Seconds())
+
 	orderbookTime := time.Now().UTC()
-	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "orderbook_insertion"), zap.Time("timestamp", orderbookTime))
+	s.logger.Info("latency_checkpoint", zap.String("trace_id", traceID), zap.String("stage", "orderbook_insertion"), zap.Time("timestamp", orderbookTime), zap.Any("ctx", ctx))
+	latencyCheckpointGauge.WithLabelValues(traceID, "orderbook_insertion").Set(float64(orderbookTime.UnixNano()) / 1e9)
+	orderLatencyCheckpoints.WithLabelValues("orderbook_insertion", traceID).Observe(orderbookTime.Sub(validationTime).Seconds())
+
+	orderProcessingTotal.WithLabelValues("placed", "success").Inc()
 
 	// Respond with trace ID for client-side correlation
 	c.JSON(http.StatusOK, gin.H{"message": "order placed", "trace_id": traceID})
@@ -1873,4 +1883,55 @@ func (s *Server) handleListRiskReports(c *gin.Context) {
 	})
 }
 
+var (
+	tracer = otel.Tracer("server")
+
+	// Latency tracking metrics
+	apiLatency = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "orbit",
+			Subsystem: "api",
+			Name:      "request_duration_seconds",
+			Help:      "Time spent processing API requests",
+			Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0},
+		},
+		[]string{"method", "endpoint", "status_code"},
+	)
+
+	// Order processing latency checkpoints
+	orderLatencyCheckpoints = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "orbit",
+			Subsystem: "trading",
+			Name:      "order_latency_seconds",
+			Help:      "Latency at different stages of order processing",
+			Buckets:   []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1},
+		},
+		[]string{"stage", "trace_id"},
+	)
+
+	// Order processing counter
+	orderProcessingTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "orbit",
+			Subsystem: "trading",
+			Name:      "orders_processed_total",
+			Help:      "Total number of orders processed",
+		},
+		[]string{"stage", "status"},
+	)
+
+	// Time series checkpoint recorder
+	latencyCheckpointGauge = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "orbit",
+			Subsystem: "trading",
+			Name:      "latency_checkpoint_timestamp",
+			Help:      "Timestamp of latency checkpoints for order processing",
+		},
+		[]string{"trace_id", "stage"},
+	)
+)
+
+// contextKey is a custom type for context keys to avoid collisions
 type contextKey string

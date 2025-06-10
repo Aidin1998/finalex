@@ -69,9 +69,7 @@ func InitializeGlobalConfig(logger *zap.Logger, configPaths ...string) error {
 
 	// Create secret provider based on environment
 	secretProvider := CreateDefaultSecretProvider(logger)
-	if secretProvider != nil {
-		builder = builder.WithSecretProvider(secretProvider)
-	}
+	builder = builder.WithSecretProvider(secretProvider)
 
 	manager, err := builder.Build()
 	if err != nil {

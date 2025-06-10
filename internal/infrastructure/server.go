@@ -9,5 +9,3 @@ type Server = server.Server
 
 // NewServer delegates to the main server package.
 var NewServer = server.NewServer
-
-// TODO: Implement server functionality

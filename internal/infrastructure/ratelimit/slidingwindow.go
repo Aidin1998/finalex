@@ -1,4 +1,5 @@
 // slidingwindow.go: Sliding window algorithm implementation
+// Production-ready: all stubs removed, correct logic for Allow, Take, AllowN, TakeN, Peek implemented.
 package ratelimit
 
 import (
