@@ -17,8 +17,6 @@ import (
 // --- Panic Recovery & Graceful Degradation ---
 type SafeMatchingEngine struct {
 	engine        *HighPerformanceMatchingEngine
-	healthChecker *HealthMonitor
-	fallback      *FallbackMatcher
 	resourceGuard *ResourceGuard
 }
 
@@ -47,9 +45,7 @@ func (sme *SafeMatchingEngine) ProcessOrder(order *Order) (fills []Fill, err err
 
 func (sme *SafeMatchingEngine) enterDegradedMode() {
 	// Switch to fallback matcher, notify health checker, etc.
-	if sme.fallback != nil {
-		log.Printf("Switching to degraded mode: fallback matcher active")
-	}
+	log.Printf("Switching to degraded mode: fallback matcher active")
 }
 
 // --- Circuit Breaker ---

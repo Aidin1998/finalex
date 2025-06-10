@@ -191,7 +191,7 @@ func (ec *EmergencyController) stopAllStrategies(ctx context.Context) error {
 		return stopAPI.StopAllStrategies(ctx)
 	}
 
-	return fmt.Errorf("stop all strategies not implemented")
+	return fmt.Errorf("stop all strategies not supported by strategyManager")
 }
 
 // disconnectFeeds disconnects all market data feeds
@@ -204,7 +204,7 @@ func (ec *EmergencyController) disconnectFeeds(ctx context.Context) error {
 		return disconnectAPI.DisconnectAll(ctx)
 	}
 
-	return fmt.Errorf("disconnect all feeds not implemented")
+	return fmt.Errorf("disconnect all feeds not supported by feedManager")
 }
 
 // executeEmergencyCallbacks executes all registered emergency callbacks

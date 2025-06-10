@@ -625,12 +625,20 @@ func (s *Service) CreateEvent(ctx context.Context, event *interfaces.AuditEvent)
 	return nil
 }
 
-// Stub missing methods to resolve undefined errors
-func (s *Service) createTables() error                         { return nil }
-func (s *Service) eventWorker(ctx context.Context, i int)      {}
-func (s *Service) chainVerificationWorker(ctx context.Context) {}
-func (s *Service) metricsWorker(ctx context.Context)           {}
+// createTables creates required tables for audit service (no-op for now)
+func (s *Service) createTables() error { return nil }
 
-// Stub missing metrics methods if not present
+// eventWorker processes audit events (no-op for now)
+func (s *Service) eventWorker(ctx context.Context, i int) {}
+
+// chainVerificationWorker verifies audit chain (no-op for now)
+func (s *Service) chainVerificationWorker(ctx context.Context) {}
+
+// metricsWorker collects audit metrics (no-op for now)
+func (s *Service) metricsWorker(ctx context.Context) {}
+
+// IncrementEventsFailed increments failed event count (no-op for now)
 func (m *Metrics) IncrementEventsFailed() {}
+
+// IncrementEventsStored increments stored event count (no-op for now)
 func (m *Metrics) IncrementEventsStored() {}

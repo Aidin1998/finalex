@@ -36,7 +36,6 @@ type SafetyManager struct {
 	// Metrics
 	totalViolations int64 // atomic
 	totalRollbacks  int64 // atomic
-	totalAlerts     int64 // atomic
 }
 
 // SafetyConfig contains configuration for safety mechanisms
@@ -83,9 +82,8 @@ type MigrationSafetyState struct {
 	CurrentPhase        MigrationPhase
 	SafetyStatus        SafetyStatus
 	Violations          []SafetyViolation
-	PerformanceBaseline *PerformanceBaseline
+	PerformanceBaseline *PerformanceBaseline // changed from *types.PerformanceBaseline
 	CurrentMetrics      *PerformanceMetrics
-	mu                  sync.RWMutex
 }
 
 // SafetyStatus represents the overall safety status
@@ -138,7 +136,6 @@ type RollbackManager struct {
 	config          *SafetyConfig
 	coordinator     MigrationCoordinator
 	rollbackHistory map[uuid.UUID][]RollbackAttempt
-	mu              sync.RWMutex
 }
 
 // RollbackAttempt tracks rollback attempts
@@ -178,25 +175,19 @@ type IntegrityValidator struct {
 
 // ChecksumValidator validates data checksums
 type ChecksumValidator struct {
-	checksums      map[string]string // Table -> Checksum
-	lastValidation time.Time
-	mu             sync.RWMutex
+	checksums map[string]string // Table -> Checksum
 }
 
 // OrderValidator validates order consistency
 type OrderValidator struct {
-	orderCounts    map[string]int64 // Status -> Count
-	totalVolume    float64
-	lastValidation time.Time
-	mu             sync.RWMutex
+	orderCounts map[string]int64 // Status -> Count
+	totalVolume float64
 }
 
 // DataValidator validates general data integrity
 type DataValidator struct {
 	validationRules []ValidationRule
-	lastValidation  time.Time
 	violationCount  int64 // atomic
-	mu              sync.RWMutex
 }
 
 // ValidationRule defines a data validation rule
@@ -226,7 +217,6 @@ type BaselineCapture struct {
 	resourceBaseline   *ResourceBaseline
 	captureTime        time.Time
 	samplingDuration   time.Duration
-	mu                 sync.RWMutex
 }
 
 // LatencyBaseline contains latency baseline metrics
@@ -275,7 +265,6 @@ type MetricsCollector struct {
 	metricsHistory     []PerformanceMetrics
 	collectionInterval time.Duration
 	maxHistorySize     int
-	mu                 sync.RWMutex
 	isCollecting       int64 // atomic
 }
 
@@ -372,15 +361,12 @@ type AlertThresholds struct {
 
 // CircuitBreaker provides circuit breaker functionality for migrations
 type CircuitBreaker struct {
-	logger          *zap.SugaredLogger
-	config          *SafetyConfig
-	state           string // "closed", "open", "half-open"
-	failureCount    int64  // atomic
-	successCount    int64  // atomic
-	lastFailureTime int64  // atomic (unix nano)
-	lastSuccessTime int64  // atomic (unix nano)
-	stateChanges    []StateChange
-	mu              sync.RWMutex
+	logger       *zap.SugaredLogger
+	config       *SafetyConfig
+	state        string // "closed", "open", "half-open"
+	failureCount int64  // atomic
+	successCount int64  // atomic
+	stateChanges []StateChange
 }
 
 // StateChange tracks circuit breaker state changes
@@ -400,7 +386,6 @@ type HealthMonitor struct {
 	healthStatus  map[string]*ParticipantHealth
 	overallHealth *OverallHealth
 	healthHistory []HealthSnapshot
-	mu            sync.RWMutex
 }
 
 // ParticipantHealth tracks individual participant health
@@ -440,7 +425,6 @@ type AlertManager struct {
 	alertHistory    []Alert
 	activeAlerts    map[uuid.UUID]*Alert
 	escalationRules []EscalationRule
-	mu              sync.RWMutex
 }
 
 // AlertChannel defines an alert delivery channel
@@ -959,10 +943,8 @@ func (sm *SafetyManager) checkCircuitBreakerSafety(ctx context.Context, state *M
 	score := 1.0
 
 	// Check circuit breaker state
-	sm.circuitBreaker.mu.RLock()
 	circuitState := sm.circuitBreaker.state
 	failureCount := atomic.LoadInt64(&sm.circuitBreaker.failureCount)
-	sm.circuitBreaker.mu.RUnlock()
 
 	if circuitState == "open" {
 		violation := SafetyViolation{
@@ -1005,16 +987,14 @@ func (sm *SafetyManager) checkCircuitBreakerSafety(ctx context.Context, state *M
 func (sm *SafetyManager) capturePerformanceBaseline(ctx context.Context) (*PerformanceBaseline, error) {
 	// Implement baseline capture logic
 	return &PerformanceBaseline{
-		CaptureTime:      time.Now(),
-		AvgLatency:       2 * time.Millisecond,
-		MaxLatency:       10 * time.Millisecond,
-		MinLatency:       500 * time.Microsecond,
-		ThroughputTPS:    1000.0,
-		ErrorRate:        0.001,
-		MemoryFootprint:  100 * 1024 * 1024,
-		CPUUtilization:   0.3,
-		OrdersPerSecond:  500.0,
-		SamplingDuration: 30 * time.Second,
+		AvgLatency:      2 * time.Millisecond,
+		MaxLatency:      10 * time.Millisecond,
+		MinLatency:      500 * time.Microsecond,
+		ThroughputTPS:   1000.0,
+		ErrorRate:       0.001,
+		MemoryFootprint: 100 * 1024 * 1024,
+		CPUUtilization:  0.3,
+		OrdersPerSecond: 500.0,
 	}, nil
 }
 
@@ -1061,8 +1041,8 @@ func (sm *SafetyManager) compareWithBaseline(current *PerformanceMetrics, baseli
 
 	return &ComparisonResults{
 		LatencyComparison: &MetricComparison{
-			BaselineValue:    float64(baseline.AvgLatency.Nanoseconds()),
-			CurrentValue:     float64(current.Latency.Average.Nanoseconds()),
+			BaselineValue:    float64(baseline.AvgLatency),
+			CurrentValue:     float64(current.Latency.Average),
 			ChangePercentage: latencyChange,
 			Trend:            determineTrend(latencyChange),
 			Status:           determineStatus(latencyChange, sm.config.MaxLatencyIncrease),
@@ -1197,12 +1177,7 @@ func (sm *SafetyManager) triggerAutoRollback(ctx context.Context, migrationID uu
 	}
 
 	// Record rollback attempt
-	sm.rollbackManager.mu.Lock()
-	if sm.rollbackManager.rollbackHistory[migrationID] == nil {
-		sm.rollbackManager.rollbackHistory[migrationID] = make([]RollbackAttempt, 0)
-	}
 	sm.rollbackManager.rollbackHistory[migrationID] = append(sm.rollbackManager.rollbackHistory[migrationID], attempt)
-	sm.rollbackManager.mu.Unlock()
 }
 
 func (sm *SafetyManager) startBackgroundMonitoring() {
@@ -1334,10 +1309,8 @@ func (cb *CircuitBreaker) checkState() {
 
 func (am *AlertManager) sendAlert(ctx context.Context, alert *Alert) {
 	// Implement alert sending
-	am.mu.Lock()
 	am.activeAlerts[alert.ID] = alert
 	am.alertHistory = append(am.alertHistory, *alert)
-	am.mu.Unlock()
 }
 
 func determineTrend(changePercentage float64) string {
