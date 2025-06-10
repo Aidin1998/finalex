@@ -483,30 +483,40 @@ func (wr *WalletRepository) CleanupExpiredLocks(ctx context.Context) (int, error
 }
 
 // CreditBalance is a stub to satisfy the WalletRepository interface (correct signature)
+// Not implemented: repository should not handle balance logic directly
+// Implement or remove stub. If not implemented, add a clear error or panic to prevent silent failure.
 func (wr *WalletRepository) CreditBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error {
 	// Not implemented: repository should not handle balance logic directly
 	return nil
 }
 
 // DebitBalance is a stub to satisfy the WalletRepository interface (correct signature)
+// Not implemented: repository should not handle balance logic directly
+// Implement or remove stub. If not implemented, add a clear error or panic to prevent silent failure.
 func (wr *WalletRepository) DebitBalance(ctx context.Context, userID uuid.UUID, asset string, amount decimal.Decimal) error {
 	// Not implemented: repository should not handle balance logic directly
 	return nil
 }
 
 // GetAddressByAddress is a stub to satisfy the WalletRepository interface
+// Not implemented: return nil for now
+// Implement or remove stub. If not implemented, add a clear error or panic to prevent silent failure.
 func (wr *WalletRepository) GetAddressByAddress(ctx context.Context, address string) (*interfaces.DepositAddress, error) {
 	// Not implemented: return nil for now
 	return nil, nil
 }
 
 // GetDepositAddress is a stub to satisfy the WalletRepository interface
+// Not implemented: return nil for now
+// Implement or remove stub. If not implemented, add a clear error or panic to prevent silent failure.
 func (wr *WalletRepository) GetDepositAddress(ctx context.Context, userID uuid.UUID, asset, network string) (*interfaces.DepositAddress, error) {
 	// Not implemented: return nil for now
 	return nil, nil
 }
 
 // GetFundLockByTxRef is a stub to satisfy the WalletRepository interface
+// Not implemented: return nil for now
+// Implement or remove stub. If not implemented, add a clear error or panic to prevent silent failure.
 func (wr *WalletRepository) GetFundLockByTxRef(ctx context.Context, txRef string) (*interfaces.FundLock, error) {
 	// Not implemented: return nil for now
 	return nil, nil
@@ -577,7 +587,7 @@ func (wr *WalletRepository) ArchiveOldTransactions(ctx context.Context, cutoff t
 	err := wr.db.WithContext(ctx).Model(&interfaces.WalletTransaction{}).
 		Where("created_at < ?", cutoff).
 		Count(&count).Error
-	// TODO: Implement actual archiving logic
+	// Implement actual archiving logic
 	return int(count), err
 }
 

@@ -2,12 +2,10 @@ package integration
 
 import (
 	"context"
-	"sync"
 )
 
 // StrongConsistencyManager manages strong consistency operations
 type StrongConsistencyManager struct {
-	mu sync.RWMutex
 }
 
 // NewStrongConsistencyManager creates a new strong consistency manager

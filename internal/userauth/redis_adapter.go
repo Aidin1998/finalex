@@ -6,9 +6,7 @@ import (
 )
 
 // RedisV8ToV9Adapter adapts redis v8 client to v9 interface
-type RedisV8ToV9Adapter struct {
-	client *redisv8.Client
-}
+type RedisV8ToV9Adapter struct{}
 
 // NewRedisV8ToV9Adapter creates a new adapter
 func NewRedisV8ToV9Adapter(v8Client *redisv8.Client) *redisv9.Client {

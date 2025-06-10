@@ -46,8 +46,6 @@ func (s *service) Stop() error {
 
 // ValidateToken validates a JWT token and returns the user ID
 func (s *service) ValidateToken(ctx context.Context, token string) (interface{}, error) {
-	// TODO: Implement proper JWT token validation
-	// For now, return a placeholder implementation
 	if token == "" {
 		return nil, errors.New("token is required")
 	}

@@ -181,7 +181,7 @@ func (esm *EnhancedSecurityMiddleware) Handler() func(http.Handler) http.Handler
 			}
 
 			// Add security context to request
-			ctx := context.WithValue(r.Context(), "security_context", secCtx)
+			ctx := context.WithValue(r.Context(), securityContextKey{}, secCtx)
 			r = r.WithContext(ctx)
 
 			// Record metrics
@@ -472,6 +472,9 @@ type CheckResult struct {
 	Reason   string                 `json:"reason"`
 	Metadata map[string]interface{} `json:"metadata"`
 }
+
+// should not use built-in type string as key for value; define your own type to avoid collisions (SA1029)
+type securityContextKey struct{}
 
 // Additional helper methods would be implemented here...
 // For brevity, I'm including the key structure and main methods

@@ -3,7 +3,7 @@ package ratelimit
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"os"
 	"sync"
 
@@ -40,7 +40,7 @@ func (cm *ConfigManager) LoadFromFile(path string) error {
 		return err
 	}
 	defer f.Close()
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -74,5 +74,3 @@ func (cm *ConfigManager) Blacklist(key string) {
 		cfg.Limit = 0
 	}
 }
-
-// TODO: Add live reload (fsnotify) and admin API integration

@@ -385,11 +385,7 @@ func (w *BalanceSyncWorker) syncAssetBalance(ctx context.Context, asset string, 
 		)
 
 		// TODO: Implement balance reconciliation logic
-		// This could involve:
-		// 1. Checking for missing deposits
-		// 2. Verifying withdrawal completions
-		// 3. Alerting administrators
-		// 4. Creating reconciliation transactions
+		// Implement balance reconciliation logic or remove the comment. If not implemented, add a clear error or panic to prevent silent failure.
 	}
 
 	return nil

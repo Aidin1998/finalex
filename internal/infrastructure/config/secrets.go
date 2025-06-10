@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	config2 "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"go.uber.org/zap"
 )
@@ -275,7 +276,7 @@ func NewAWSSecretsProvider(config AWSSecretsConfig, logger *zap.Logger) (*AWSSec
 	if config.Region == "" {
 		return nil, fmt.Errorf("AWS region is required")
 	}
-	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(config.Region))
+	awsCfg, err := config2.LoadDefaultConfig(context.Background(), config2.WithRegion(config.Region))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}

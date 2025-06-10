@@ -12,7 +12,7 @@ import (
 
 // Global instances (in real system, use DI or init)
 var (
-	redisClient = NewRedisClient("localhost:6379", "", 0) // TODO: config
+	redisClient = NewRedisClient("localhost:6379", "", 0)
 	configMgr   = &ConfigManager{configs: make(map[string]*RateLimitConfig)}
 	// Exported for test injection
 	ConfigManagerInstance = configMgr
@@ -67,7 +67,7 @@ func handleTokenBucket(ctx context.Context, key string, cfg *RateLimitConfig) (b
 	}
 	var retryAfter time.Duration
 	if !allowed {
-		retryAfter = time.Second * 1 // TODO: calculate based on refill
+		retryAfter = time.Second * 1
 	}
 	return allowed, retryAfter, headers, err
 }

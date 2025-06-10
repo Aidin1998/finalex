@@ -261,7 +261,7 @@ func (w *WalletService) GetUserTransactions(ctx context.Context, userID uuid.UUI
 
 // ListTransactions returns user transactions for asset, direction, limit, offset
 func (w *WalletService) ListTransactions(ctx context.Context, userID uuid.UUID, asset string, direction string, limit, offset int) ([]*interfaces.WalletTransaction, int64, error) {
-	// This is a stub implementation. You may want to implement filtering by asset and direction in repository.
+	// Implement filtering by asset and direction, or remove the stub comment. If not implemented, add a clear error or panic to prevent silent failure.
 	txs, err := w.repository.GetUserTransactions(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, 0, err

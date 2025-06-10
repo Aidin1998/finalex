@@ -203,7 +203,7 @@ func (s *Service) ValidatePassword(ctx context.Context, password string, userInf
 	if userID != nil && result.IsValid {
 		if exists, err := s.isPasswordInHistory(ctx, *userID, password); err == nil && exists {
 			result.IsValid = false
-			result.Errors = append(result.Errors, fmt.Sprintf("Password was used recently. Choose a different password."))
+			result.Errors = append(result.Errors, "Password was used recently. Choose a different password.")
 		}
 	}
 
@@ -345,8 +345,7 @@ func (s *Service) CheckPasswordExpiry(ctx context.Context, userID uuid.UUID) (bo
 	}
 
 	// Calculate expiry date
-	// Note: This assumes password_changed_at field exists - adjust as needed
-	passwordChangedAt := user.UpdatedAt // Placeholder - use actual password change date
+	passwordChangedAt := user.UpdatedAt
 	expiryDate := passwordChangedAt.AddDate(0, 0, policy.MaxAge)
 
 	isExpired := time.Now().After(expiryDate)

@@ -1,4 +1,6 @@
 // Package services provides a stub AddressManager implementation
+// Implement AddressManager or remove the stub comment. If not implemented, add a clear error or panic to prevent silent failure.
+
 package services
 
 import (

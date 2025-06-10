@@ -194,26 +194,6 @@ func (s *service) GetTradingStatistics(ctx context.Context, userID string) (inte
 	return s.analytics.GetTradingStatistics(ctx, userID)
 }
 
-// broadcastMarketData broadcasts market data to subscribers
-func (s *service) broadcastMarketData(market string, data interface{}) {
-	s.mu.RLock()
-	subscribers := s.subscriptions[market]
-	s.mu.RUnlock()
-
-	for _, callback := range subscribers {
-		go func(cb func(interface{})) {
-			defer func() {
-				if r := recover(); r != nil {
-					s.logger.Error("Market data callback panic",
-						zap.String("market", market),
-						zap.Any("panic", r))
-				}
-			}()
-			cb(data)
-		}(callback)
-	}
-}
-
 // Start starts the market making service
 func (s *service) Start() error {
 	s.mu.Lock()

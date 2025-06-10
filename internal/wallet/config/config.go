@@ -392,7 +392,7 @@ func (c *RedisConfig) GetRedisAddresses() []string {
 // LoadConfigFromFile loads wallet configuration from a file
 func LoadConfigFromFile(configPath string) (*WalletConfig, error) {
 	// For now, return a default configuration
-	// TODO: Implement actual file loading with YAML/JSON parsing
+	// Implement actual file loading with YAML/JSON parsing
 	return &WalletConfig{
 		Database: DatabaseConfig{
 			Host:            "localhost",

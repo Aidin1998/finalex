@@ -37,5 +37,3 @@ type DistributedStore interface {
 	Set(ctx context.Context, key string, val []byte, ttl time.Duration) error
 	EvalScript(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error)
 }
-
-// TODO: Add more types for metrics, admin API, etc.

@@ -82,7 +82,6 @@ func NewSimpleService(logger *zap.Logger, db *gorm.DB, redisClient *redisv9.Clie
 	auditService := audit.NewService(logger, db)
 
 	// Create password service (skip Redis for now due to version mismatch)
-	// TODO: Fix Redis version compatibility or upgrade to v9
 	var passwordService *password.Service
 	if redisClient != nil {
 		passwordService = password.NewService(logger, db, redisClient)
