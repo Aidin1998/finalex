@@ -13,42 +13,72 @@ import (
 	"github.com/google/uuid"
 )
 
-// RegisterUserAuthHook registers a user authentication hook
+// RegisterUserAuthHook registers a user authentication hook implementation with the HookManager.
+// This allows the compliance system to listen for user authentication-related events (e.g., registration, login)
+// and apply compliance, audit, and risk checks as needed across the platform.
+//
+// Input: hook - an implementation of the UserAuthHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterUserAuthHook(hook UserAuthHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	hm.userAuthHooks = append(hm.userAuthHooks, hook)
 }
 
-// RegisterTradingHook registers a trading hook
+// RegisterTradingHook registers a trading hook implementation with the HookManager.
+// This enables the compliance system to process trading-related events (e.g., order placement, execution)
+// for risk, audit, and compliance checks throughout the exchange.
+//
+// Input: hook - an implementation of the TradingHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterTradingHook(hook TradingHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	hm.tradingHooks = append(hm.tradingHooks, hook)
 }
 
-// RegisterFiatHook registers a fiat currency hook
+// RegisterFiatHook registers a fiat currency hook implementation with the HookManager.
+// This allows the compliance system to monitor fiat-related events (e.g., deposits, withdrawals, transfers)
+// and enforce compliance and risk controls for fiat operations.
+//
+// Input: hook - an implementation of the FiatHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterFiatHook(hook FiatHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	hm.fiatHooks = append(hm.fiatHooks, hook)
 }
 
-// RegisterWalletHook registers a wallet hook
+// RegisterWalletHook registers a wallet hook implementation with the HookManager.
+// This enables the compliance system to listen for wallet-related events (e.g., crypto deposits, withdrawals)
+// and apply compliance, audit, and monitoring logic for wallet operations.
+//
+// Input: hook - an implementation of the WalletHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterWalletHook(hook WalletHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	hm.walletHooks = append(hm.walletHooks, hook)
 }
 
-// RegisterAccountsHook registers an accounts hook
+// RegisterAccountsHook registers an accounts hook implementation with the HookManager.
+// This allows the compliance system to process account management events (e.g., account creation, suspension)
+// and enforce compliance and audit requirements for user accounts.
+//
+// Input: hook - an implementation of the AccountsHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterAccountsHook(hook AccountsHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	hm.accountsHooks = append(hm.accountsHooks, hook)
 }
 
-// RegisterMarketMakingHook registers a market making hook
+// RegisterMarketMakingHook registers a market making hook implementation with the HookManager.
+// This enables the compliance system to monitor market making activities (e.g., strategy changes, inventory updates)
+// and apply risk and compliance controls for market making operations.
+//
+// Input: hook - an implementation of the MarketMakingHook interface
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) RegisterMarketMakingHook(hook MarketMakingHook) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -57,7 +87,9 @@ func (hm *HookManager) RegisterMarketMakingHook(hook MarketMakingHook) {
 
 // Built-in compliance hooks implementation
 
-// ComplianceUserAuthHook implements UserAuthHook for compliance checking
+// ComplianceUserAuthHook implements the UserAuthHook interface for compliance checking on user authentication events.
+// It integrates with the compliance, audit, monitoring, and risk services to enforce platform policies
+// during user registration and login events.
 type ComplianceUserAuthHook struct {
 	compliance interfaces.ComplianceService
 	audit      interfaces.AuditService
@@ -65,7 +97,16 @@ type ComplianceUserAuthHook struct {
 	risk       risk.RiskService
 }
 
-// NewComplianceUserAuthHook creates a new compliance user auth hook
+// NewComplianceUserAuthHook creates a new ComplianceUserAuthHook instance.
+// This function wires together the compliance, audit, monitoring, and risk services for user authentication events.
+//
+// Inputs:
+//   - compliance: ComplianceService for compliance checks
+//   - audit: AuditService for audit logging
+//   - monitoring: MonitoringService for alerting
+//   - riskSvc: RiskService for risk assessment
+//
+// Output: pointer to a new ComplianceUserAuthHook
 func NewComplianceUserAuthHook(
 	compliance interfaces.ComplianceService,
 	audit interfaces.AuditService,
@@ -80,6 +121,18 @@ func NewComplianceUserAuthHook(
 	}
 }
 
+// OnUserRegistration handles user registration events for compliance, audit, and risk assessment.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: UserRegistrationEvent containing registration details
+//
+// Outputs:
+//   - error: error if compliance or risk checks fail, or if audit/monitoring fails
+//
+// This function parses the user ID, logs the registration event for auditing, performs compliance checks,
+// assesses user risk, and generates alerts if the user is deemed high risk. It integrates with the compliance,
+// audit, monitoring, and risk services to ensure new users meet platform requirements.
 func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *UserRegistrationEvent) error {
 	// Parse UserID to UUID
 	userUUID, err := uuid.Parse(event.UserID)
@@ -149,6 +202,17 @@ func (h *ComplianceUserAuthHook) OnUserRegistration(ctx context.Context, event *
 	return nil
 }
 
+// OnUserLogin handles user login events for audit logging and suspicious activity monitoring.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: UserLoginEvent containing login details
+//
+// Outputs:
+//   - error: error if audit logging or alert generation fails
+//
+// This function logs the login event for auditing and generates alerts for failed login attempts or suspicious patterns.
+// It helps the compliance and monitoring systems detect and respond to potential account compromise or abuse.
 func (h *ComplianceUserAuthHook) OnUserLogin(ctx context.Context, event *UserLoginEvent) error {
 	// Audit logging
 	if err := h.auditEvent(ctx, "user_login", event.UserID, event); err != nil {
@@ -183,10 +247,30 @@ func (h *ComplianceUserAuthHook) OnUserLogin(ctx context.Context, event *UserLog
 	return nil
 }
 
+// OnUserLogout handles user logout events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: UserLogoutEvent containing logout details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs the logout event for auditing purposes, supporting compliance and security monitoring.
 func (h *ComplianceUserAuthHook) OnUserLogout(ctx context.Context, event *UserLogoutEvent) error {
 	return h.auditEvent(ctx, "user_logout", event.UserID, event)
 }
 
+// OnPasswordChange handles password change events for audit logging and alerting on failures.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: PasswordChangeEvent containing password change details
+//
+// Output:
+//   - error: error if audit logging or alert generation fails
+//
+// This function logs password change attempts and generates alerts for failed attempts, helping detect account compromise attempts.
 func (h *ComplianceUserAuthHook) OnPasswordChange(ctx context.Context, event *PasswordChangeEvent) error {
 	if err := h.auditEvent(ctx, "password_change", event.UserID, event); err != nil {
 		return err
@@ -211,14 +295,44 @@ func (h *ComplianceUserAuthHook) OnPasswordChange(ctx context.Context, event *Pa
 	return nil
 }
 
+// OnEmailVerification handles email verification events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: EmailVerificationEvent containing verification details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs email verification events for compliance and user activity tracking.
 func (h *ComplianceUserAuthHook) OnEmailVerification(ctx context.Context, event *EmailVerificationEvent) error {
 	return h.auditEvent(ctx, "email_verification", event.UserID, event)
 }
 
+// On2FAEnabled handles 2FA enablement events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: TwoFAEvent containing 2FA enablement details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs 2FA enablement events, supporting compliance and security monitoring.
 func (h *ComplianceUserAuthHook) On2FAEnabled(ctx context.Context, event *TwoFAEvent) error {
 	return h.auditEvent(ctx, "2fa_change", event.UserID, event)
 }
 
+// OnAccountLocked handles account lock events for audit logging and alerting.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: AccountLockEvent containing lock details
+//
+// Output:
+//   - error: error if audit logging or alert generation fails
+//
+// This function logs account lock events and can trigger alerts, supporting compliance and security incident response.
 func (h *ComplianceUserAuthHook) OnAccountLocked(ctx context.Context, event *AccountLockEvent) error {
 	if err := h.auditEvent(ctx, "account_locked", event.UserID, event); err != nil {
 		return err
@@ -241,7 +355,9 @@ func (h *ComplianceUserAuthHook) OnAccountLocked(ctx context.Context, event *Acc
 	return h.monitoring.GenerateAlert(ctx, alert)
 }
 
-// ComplianceTradingHook implements TradingHook for compliance checking
+// ComplianceTradingHook implements the TradingHook interface for compliance checking on trading events.
+// It integrates with the compliance, audit, monitoring, manipulation, and risk services to enforce platform policies
+// during trading operations such as order placement, execution, and cancellation.
 type ComplianceTradingHook struct {
 	compliance   interfaces.ComplianceService
 	audit        interfaces.AuditService
@@ -250,7 +366,17 @@ type ComplianceTradingHook struct {
 	risk         risk.RiskService
 }
 
-// NewComplianceTradingHook creates a new compliance trading hook
+// NewComplianceTradingHook creates a new ComplianceTradingHook instance.
+// This function wires together the compliance, audit, monitoring, manipulation, and risk services for trading events.
+//
+// Inputs:
+//   - compliance: ComplianceService for compliance checks
+//   - audit: AuditService for audit logging
+//   - monitoring: MonitoringService for alerting
+//   - manipulation: ManipulationService for market manipulation detection
+//   - riskSvc: RiskService for risk assessment
+//
+// Output: pointer to a new ComplianceTradingHook
 func NewComplianceTradingHook(
 	compliance interfaces.ComplianceService,
 	audit interfaces.AuditService,
@@ -267,6 +393,18 @@ func NewComplianceTradingHook(
 	}
 }
 
+// OnOrderPlaced handles order placement events for compliance, audit, and risk assessment.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: OrderPlacedEvent containing order placement details
+//
+// Output:
+//   - error: error if compliance or risk checks fail, or if audit/monitoring fails
+//
+// This function parses the user ID, logs the order placement event for auditing, performs risk assessment
+// for the transaction, and integrates with the compliance, audit, monitoring, and risk services to ensure
+// all new orders meet platform requirements and risk controls.
 func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderPlacedEvent) error {
 	// Parse UserID to UUID for risk assessment
 	userUUID, err := uuid.Parse(event.UserID)
@@ -352,14 +490,45 @@ func (h *ComplianceTradingHook) OnOrderPlaced(ctx context.Context, event *OrderP
 	return nil
 }
 
+// OnOrderExecuted handles order execution events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: OrderExecutedEvent containing execution details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs order execution events for compliance and trading activity tracking.
 func (h *ComplianceTradingHook) OnOrderExecuted(ctx context.Context, event *OrderExecutedEvent) error {
 	return h.auditEvent(ctx, "order_executed", event.UserID, event)
 }
 
+// OnOrderCancelled handles order cancellation events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: OrderCancelledEvent containing cancellation details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs order cancellation events for compliance and trading activity tracking.
 func (h *ComplianceTradingHook) OnOrderCancelled(ctx context.Context, event *OrderCancelledEvent) error {
 	return h.auditEvent(ctx, "order_cancelled", event.UserID, event)
 }
 
+// OnTradeExecuted handles trade execution events for audit logging and wash trading detection.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: TradeExecutedEvent containing trade details
+//
+// Output:
+//   - error: error if audit logging or alert generation fails
+//
+// This function logs trade execution events for both buyer and seller, and generates alerts if the same user
+// is both buyer and seller (potential wash trading). It supports compliance, monitoring, and market integrity.
 func (h *ComplianceTradingHook) OnTradeExecuted(ctx context.Context, event *TradeExecutedEvent) error {
 	// Audit both buyer and seller
 	if err := h.auditEvent(ctx, "trade_executed_buyer", event.BuyerID, event); err != nil {
@@ -389,17 +558,47 @@ func (h *ComplianceTradingHook) OnTradeExecuted(ctx context.Context, event *Trad
 	return nil
 }
 
+// OnPositionUpdated handles position update events for audit logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: PositionUpdateEvent containing position update details
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function logs position update events for compliance and trading activity tracking.
 func (h *ComplianceTradingHook) OnPositionUpdated(ctx context.Context, event *PositionUpdateEvent) error {
 	return h.auditEvent(ctx, "position_updated", event.UserID, event)
 }
 
+// OnMarketDataReceived handles market data events for manipulation detection or logging.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: MarketDataEvent containing market data details
+//
+// Output:
+//   - error: error if processing fails (currently always returns nil)
+//
+// This function can be extended to detect market manipulation or anomalies based on market data.
 func (h *ComplianceTradingHook) OnMarketDataReceived(ctx context.Context, event *MarketDataEvent) error {
 	// This could be used for market manipulation detection
 	// For now, just basic logging
 	return nil
 }
 
-// TriggerHooks processes the given event through appropriate hooks based on event type
+// TriggerHooks processes the given event through the appropriate registered hooks based on event type.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - event: the event to process (type switch determines which hooks to call)
+//
+// Output:
+//   - error: error if any hook fails to process the event
+//
+// This function acts as a central dispatcher for compliance, risk, and audit hooks, ensuring all relevant
+// hooks are triggered for each event type across the platform.
 func (hm *HookManager) TriggerHooks(ctx context.Context, event interface{}) error {
 	switch e := event.(type) {
 	// User Authentication Events
@@ -521,6 +720,18 @@ func (hm *HookManager) ProcessAccountEvent(ctx context.Context, eventType string
 	return nil
 }
 
+// ProcessTradingEvent dispatches trading-related events (order placed, executed, trade executed, etc.) to all registered TradingHooks.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the trading event type (e.g., "order_placed")
+//   - event: event payload (should match the expected struct for the eventType)
+//
+// Output:
+//   - error: error if any hook fails to process the event
+//
+// This function ensures that all trading compliance, risk, and monitoring hooks are invoked for each trading event.
+// It is used by the trading module and other platform components to enforce compliance on trading operations.
 func (hm *HookManager) ProcessTradingEvent(ctx context.Context, eventType string, event interface{}) error {
 	hm.mu.RLock()
 	hooks := make([]TradingHook, len(hm.tradingHooks))
@@ -552,6 +763,18 @@ func (hm *HookManager) ProcessTradingEvent(ctx context.Context, eventType string
 	return nil
 }
 
+// ProcessFiatEvent dispatches fiat-related events (deposit, withdrawal, transfer) to all registered FiatHooks.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the fiat event type (e.g., "fiat_deposit")
+//   - event: event payload (should match the expected struct for the eventType)
+//
+// Output:
+//   - error: error if any hook fails to process the event
+//
+// This function ensures that all fiat compliance, risk, and monitoring hooks are invoked for each fiat event.
+// It is used by the fiat module and other platform components to enforce compliance on fiat operations.
 func (hm *HookManager) ProcessFiatEvent(ctx context.Context, eventType string, event interface{}) error {
 	hm.mu.RLock()
 	hooks := make([]FiatHook, len(hm.fiatHooks))
@@ -583,6 +806,18 @@ func (hm *HookManager) ProcessFiatEvent(ctx context.Context, eventType string, e
 	return nil
 }
 
+// ProcessWalletEvent dispatches wallet-related events (crypto deposit, balance update, address, staking, etc.) to all registered WalletHooks.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the wallet event type (e.g., "crypto_deposit")
+//   - event: event payload (should match the expected struct for the eventType)
+//
+// Output:
+//   - error: error if any hook fails to process the event
+//
+// This function ensures that all wallet compliance, risk, and monitoring hooks are invoked for each wallet event.
+// It is used by the wallet module and other platform components to enforce compliance on wallet operations.
 func (hm *HookManager) ProcessWalletEvent(ctx context.Context, eventType string, event interface{}) error {
 	hm.mu.RLock()
 	hooks := make([]WalletHook, len(hm.walletHooks))
@@ -627,6 +862,18 @@ func (hm *HookManager) ProcessWalletEvent(ctx context.Context, eventType string,
 	return nil
 }
 
+// ProcessMarketMakingEvent dispatches market making-related events (strategy, quote, order, inventory, risk, pnl, performance) to all registered MarketMakingHooks.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the market making event type (e.g., "mm_strategy")
+//   - event: event payload (should match the expected struct for the eventType)
+//
+// Output:
+//   - error: error if any hook fails to process the event
+//
+// This function ensures that all market making compliance, risk, and monitoring hooks are invoked for each market making event.
+// It is used by the market making module and other platform components to enforce compliance on market making operations.
 func (hm *HookManager) ProcessMarketMakingEvent(ctx context.Context, eventType string, event interface{}) error {
 	hm.mu.RLock()
 	hooks := make([]MarketMakingHook, len(hm.marketMakingHooks))
@@ -682,7 +929,19 @@ func (hm *HookManager) ProcessMarketMakingEvent(ctx context.Context, eventType s
 	return nil
 }
 
-// Helper function for audit logging
+// auditEvent logs an audit event for compliance and monitoring purposes.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the event type (e.g., "user_login")
+//   - userID: user identifier (string or uuid.UUID)
+//   - data: event payload (arbitrary struct)
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function creates and sends an audit event to the platform's audit service, supporting compliance,
+// monitoring, and traceability of user and system actions.
 func (h *ComplianceUserAuthHook) auditEvent(ctx context.Context, eventType string, userID interface{}, data interface{}) error {
 	auditEvent := &interfaces.AuditEvent{
 		EventType:   eventType,
@@ -707,6 +966,19 @@ func (h *ComplianceUserAuthHook) auditEvent(ctx context.Context, eventType strin
 	return h.audit.CreateEvent(ctx, auditEvent)
 }
 
+// auditEvent logs a trading-related audit event for compliance and monitoring purposes.
+//
+// Inputs:
+//   - ctx: context for request-scoped values and cancellation
+//   - eventType: string identifier for the trading event type (e.g., "order_placed")
+//   - userID: user identifier (string or uuid.UUID)
+//   - data: event payload (arbitrary struct)
+//
+// Output:
+//   - error: error if audit logging fails
+//
+// This function creates and sends a trading audit event to the platform's audit service, supporting compliance,
+// monitoring, and traceability of trading actions.
 func (h *ComplianceTradingHook) auditEvent(ctx context.Context, eventType string, userID interface{}, data interface{}) error {
 	auditEvent := &interfaces.AuditEvent{
 		EventType:   eventType,
@@ -730,7 +1002,12 @@ func (h *ComplianceTradingHook) auditEvent(ctx context.Context, eventType string
 	return h.audit.CreateEvent(ctx, auditEvent)
 }
 
-// Initialize default hooks
+// InitializeDefaultHooks registers all built-in compliance hooks with the HookManager.
+// This function is called during platform startup to ensure that all core compliance, audit, monitoring,
+// and risk hooks are active and ready to process events from user authentication, trading, and other modules.
+//
+// Input: none (uses HookManager dependencies)
+// Output: none (modifies the HookManager in place)
 func (hm *HookManager) InitializeDefaultHooks() {
 	// Register built-in compliance hooks
 	hm.RegisterUserAuthHook(NewComplianceUserAuthHook(
@@ -820,15 +1097,29 @@ func (hm *HookManager) ProcessUserAuthEvent(ctx context.Context, eventType strin
 	return nil
 }
 
-// Similar ProcessEvent methods for other event types would be implemented here...
-
-// Start starts the hook manager
+// Start initializes and activates all built-in compliance, risk, and monitoring hooks for the platform.
+//
+// Input:
+//   - ctx: context for request-scoped values and cancellation
+//
+// Output:
+//   - error: error if initialization fails (currently always returns nil)
+//
+// This function should be called during platform startup to ensure all hooks are registered and ready to process events.
 func (hm *HookManager) Start(ctx context.Context) error {
 	hm.InitializeDefaultHooks()
 	return nil
 }
 
-// Stop stops the hook manager
+// Stop gracefully shuts down the hook manager and releases any resources if needed.
+//
+// Input:
+//   - ctx: context for request-scoped values and cancellation
+//
+// Output:
+//   - error: error if shutdown fails (currently always returns nil)
+//
+// This function can be extended to perform cleanup or shutdown logic for compliance hooks if required in the future.
 func (hm *HookManager) Stop(ctx context.Context) error {
 	return nil
 }
