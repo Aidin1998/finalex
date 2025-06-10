@@ -12,6 +12,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/factory"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/shopspring/decimal"
 )
 
 // BacktestEngine manages backtesting execution and results
@@ -393,16 +394,16 @@ func (be *BacktestEngine) executeOrder(execution *BacktestExecution, order *mode
 	if price == 0 {
 		return nil // No price available
 	}
-
 	// Apply slippage
 	slippage := be.calculateSlippage(execution, order)
 	executionPrice := price + slippage
 
 	// Calculate commission
-	commission := order.Quantity * executionPrice * execution.virtualPortfolio.CommissionRate
+	executionPriceDecimal := decimal.NewFromFloat(executionPrice)
+	commission := order.Quantity.Mul(executionPriceDecimal).Mul(decimal.NewFromFloat(execution.virtualPortfolio.CommissionRate))
 
 	// Check if we have enough cash/position
-	if !be.canExecuteOrder(execution, order, executionPrice, commission) {
+	if !be.canExecuteOrder(execution, order, executionPrice, commission.InexactFloat64()) {
 		return nil
 	}
 
@@ -411,10 +412,10 @@ func (be *BacktestEngine) executeOrder(execution *BacktestExecution, order *mode
 		ID:         fmt.Sprintf("%s_%d", execution.Config.ID, len(execution.trades)),
 		Pair:       order.Symbol,
 		Side:       order.Side,
-		Size:       order.Quantity,
+		Size:       order.Quantity.InexactFloat64(),
 		EntryPrice: executionPrice,
 		EntryTime:  currentTime,
-		Commission: commission,
+		Commission: commission.InexactFloat64(),
 	}
 
 	// Update portfolio

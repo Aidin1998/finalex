@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
 	"github.com/Aidin1998/finalex/pkg/models"
@@ -123,13 +124,12 @@ func (api *TransactionAPI) ExecuteWorkflow(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing or invalid user_id parameter"})
 			return
 		}
-
 		// Parse order request from parameters
 		orderReq := &models.OrderRequest{
 			Symbol:   request.Parameters["symbol"].(string),
 			Side:     request.Parameters["side"].(string),
-			Quantity: request.Parameters["quantity"].(float64),
-			Price:    request.Parameters["price"].(float64),
+			Quantity: decimal.NewFromFloat(request.Parameters["quantity"].(float64)),
+			Price:    decimal.NewFromFloat(request.Parameters["price"].(float64)),
 		}
 
 		result, err = api.suite.WorkflowOrchestrator.ComplexTradeExecutionWorkflow(

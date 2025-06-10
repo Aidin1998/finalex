@@ -10,6 +10,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/trading/consistency"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -89,13 +90,13 @@ type OrderProcessingMetrics struct {
 
 // Order represents an enhanced order with consistency metadata
 type Order struct {
-	ID       string  `json:"id" db:"id"`
-	UserID   string  `json:"user_id" db:"user_id"`
-	Symbol   string  `json:"symbol" db:"symbol"`
-	Side     string  `json:"side" db:"side"` // "buy" or "sell"
-	Type     string  `json:"type" db:"type"` // "market", "limit", "stop"
-	Quantity float64 `json:"quantity" db:"quantity"`
-	Price    float64 `json:"price" db:"price"`
+	ID       string          `json:"id" db:"id"`
+	UserID   string          `json:"user_id" db:"user_id"`
+	Symbol   string          `json:"symbol" db:"symbol"`
+	Side     string          `json:"side" db:"side"` // "buy" or "sell"
+	Type     string          `json:"type" db:"type"` // "market", "limit", "stop"
+	Quantity decimal.Decimal `json:"quantity" db:"quantity"`
+	Price    decimal.Decimal `json:"price" db:"price"`
 
 	// Consistency metadata
 	RequiresConsensus bool   `json:"requires_consensus" db:"requires_consensus"`
@@ -127,15 +128,15 @@ type OrderProcessingResult struct {
 
 // Trade represents a matched trade
 type Trade struct {
-	ID          string    `json:"id"`
-	BuyOrderID  string    `json:"buy_order_id"`
-	SellOrderID string    `json:"sell_order_id"`
-	BuyerID     string    `json:"buyer_id"`
-	SellerID    string    `json:"seller_id"`
-	Symbol      string    `json:"symbol"`
-	Quantity    float64   `json:"quantity"`
-	Price       float64   `json:"price"`
-	Timestamp   time.Time `json:"timestamp"`
+	ID          string          `json:"id"`
+	BuyOrderID  string          `json:"buy_order_id"`
+	SellOrderID string          `json:"sell_order_id"`
+	BuyerID     string          `json:"buyer_id"`
+	SellerID    string          `json:"seller_id"`
+	Symbol      string          `json:"symbol"`
+	Quantity    decimal.Decimal `json:"quantity"`
+	Price       decimal.Decimal `json:"price"`
+	Timestamp   time.Time       `json:"timestamp"`
 }
 
 // NewStrongConsistencyOrderProcessor creates a new enhanced order processor
@@ -194,13 +195,12 @@ func (scop *StrongConsistencyOrderProcessor) Stop(ctx context.Context) error {
 func (scop *StrongConsistencyOrderProcessor) ProcessOrder(ctx context.Context, order *Order) (*OrderProcessingResult, error) {
 	startTime := time.Now()
 	orderID := order.ID
-
 	scop.logger.Info("Processing order with strong consistency",
 		zap.String("order_id", orderID),
 		zap.String("user_id", order.UserID),
 		zap.String("symbol", order.Symbol),
-		zap.Float64("quantity", order.Quantity),
-		zap.Float64("price", order.Price))
+		zap.String("quantity", order.Quantity.String()),
+		zap.String("price", order.Price.String()))
 
 	// Initialize result
 	result := &OrderProcessingResult{
@@ -340,8 +340,9 @@ func (scop *StrongConsistencyOrderProcessor) requiresConsensus(order *Order) boo
 		return false
 	}
 
-	orderValue := order.Quantity * order.Price
-	return orderValue >= scop.config.LargeOrderThreshold
+	orderValue := order.Quantity.Mul(order.Price)
+	threshold := decimal.NewFromFloat(scop.config.LargeOrderThreshold)
+	return orderValue.GreaterThanOrEqual(threshold)
 }
 
 // validateOrder performs basic order validation
@@ -355,10 +356,10 @@ func (scop *StrongConsistencyOrderProcessor) validateOrder(order *Order) error {
 	if order.Side != "buy" && order.Side != "sell" {
 		return fmt.Errorf("invalid side: %s", order.Side)
 	}
-	if order.Quantity <= 0 {
+	if order.Quantity.LessThanOrEqual(decimal.Zero) {
 		return fmt.Errorf("quantity must be positive")
 	}
-	if order.Price <= 0 {
+	if order.Price.LessThanOrEqual(decimal.Zero) {
 		return fmt.Errorf("price must be positive")
 	}
 
@@ -369,27 +370,26 @@ func (scop *StrongConsistencyOrderProcessor) validateOrder(order *Order) error {
 func (scop *StrongConsistencyOrderProcessor) validateBalance(ctx context.Context, order *Order) error {
 	balanceCtx, cancel := context.WithTimeout(ctx, scop.config.BalanceCheckTimeout)
 	defer cancel()
-
 	var requiredCurrency string
-	var requiredAmount float64
+	var requiredAmount decimal.Decimal
 
 	if order.Side == "buy" {
 		// For buy orders, check quote currency balance
 		requiredCurrency = scop.getQuoteCurrency(order.Symbol)
-		requiredAmount = order.Quantity * order.Price
+		requiredAmount = order.Quantity.Mul(order.Price)
 	} else {
 		// For sell orders, check base currency balance
 		requiredCurrency = scop.getBaseCurrency(order.Symbol)
 		requiredAmount = order.Quantity
 	}
-
 	balance, err := scop.balanceManager.GetBalance(balanceCtx, order.UserID, requiredCurrency)
 	if err != nil {
 		return fmt.Errorf("failed to get balance: %w", err)
 	}
 
-	if balance < requiredAmount {
-		return fmt.Errorf("insufficient balance: required %f, available %f", requiredAmount, balance)
+	balanceDecimal := decimal.NewFromFloat(balance)
+	if balanceDecimal.LessThan(requiredAmount) {
+		return fmt.Errorf("insufficient balance: required %s, available %s", requiredAmount.String(), balanceDecimal.String())
 	}
 
 	return nil
@@ -403,14 +403,13 @@ func (scop *StrongConsistencyOrderProcessor) requestConsensus(ctx context.Contex
 	operation := consensus.Operation{
 		ID:   fmt.Sprintf("order-%s", order.ID),
 		Type: consensus.OperationTypeOrderProcessing,
-		Data: map[string]interface{}{
-			"order_id":    order.ID,
+		Data: map[string]interface{}{"order_id": order.ID,
 			"user_id":     order.UserID,
 			"symbol":      order.Symbol,
 			"side":        order.Side,
-			"quantity":    order.Quantity,
-			"price":       order.Price,
-			"order_value": order.Quantity * order.Price,
+			"quantity":    order.Quantity.String(),
+			"price":       order.Price.String(),
+			"order_value": order.Quantity.Mul(order.Price).String(),
 		},
 		Timestamp: time.Now(),
 	}
@@ -528,9 +527,9 @@ func (scop *StrongConsistencyOrderProcessor) getRequiredCurrency(order *Order) s
 	return scop.getBaseCurrency(order.Symbol)
 }
 
-func (scop *StrongConsistencyOrderProcessor) getRequiredAmount(order *Order) float64 {
+func (scop *StrongConsistencyOrderProcessor) getRequiredAmount(order *Order) decimal.Decimal {
 	if order.Side == "buy" {
-		return order.Quantity * order.Price
+		return order.Quantity.Mul(order.Price)
 	}
 	return order.Quantity
 }

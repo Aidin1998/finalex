@@ -66,10 +66,9 @@ func (s *TradingMessageService) AsyncPlaceOrder(ctx context.Context, order *mode
 		OrderID:     order.ID.String(),
 		Symbol:      order.Symbol,
 		Side:        order.Side,
-		Type:        order.Type,
-		Price:       decimal.NewFromFloat(order.Price),
-		Quantity:    decimal.NewFromFloat(order.Quantity),
-		FilledQty:   decimal.NewFromFloat(0),
+		Type:        order.Type, Price: order.Price,
+		Quantity:    order.Quantity,
+		FilledQty:   decimal.Zero,
 		Status:      order.Status,
 		TimeInForce: order.TimeInForce,
 	}

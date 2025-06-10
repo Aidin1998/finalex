@@ -377,11 +377,10 @@ func (bcm *BalanceConsistencyManager) executeTransfer(
 	if err != nil {
 		return fmt.Errorf("failed to lock from account: %w", err)
 	}
-
 	// Validate sufficient funds
-	if fromAccount.Available < operation.Amount.InexactFloat64() {
-		return fmt.Errorf("insufficient funds: available=%f, required=%s",
-			fromAccount.Available, operation.Amount.String())
+	if fromAccount.Available.LessThan(operation.Amount) {
+		return fmt.Errorf("insufficient funds: available=%s, required=%s",
+			fromAccount.Available.String(), operation.Amount.String())
 	}
 
 	// Lock to account with row locking
@@ -420,12 +419,11 @@ func (bcm *BalanceConsistencyManager) executeTransfer(
 
 	fromTxID := uuid.New()
 	toTxID := uuid.New()
-
 	fromTx := &models.Transaction{
 		ID:          fromTxID,
 		UserID:      fromUserUUID,
 		Type:        "transfer_out",
-		Amount:      -operation.Amount.InexactFloat64(),
+		Amount:      operation.Amount.Neg(),
 		Currency:    operation.Currency,
 		Reference:   operation.Reference,
 		Description: operation.Description,
@@ -438,7 +436,7 @@ func (bcm *BalanceConsistencyManager) executeTransfer(
 		ID:          toTxID,
 		UserID:      toUserUUID,
 		Type:        "transfer_in",
-		Amount:      operation.Amount.InexactFloat64(),
+		Amount:      operation.Amount,
 		Currency:    operation.Currency,
 		Reference:   operation.Reference,
 		Description: operation.Description,
@@ -464,7 +462,7 @@ func (bcm *BalanceConsistencyManager) executeLock(
 	ctx context.Context,
 	operation *BalanceOperation,
 ) error {
-	return bcm.bookkeeper.LockFunds(ctx, operation.UserID, operation.Currency, operation.Amount.InexactFloat64())
+	return bcm.bookkeeper.LockFunds(ctx, operation.UserID, operation.Currency, operation.Amount)
 }
 
 // executeUnlock performs a funds unlock operation
@@ -472,7 +470,7 @@ func (bcm *BalanceConsistencyManager) executeUnlock(
 	ctx context.Context,
 	operation *BalanceOperation,
 ) error {
-	return bcm.bookkeeper.UnlockFunds(ctx, operation.UserID, operation.Currency, operation.Amount.InexactFloat64())
+	return bcm.bookkeeper.UnlockFunds(ctx, operation.UserID, operation.Currency, operation.Amount)
 }
 
 // getAccountLocks returns the locks needed for an operation in deterministic order
@@ -553,8 +551,7 @@ func (bcm *BalanceConsistencyManager) validatePreConditions(
 		if err != nil {
 			return fmt.Errorf("from account not found: %w", err)
 		}
-
-		if fromAccount.Available < operation.Amount.InexactFloat64() {
+		if fromAccount.Available.LessThan(operation.Amount) {
 			return fmt.Errorf("insufficient funds in from account")
 		}
 
@@ -568,8 +565,7 @@ func (bcm *BalanceConsistencyManager) validatePreConditions(
 		if err != nil {
 			return fmt.Errorf("account not found: %w", err)
 		}
-
-		if account.Available < operation.Amount.InexactFloat64() {
+		if account.Available.LessThan(operation.Amount) {
 			return fmt.Errorf("insufficient funds to lock")
 		}
 	}
@@ -761,5 +757,5 @@ func (bcm *BalanceConsistencyManager) GetBalance(ctx context.Context, userID, cu
 	if err != nil {
 		return 0, err
 	}
-	return acct.Available, nil
+	return acct.Available.InexactFloat64(), nil
 }

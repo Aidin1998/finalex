@@ -471,12 +471,18 @@ func (as *AdaptiveService) GetOrderBook(symbol string, depth int) (*models.Order
 	for i, lvl := range bids {
 		price, _ := strconv.ParseFloat(lvl[0], 64)
 		volume, _ := strconv.ParseFloat(lvl[1], 64)
-		apiSnapshot.Bids[i] = models.OrderBookLevel{Price: price, Volume: volume}
+		apiSnapshot.Bids[i] = models.OrderBookLevel{
+			Price:  decimal.NewFromFloat(price),
+			Volume: decimal.NewFromFloat(volume),
+		}
 	}
 	for i, lvl := range asks {
 		price, _ := strconv.ParseFloat(lvl[0], 64)
 		volume, _ := strconv.ParseFloat(lvl[1], 64)
-		apiSnapshot.Asks[i] = models.OrderBookLevel{Price: price, Volume: volume}
+		apiSnapshot.Asks[i] = models.OrderBookLevel{
+			Price:  decimal.NewFromFloat(price),
+			Volume: decimal.NewFromFloat(volume),
+		}
 	}
 	return apiSnapshot, nil
 }

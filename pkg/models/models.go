@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Order type constants
@@ -67,17 +68,17 @@ const (
 
 // PlaceOrderRequest represents a request to place an order
 type PlaceOrderRequest struct {
-	Symbol          string     `json:"symbol" validate:"required"`
-	Side            OrderSide  `json:"side" validate:"required"`
-	Type            OrderType  `json:"type" validate:"required"`
-	Quantity        float64    `json:"quantity" validate:"required,gt=0"`
-	Price           *float64   `json:"price,omitempty" validate:"omitempty,gt=0"`
-	TimeInForce     string     `json:"time_in_force,omitempty" validate:"omitempty,oneof=GTC IOC FOK GTD"`
-	StopPrice       *float64   `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
-	DisplayQuantity *float64   `json:"display_quantity,omitempty" validate:"omitempty,gt=0"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	ReduceOnly      *bool      `json:"reduce_only,omitempty"`
-	PostOnly        *bool      `json:"post_only,omitempty"`
+	Symbol          string           `json:"symbol" validate:"required"`
+	Side            OrderSide        `json:"side" validate:"required"`
+	Type            OrderType        `json:"type" validate:"required"`
+	Quantity        decimal.Decimal  `json:"quantity" validate:"required,gt=0"`
+	Price           *decimal.Decimal `json:"price,omitempty" validate:"omitempty,gt=0"`
+	TimeInForce     string           `json:"time_in_force,omitempty" validate:"omitempty,oneof=GTC IOC FOK GTD"`
+	StopPrice       *decimal.Decimal `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
+	DisplayQuantity *decimal.Decimal `json:"display_quantity,omitempty" validate:"omitempty,gt=0"`
+	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`
+	ReduceOnly      *bool            `json:"reduce_only,omitempty"`
+	PostOnly        *bool            `json:"post_only,omitempty"`
 }
 
 // User represents a user in the system
@@ -104,132 +105,132 @@ type User struct {
 
 // Account represents a user's account for a specific currency
 type Account struct {
-	ID        uuid.UUID `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID    uuid.UUID `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Currency  string    `json:"currency" validate:"required,currency_code"`
-	Balance   float64   `json:"balance" validate:"min=0"`
-	Available float64   `json:"available" validate:"min=0"`
-	Locked    float64   `json:"locked" validate:"min=0"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID    uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Currency  string          `json:"currency" validate:"required,currency_code"`
+	Balance   decimal.Decimal `json:"balance" validate:"min=0"`
+	Available decimal.Decimal `json:"available" validate:"min=0"`
+	Locked    decimal.Decimal `json:"locked" validate:"min=0"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // Transaction represents a transaction in the system
 type Transaction struct {
-	ID          uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID      uuid.UUID  `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Type        string     `json:"type" validate:"required,oneof=deposit withdrawal trade"` // deposit, withdrawal, trade
-	Amount      float64    `json:"amount" validate:"required,gt=0"`
-	Currency    string     `json:"currency" validate:"required,currency_code"`
-	Status      string     `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
-	Reference   string     `json:"reference" validate:"omitempty,max=255,alphanum_hyphen"`
-	Description string     `json:"description" validate:"omitempty,max=500"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	CompletedAt *time.Time `json:"completed_at"`
+	ID          uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID      uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Type        string          `json:"type" validate:"required,oneof=deposit withdrawal trade"` // deposit, withdrawal, trade
+	Amount      decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	Currency    string          `json:"currency" validate:"required,currency_code"`
+	Status      string          `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
+	Reference   string          `json:"reference" validate:"omitempty,max=255,alphanum_hyphen"`
+	Description string          `json:"description" validate:"omitempty,max=500"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	CompletedAt *time.Time      `json:"completed_at"`
 }
 
 // TransactionEntry represents an entry in a transaction
 type TransactionEntry struct {
-	ID        uuid.UUID `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	AccountID uuid.UUID `json:"account_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Type      string    `json:"type" validate:"required,oneof=credit debit"` // credit, debit
-	Amount    float64   `json:"amount" validate:"required,gt=0"`
-	Currency  string    `json:"currency" validate:"required,currency_code"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	AccountID uuid.UUID       `json:"account_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Type      string          `json:"type" validate:"required,oneof=credit debit"` // credit, debit
+	Amount    decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	Currency  string          `json:"currency" validate:"required,currency_code"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // Order represents an order in the system
 type Order struct {
-	ID          uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID      uuid.UUID  `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Symbol      string     `json:"symbol" gorm:"index" validate:"required,trading_pair"`
-	Side        string     `json:"side" validate:"required,oneof=buy sell"`                                       // buy, sell
-	Type        string     `json:"type" validate:"required,oneof=limit market stop stop-limit trailing-stop OCO"` // limit, market, stop, stop-limit, trailing-stop, OCO, etc.
-	Price       float64    `json:"price" validate:"omitempty,gt=0"`
-	Quantity    float64    `json:"quantity" validate:"required,gt=0"`
-	TimeInForce string     `json:"time_in_force" validate:"required,oneof=GTC IOC FOK"`                                      // GTC, IOC, FOK
-	Status      string     `json:"status" validate:"required,oneof=new partially_filled filled canceled rejected triggered"` // new, partially_filled, filled, canceled, rejected, triggered
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	FilledAt    *time.Time `json:"filled_at"`
+	ID          uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID      uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Symbol      string          `json:"symbol" gorm:"index" validate:"required,trading_pair"`
+	Side        string          `json:"side" validate:"required,oneof=buy sell"`                                       // buy, sell
+	Type        string          `json:"type" validate:"required,oneof=limit market stop stop-limit trailing-stop OCO"` // limit, market, stop, stop-limit, trailing-stop, OCO, etc.
+	Price       decimal.Decimal `json:"price" validate:"omitempty,gt=0"`
+	Quantity    decimal.Decimal `json:"quantity" validate:"required,gt=0"`
+	TimeInForce string          `json:"time_in_force" validate:"required,oneof=GTC IOC FOK"`                                      // GTC, IOC, FOK
+	Status      string          `json:"status" validate:"required,oneof=new partially_filled filled canceled rejected triggered"` // new, partially_filled, filled, canceled, rejected, triggered
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	FilledAt    *time.Time      `json:"filled_at"`
 
 	// Additional fields for trading engine
-	FilledQuantity  float64    `json:"filled_quantity" validate:"min=0"`
-	StopPrice       *float64   `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
-	AveragePrice    *float64   `json:"average_price,omitempty" validate:"omitempty,gt=0"`
-	DisplayQuantity *float64   `json:"display_quantity,omitempty" validate:"omitempty,gt=0"` // for iceberg orders
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`                                 // for GTD orders
+	FilledQuantity  decimal.Decimal  `json:"filled_quantity" validate:"min=0"`
+	StopPrice       *decimal.Decimal `json:"stop_price,omitempty" validate:"omitempty,gt=0"`
+	AveragePrice    *decimal.Decimal `json:"average_price,omitempty" validate:"omitempty,gt=0"`
+	DisplayQuantity *decimal.Decimal `json:"display_quantity,omitempty" validate:"omitempty,gt=0"` // for iceberg orders
+	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`                                 // for GTD orders
 
 	// Advanced order fields
-	TriggerPrice   *float64   `json:"trigger_price,omitempty" validate:"omitempty,gt=0"`   // for stop/triggered orders
-	TrailingOffset *float64   `json:"trailing_offset,omitempty" validate:"omitempty,gt=0"` // for trailing stops
-	OCOGroupID     *uuid.UUID `json:"oco_group_id,omitempty" validate:"omitempty,uuid"`    // for OCO linkage
-	ReduceOnly     *bool      `json:"reduce_only,omitempty"`
-	PostOnly       *bool      `json:"post_only,omitempty"`
-	ParentOrderID  *uuid.UUID `json:"parent_order_id,omitempty" validate:"omitempty,uuid"` // for OCO/linked orders
+	TriggerPrice   *decimal.Decimal `json:"trigger_price,omitempty" validate:"omitempty,gt=0"`   // for stop/triggered orders
+	TrailingOffset *decimal.Decimal `json:"trailing_offset,omitempty" validate:"omitempty,gt=0"` // for trailing stops
+	OCOGroupID     *uuid.UUID       `json:"oco_group_id,omitempty" validate:"omitempty,uuid"`    // for OCO linkage
+	ReduceOnly     *bool            `json:"reduce_only,omitempty"`
+	PostOnly       *bool            `json:"post_only,omitempty"`
+	ParentOrderID  *uuid.UUID       `json:"parent_order_id,omitempty" validate:"omitempty,uuid"` // for OCO/linked orders
 }
 
 // Trade represents a trade in the system
 type Trade struct {
-	ID             uuid.UUID `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	OrderID        uuid.UUID `json:"order_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	CounterOrderID uuid.UUID `json:"counter_order_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	UserID         uuid.UUID `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	CounterUserID  uuid.UUID `json:"counter_user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Symbol         string    `json:"symbol" gorm:"index" validate:"required,trading_pair"`
-	Side           string    `json:"side" validate:"required,oneof=buy sell"` // buy, sell
-	Price          float64   `json:"price" validate:"required,gt=0"`
-	Quantity       float64   `json:"quantity" validate:"required,gt=0"`
-	Fee            float64   `json:"fee" validate:"min=0"`
-	FeeCurrency    string    `json:"fee_currency" validate:"required,currency_code"`
-	IsMaker        bool      `json:"is_maker"` // whether this trade was maker or taker
-	CreatedAt      time.Time `json:"created_at"`
+	ID             uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	OrderID        uuid.UUID       `json:"order_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	CounterOrderID uuid.UUID       `json:"counter_order_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	UserID         uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	CounterUserID  uuid.UUID       `json:"counter_user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Symbol         string          `json:"symbol" gorm:"index" validate:"required,trading_pair"`
+	Side           string          `json:"side" validate:"required,oneof=buy sell"` // buy, sell
+	Price          decimal.Decimal `json:"price" validate:"required,gt=0"`
+	Quantity       decimal.Decimal `json:"quantity" validate:"required,gt=0"`
+	Fee            decimal.Decimal `json:"fee" validate:"min=0"`
+	FeeCurrency    string          `json:"fee_currency" validate:"required,currency_code"`
+	IsMaker        bool            `json:"is_maker"` // whether this trade was maker or taker
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 // TradingPair represents a trading pair in the system
 type TradingPair struct {
-	ID               uuid.UUID     `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	Symbol           string        `json:"symbol" gorm:"uniqueIndex" validate:"required,trading_pair"`
-	BaseCurrency     string        `json:"base_currency" validate:"required,currency_code"`
-	QuoteCurrency    string        `json:"quote_currency" validate:"required,currency_code"`
-	PriceDecimals    int           `json:"price_decimals" validate:"min=0,max=18"`
-	QuantityDecimals int           `json:"quantity_decimals" validate:"min=0,max=18"`
-	MinQuantity      float64       `json:"min_quantity" validate:"gt=0"`
-	MaxQuantity      float64       `json:"max_quantity" validate:"gt=0"`
-	MinPrice         float64       `json:"min_price" validate:"gt=0"`
-	MaxPrice         float64       `json:"max_price" validate:"gt=0"`
-	Status           TradingStatus `json:"status" validate:"required,oneof=active inactive"` // active, inactive
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
+	ID               uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	Symbol           string          `json:"symbol" gorm:"uniqueIndex" validate:"required,trading_pair"`
+	BaseCurrency     string          `json:"base_currency" validate:"required,currency_code"`
+	QuoteCurrency    string          `json:"quote_currency" validate:"required,currency_code"`
+	PriceDecimals    int             `json:"price_decimals" validate:"min=0,max=18"`
+	QuantityDecimals int             `json:"quantity_decimals" validate:"min=0,max=18"`
+	MinQuantity      decimal.Decimal `json:"min_quantity" validate:"gt=0"`
+	MaxQuantity      decimal.Decimal `json:"max_quantity" validate:"gt=0"`
+	MinPrice         decimal.Decimal `json:"min_price" validate:"gt=0"`
+	MaxPrice         decimal.Decimal `json:"max_price" validate:"gt=0"`
+	Status           TradingStatus   `json:"status" validate:"required,oneof=active inactive"` // active, inactive
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 // MarketPrice represents a market price for a trading pair
 type MarketPrice struct {
-	Symbol    string    `json:"symbol" gorm:"primaryKey" validate:"required,trading_pair"`
-	Price     float64   `json:"price" validate:"required,gt=0"`
-	Change24h float64   `json:"change_24h"`
-	Volume24h float64   `json:"volume_24h" validate:"min=0"`
-	High24h   float64   `json:"high_24h" validate:"min=0"`
-	Low24h    float64   `json:"low_24h" validate:"min=0"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Symbol    string          `json:"symbol" gorm:"primaryKey" validate:"required,trading_pair"`
+	Price     decimal.Decimal `json:"price" validate:"required,gt=0"`
+	Change24h decimal.Decimal `json:"change_24h"`
+	Volume24h decimal.Decimal `json:"volume_24h" validate:"min=0"`
+	High24h   decimal.Decimal `json:"high_24h" validate:"min=0"`
+	Low24h    decimal.Decimal `json:"low_24h" validate:"min=0"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // Candle represents a candle for a trading pair
 type Candle struct {
-	Timestamp time.Time `json:"timestamp" validate:"required"`
-	Open      float64   `json:"open" validate:"required,gt=0"`
-	High      float64   `json:"high" validate:"required,gt=0"`
-	Low       float64   `json:"low" validate:"required,gt=0"`
-	Close     float64   `json:"close" validate:"required,gt=0"`
-	Volume    float64   `json:"volume" validate:"min=0"`
+	Timestamp time.Time       `json:"timestamp" validate:"required"`
+	Open      decimal.Decimal `json:"open" validate:"required,gt=0"`
+	High      decimal.Decimal `json:"high" validate:"required,gt=0"`
+	Low       decimal.Decimal `json:"low" validate:"required,gt=0"`
+	Close     decimal.Decimal `json:"close" validate:"required,gt=0"`
+	Volume    decimal.Decimal `json:"volume" validate:"min=0"`
 }
 
 // OrderBookLevel represents a level in the order book
 type OrderBookLevel struct {
-	Price  float64 `json:"price" validate:"required,gt=0"`
-	Volume float64 `json:"volume" validate:"required,gt=0"`
+	Price  decimal.Decimal `json:"price" validate:"required,gt=0"`
+	Volume decimal.Decimal `json:"volume" validate:"required,gt=0"`
 }
 
 // OrderBookSnapshot represents a snapshot of the order book
@@ -242,33 +243,33 @@ type OrderBookSnapshot struct {
 
 // Deposit represents a deposit in the system
 type Deposit struct {
-	ID          uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID      uuid.UUID  `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Currency    string     `json:"currency" validate:"required,currency_code"`
-	Amount      float64    `json:"amount" validate:"required,gt=0"`
-	Status      string     `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
-	TxHash      string     `json:"tx_hash" validate:"omitempty,min=10,max=128,alphanum"`
-	Network     string     `json:"network" validate:"required,oneof=bitcoin ethereum polygon bsc tron"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ConfirmedAt *time.Time `json:"confirmed_at"`
+	ID          uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID      uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Currency    string          `json:"currency" validate:"required,currency_code"`
+	Amount      decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	Status      string          `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
+	TxHash      string          `json:"tx_hash" validate:"omitempty,min=10,max=128,alphanum"`
+	Network     string          `json:"network" validate:"required,oneof=bitcoin ethereum polygon bsc tron"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	ConfirmedAt *time.Time      `json:"confirmed_at"`
 }
 
 // Withdrawal represents a withdrawal in the system
 type Withdrawal struct {
-	ID            uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID        uuid.UUID  `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	Currency      string     `json:"currency" validate:"required,currency_code"`
-	Amount        float64    `json:"amount" validate:"required,gt=0"`
-	Fee           float64    `json:"fee" validate:"min=0"`
-	Status        string     `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
-	TransactionID *uuid.UUID `json:"transaction_id" gorm:"type:uuid" validate:"omitempty,uuid"`
-	Address       string     `json:"address" validate:"required,min=10,max=100"`
-	Network       string     `json:"network" validate:"required,oneof=bitcoin ethereum polygon bsc tron"`
-	TxHash        string     `json:"tx_hash" validate:"omitempty,min=10,max=128,alphanum"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	ProcessedAt   *time.Time `json:"processed_at"`
+	ID            uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID        uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	Currency      string          `json:"currency" validate:"required,currency_code"`
+	Amount        decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	Fee           decimal.Decimal `json:"fee" validate:"min=0"`
+	Status        string          `json:"status" validate:"required,oneof=pending completed failed"` // pending, completed, failed
+	TransactionID *uuid.UUID      `json:"transaction_id" gorm:"type:uuid" validate:"omitempty,uuid"`
+	Address       string          `json:"address" validate:"required,min=10,max=100"`
+	Network       string          `json:"network" validate:"required,oneof=bitcoin ethereum polygon bsc tron"`
+	TxHash        string          `json:"tx_hash" validate:"omitempty,min=10,max=128,alphanum"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	ProcessedAt   *time.Time      `json:"processed_at"`
 }
 
 // APIKey represents an API key in the system
@@ -316,33 +317,33 @@ type TwoFAVerifyRequest struct {
 
 // OrderRequest represents an order request
 type OrderRequest struct {
-	Symbol      string  `json:"symbol" binding:"required" validate:"required,trading_pair"`
-	Side        string  `json:"side" binding:"required,oneof=buy sell" validate:"required,oneof=buy sell"`
-	Type        string  `json:"type" binding:"required,oneof=limit market" validate:"required,oneof=limit market stop stop-limit"`
-	Price       float64 `json:"price" validate:"omitempty,gt=0"`
-	Quantity    float64 `json:"quantity" binding:"required,gt=0" validate:"required,gt=0"`
-	TimeInForce string  `json:"time_in_force" binding:"required,oneof=GTC IOC FOK" validate:"required,oneof=GTC IOC FOK"`
+	Symbol      string          `json:"symbol" binding:"required" validate:"required,trading_pair"`
+	Side        string          `json:"side" binding:"required,oneof=buy sell" validate:"required,oneof=buy sell"`
+	Type        string          `json:"type" binding:"required,oneof=limit market" validate:"required,oneof=limit market stop stop-limit"`
+	Price       decimal.Decimal `json:"price" validate:"omitempty,gt=0"`
+	Quantity    decimal.Decimal `json:"quantity" binding:"required,gt=0" validate:"required,gt=0"`
+	TimeInForce string          `json:"time_in_force" binding:"required,oneof=GTC IOC FOK" validate:"required,oneof=GTC IOC FOK"`
 }
 
 // DepositRequest represents a deposit request
 type DepositRequest struct {
-	Currency string  `json:"currency" binding:"required" validate:"required,currency_code"`
-	Amount   float64 `json:"amount" binding:"required,gt=0" validate:"required,gt=0"`
-	Provider string  `json:"provider" binding:"required" validate:"required,oneof=bank_transfer credit_card crypto_wallet"`
+	Currency string          `json:"currency" binding:"required" validate:"required,currency_code"`
+	Amount   decimal.Decimal `json:"amount" binding:"required,gt=0" validate:"required,gt=0"`
+	Provider string          `json:"provider" binding:"required" validate:"required,oneof=bank_transfer credit_card crypto_wallet"`
 }
 
 // WithdrawalRequest represents a withdrawal request
 type WithdrawalRequest struct {
-	ID        uuid.UUID  `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
-	UserID    uuid.UUID  `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
-	WalletID  string     `json:"wallet_id" validate:"required,alphanum"`
-	Asset     string     `json:"asset" validate:"required,currency_code"`
-	Amount    float64    `json:"amount" validate:"required,gt=0"`
-	ToAddress string     `json:"to_address" validate:"required,min=10,max=100"`
-	Status    string     `json:"status" validate:"required,oneof=pending approved rejected broadcasted"` // pending, approved, rejected, broadcasted
-	Approvals []Approval `json:"approvals" gorm:"foreignKey:RequestID" validate:"dive"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID        uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid" validate:"required,uuid"`
+	UserID    uuid.UUID       `json:"user_id" gorm:"type:uuid;index" validate:"required,uuid"`
+	WalletID  string          `json:"wallet_id" validate:"required,alphanum"`
+	Asset     string          `json:"asset" validate:"required,currency_code"`
+	Amount    decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	ToAddress string          `json:"to_address" validate:"required,min=10,max=100"`
+	Status    string          `json:"status" validate:"required,oneof=pending approved rejected broadcasted"` // pending, approved, rejected, broadcasted
+	Approvals []Approval      `json:"approvals" gorm:"foreignKey:RequestID" validate:"dive"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 type Approval struct {
@@ -491,22 +492,22 @@ type KYCSubmissionRequest struct {
 // swagger:model
 // @name FiatWithdrawRequest
 // @description Request payload for fiat withdrawal
-// @example {"amount": 100.0, "currency": "USD", "bank_account": "US1234567890"}
+// @example {"amount": "100.00", "currency": "USD", "bank_account": "US1234567890"}
 type FiatWithdrawRequest struct {
-	Amount      float64 `json:"amount" example:"100.0"`
-	Currency    string  `json:"currency" example:"USD"`
-	BankAccount string  `json:"bank_account" example:"US1234567890"`
+	Amount      decimal.Decimal `json:"amount" example:"100.00"`
+	Currency    string          `json:"currency" example:"USD"`
+	BankAccount string          `json:"bank_account" example:"US1234567890"`
 }
 
 // FiatDepositRequest represents a fiat deposit request
 // swagger:model
 // @name FiatDepositRequest
 // @description Request payload for fiat deposit
-// @example {"amount": 100.0, "currency": "USD", "bank_account": "US1234567890"}
+// @example {"amount": "100.00", "currency": "USD", "bank_account": "US1234567890"}
 type FiatDepositRequest struct {
-	Amount      float64 `json:"amount" example:"100.0"`
-	Currency    string  `json:"currency" example:"USD"`
-	BankAccount string  `json:"bank_account" example:"US1234567890"`
+	Amount      decimal.Decimal `json:"amount" example:"100.00"`
+	Currency    string          `json:"currency" example:"USD"`
+	BankAccount string          `json:"bank_account" example:"US1234567890"`
 }
 
 // RefreshTokenRequest represents a refresh token request

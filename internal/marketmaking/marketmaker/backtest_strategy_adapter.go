@@ -124,15 +124,15 @@ func convertOrderBookToPriceLevels(ob *models.OrderBookSnapshot) []common.PriceL
 	levels := []common.PriceLevel{}
 	for _, lvl := range ob.Bids {
 		levels = append(levels, common.PriceLevel{
-			Price:  decimal.NewFromFloat(lvl.Price),
-			Volume: decimal.NewFromFloat(lvl.Volume),
+			Price:  lvl.Price,
+			Volume: lvl.Volume,
 			Count:  0, // Not available in OrderBookLevel
 		})
 	}
 	for _, lvl := range ob.Asks {
 		levels = append(levels, common.PriceLevel{
-			Price:  decimal.NewFromFloat(lvl.Price),
-			Volume: decimal.NewFromFloat(lvl.Volume),
+			Price:  lvl.Price,
+			Volume: lvl.Volume,
 			Count:  0, // Not available in OrderBookLevel
 		})
 	}

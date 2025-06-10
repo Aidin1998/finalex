@@ -54,42 +54,36 @@ func NewGormRepository(db *gorm.DB, logger *zap.Logger) model.Repository {
 }
 
 // CreateOrder creates a new order in the database
-func (r *GormRepository) CreateOrder(ctx context.Context, order *model.Order) error {
-	// Convert from internal model to database model
+func (r *GormRepository) CreateOrder(ctx context.Context, order *model.Order) error { // Convert from internal model to database model
 	dbOrder := &models.Order{
 		ID:             order.ID,
 		UserID:         order.UserID,
 		Symbol:         order.Pair,
 		Side:           order.Side,
 		Type:           order.Type,
-		Price:          order.Price.InexactFloat64(),
-		Quantity:       order.Quantity.InexactFloat64(),
-		FilledQuantity: order.FilledQuantity.InexactFloat64(),
+		Price:          order.Price,
+		Quantity:       order.Quantity,
+		FilledQuantity: order.FilledQuantity,
 		Status:         order.Status,
 		TimeInForce:    order.TimeInForce,
 		CreatedAt:      order.CreatedAt,
 		UpdatedAt:      order.UpdatedAt,
 	}
-
 	// Handle optional decimal fields
 	if !order.StopPrice.IsZero() {
-		stopPrice := order.StopPrice.InexactFloat64()
-		dbOrder.StopPrice = &stopPrice
+		dbOrder.StopPrice = &order.StopPrice
 	}
 
 	if !order.AvgPrice.IsZero() {
-		avgPrice := order.AvgPrice.InexactFloat64()
-		dbOrder.AveragePrice = &avgPrice
+		dbOrder.AveragePrice = &order.AvgPrice
 	}
 
 	if !order.DisplayQuantity.IsZero() {
-		displayQty := order.DisplayQuantity.InexactFloat64()
-		dbOrder.DisplayQuantity = &displayQty
+		dbOrder.DisplayQuantity = &order.DisplayQuantity
 	}
 
 	if !order.TrailingOffset.IsZero() {
-		trailingOffset := order.TrailingOffset.InexactFloat64()
-		dbOrder.TrailingOffset = &trailingOffset
+		dbOrder.TrailingOffset = &order.TrailingOffset
 	}
 
 	// Handle optional time and UUID fields
@@ -249,8 +243,8 @@ func (r *GormRepository) CreateTrade(ctx context.Context, trade *model.Trade) er
 		ID:        trade.ID,
 		OrderID:   trade.OrderID,
 		Symbol:    trade.Pair,
-		Price:     trade.Price.InexactFloat64(),
-		Quantity:  trade.Quantity.InexactFloat64(),
+		Price:     trade.Price,
+		Quantity:  trade.Quantity,
 		Side:      trade.Side,
 		IsMaker:   trade.Maker,
 		CreatedAt: trade.CreatedAt,
@@ -271,8 +265,8 @@ func (r *GormRepository) CreateTradeTx(ctx context.Context, tx *gorm.DB, trade *
 		ID:        trade.ID,
 		OrderID:   trade.OrderID,
 		Symbol:    trade.Pair,
-		Price:     trade.Price.InexactFloat64(),
-		Quantity:  trade.Quantity.InexactFloat64(),
+		Price:     trade.Price,
+		Quantity:  trade.Quantity,
 		Side:      trade.Side,
 		IsMaker:   trade.Maker,
 		CreatedAt: trade.CreatedAt,
@@ -291,8 +285,8 @@ func (r *GormRepository) UpdateOrderStatusTx(ctx context.Context, tx *gorm.DB, o
 		Where("id = ?", orderID).
 		Updates(map[string]interface{}{
 			"status":          status,
-			"filled_quantity": filledQty.InexactFloat64(),
-			"average_price":   avgPrice.InexactFloat64(),
+			"filled_quantity": filledQty,
+			"average_price":   avgPrice,
 			"updated_at":      time.Now(),
 		})
 
@@ -464,27 +458,26 @@ func (r *GormRepository) convertToInternalOrder(dbOrder *models.Order) (*model.O
 		Pair:           dbOrder.Symbol,
 		Side:           dbOrder.Side,
 		Type:           dbOrder.Type,
-		Price:          decimal.NewFromFloat(dbOrder.Price),
-		Quantity:       decimal.NewFromFloat(dbOrder.Quantity),
-		FilledQuantity: decimal.NewFromFloat(dbOrder.FilledQuantity),
+		Price:          dbOrder.Price,
+		Quantity:       dbOrder.Quantity,
+		FilledQuantity: dbOrder.FilledQuantity,
 		Status:         dbOrder.Status,
 		CreatedAt:      dbOrder.CreatedAt,
 		UpdatedAt:      dbOrder.UpdatedAt,
 		TimeInForce:    dbOrder.TimeInForce,
 		ExpireAt:       dbOrder.ExpiresAt,
-	}
-	// Handle optional fields
+	} // Handle optional fields
 	if dbOrder.StopPrice != nil {
-		order.StopPrice = decimal.NewFromFloat(*dbOrder.StopPrice)
+		order.StopPrice = *dbOrder.StopPrice
 	}
 	if dbOrder.AveragePrice != nil {
-		order.AvgPrice = decimal.NewFromFloat(*dbOrder.AveragePrice)
+		order.AvgPrice = *dbOrder.AveragePrice
 	}
 	if dbOrder.DisplayQuantity != nil {
-		order.DisplayQuantity = decimal.NewFromFloat(*dbOrder.DisplayQuantity)
+		order.DisplayQuantity = *dbOrder.DisplayQuantity
 	}
 	if dbOrder.TrailingOffset != nil {
-		order.TrailingOffset = decimal.NewFromFloat(*dbOrder.TrailingOffset)
+		order.TrailingOffset = *dbOrder.TrailingOffset
 	}
 	if dbOrder.OCOGroupID != nil {
 		order.OCOGroupID = dbOrder.OCOGroupID
@@ -632,23 +625,20 @@ func (r *GormRepository) BatchCreateOrdersOptimized(ctx context.Context, orders 
 			Symbol:         order.Pair,
 			Side:           order.Side,
 			Type:           order.Type,
-			Price:          order.Price.InexactFloat64(),
-			Quantity:       order.Quantity.InexactFloat64(),
-			FilledQuantity: order.FilledQuantity.InexactFloat64(),
+			Price:          order.Price,
+			Quantity:       order.Quantity,
+			FilledQuantity: order.FilledQuantity,
 			Status:         order.Status,
 			TimeInForce:    order.TimeInForce,
 			CreatedAt:      order.CreatedAt,
 			UpdatedAt:      order.UpdatedAt,
 		}
-
 		// Handle optional fields
 		if !order.StopPrice.IsZero() {
-			stopPrice := order.StopPrice.InexactFloat64()
-			dbOrder.StopPrice = &stopPrice
+			dbOrder.StopPrice = &order.StopPrice
 		}
 		if !order.AvgPrice.IsZero() {
-			avgPrice := order.AvgPrice.InexactFloat64()
-			dbOrder.AveragePrice = &avgPrice
+			dbOrder.AveragePrice = &order.AvgPrice
 		}
 		if order.ExpireAt != nil {
 			dbOrder.ExpiresAt = order.ExpireAt

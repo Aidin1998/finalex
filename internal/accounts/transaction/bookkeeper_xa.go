@@ -7,6 +7,7 @@ import (
 
 	"github.com/Aidin1998/finalex/internal/accounts/bookkeeper"
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -153,19 +154,19 @@ func (bxa *BookkeeperXAResource) Recover(ctx context.Context, flags int) ([]XID,
 // LockFundsXA locks funds within the XA transaction
 func (bxa *BookkeeperXAResource) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
 	xaXID := convertToBookkeeperXID(xid)
-	return bxa.bookkeeper.LockFundsXA(ctx, xaXID, userID, currency, amount)
+	return bxa.bookkeeper.LockFundsXA(ctx, xaXID, userID, currency, decimal.NewFromFloat(amount))
 }
 
 // UnlockFundsXA unlocks funds within the XA transaction
 func (bxa *BookkeeperXAResource) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
 	xaXID := convertToBookkeeperXID(xid)
-	return bxa.bookkeeper.UnlockFundsXA(ctx, xaXID, userID, currency, amount)
+	return bxa.bookkeeper.UnlockFundsXA(ctx, xaXID, userID, currency, decimal.NewFromFloat(amount))
 }
 
 // TransferFunds transfers funds between accounts within the XA transaction
 func (bxa *BookkeeperXAResource) TransferFunds(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, description string) error {
 	xaXID := convertToBookkeeperXID(xid)
-	return bxa.bookkeeper.TransferFundsXA(ctx, xaXID, fromUserID, toUserID, currency, amount, description)
+	return bxa.bookkeeper.TransferFundsXA(ctx, xaXID, fromUserID, toUserID, currency, decimal.NewFromFloat(amount), description)
 }
 
 // Helper functions for XID conversion between transaction.XID and bookkeeper.XID
@@ -220,7 +221,7 @@ func (bxa *BookkeeperXAResource) GetAccountTransactions(ctx context.Context, use
 
 // CreateTransaction implements the BookkeeperService interface
 func (bxa *BookkeeperXAResource) CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
-	return bxa.bookkeeper.CreateTransaction(ctx, userID, transactionType, amount, currency, reference, description)
+	return bxa.bookkeeper.CreateTransaction(ctx, userID, transactionType, decimal.NewFromFloat(amount), currency, reference, description)
 }
 
 // CompleteTransaction implements the BookkeeperService interface
@@ -235,12 +236,12 @@ func (bxa *BookkeeperXAResource) FailTransaction(ctx context.Context, transactio
 
 // LockFunds implements the BookkeeperService interface (non-XA version)
 func (bxa *BookkeeperXAResource) LockFunds(ctx context.Context, userID, currency string, amount float64) error {
-	return bxa.bookkeeper.LockFunds(ctx, userID, currency, amount)
+	return bxa.bookkeeper.LockFunds(ctx, userID, currency, decimal.NewFromFloat(amount))
 }
 
 // UnlockFunds implements the BookkeeperService interface (non-XA version)
 func (bxa *BookkeeperXAResource) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
-	return bxa.bookkeeper.UnlockFunds(ctx, userID, currency, amount)
+	return bxa.bookkeeper.UnlockFunds(ctx, userID, currency, decimal.NewFromFloat(amount))
 }
 
 // BatchGetAccounts implements the BookkeeperService interface

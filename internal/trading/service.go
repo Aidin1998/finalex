@@ -32,28 +32,28 @@ import (
 
 // Import types from marketmaker package for TradingAPI implementation
 type MarketData struct {
-	Price          float64
-	Volume         float64
+	Price          decimal.Decimal
+	Volume         decimal.Decimal
 	Timestamp      time.Time
 	BidBookDepth   []PriceLevel
 	AskBookDepth   []PriceLevel
-	OrderImbalance float64
-	Vwap           float64
+	OrderImbalance decimal.Decimal
+	Vwap           decimal.Decimal
 }
 
 type PriceLevel struct {
-	Price  float64
-	Volume float64
+	Price  decimal.Decimal
+	Volume decimal.Decimal
 }
 
 type PositionRisk struct {
 	Symbol        string
-	Position      float64
-	MarketValue   float64
-	DeltaExposure float64
-	GammaExposure float64
-	VegaExposure  float64
-	ThetaExposure float64
+	Position      decimal.Decimal
+	MarketValue   decimal.Decimal
+	DeltaExposure decimal.Decimal
+	GammaExposure decimal.Decimal
+	VegaExposure  decimal.Decimal
+	ThetaExposure decimal.Decimal
 }
 
 // TradingService defines trading operations for dependency injection
@@ -271,18 +271,20 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 	order.Type = cleanType
 
 	// Validate quantity
-	if order.Quantity <= 0 {
+	if order.Quantity.LessThanOrEqual(decimal.Zero) {
 		return nil, fmt.Errorf("order quantity must be positive")
 	}
-	if order.Quantity > 1000000 { // 1M quantity limit
+	maxQuantity := decimal.NewFromInt(1000000) // 1M quantity limit
+	if order.Quantity.GreaterThan(maxQuantity) {
 		return nil, fmt.Errorf("order quantity exceeds maximum limit of 1,000,000")
 	}
 
 	// Validate price for limit orders
-	if (cleanType == "LIMIT" || cleanType == "STOP_LIMIT") && order.Price <= 0 {
+	if (cleanType == "LIMIT" || cleanType == "STOP_LIMIT") && order.Price.LessThanOrEqual(decimal.Zero) {
 		return nil, fmt.Errorf("price must be positive for limit orders")
 	}
-	if order.Price > 1000000000 { // 1B price limit
+	maxPrice := decimal.NewFromInt(1000000000) // 1B price limit
+	if order.Price.GreaterThan(maxPrice) {
 		return nil, fmt.Errorf("order price exceeds maximum limit")
 	}
 
@@ -319,15 +321,15 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 		}
 
 		// Calculate required funds using FeeEngine
-		var requiredFunds float64
-		orderValue := decimal.NewFromFloat(order.Price * order.Quantity)
+		var requiredFunds decimal.Decimal
+		orderValue := order.Price.Mul(order.Quantity)
 		feeReq := &engine.FeeCalculationRequest{
 			UserID:      order.UserID.String(),
 			Pair:        cleanSymbol,
 			Side:        order.Side,
 			OrderType:   order.Type,
-			Quantity:    decimal.NewFromFloat(order.Quantity),
-			Price:       decimal.NewFromFloat(order.Price),
+			Quantity:    order.Quantity,
+			Price:       order.Price,
 			TradedValue: orderValue,
 			IsMaker:     false, // Conservative assumption for fund checking
 			Timestamp:   time.Now(),
@@ -338,10 +340,11 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 			s.logger.Error("Failed to calculate fee for fund verification",
 				zap.Error(err),
 				zap.String("order_id", order.ID.String()))
-			// Fallback to default fee rate
-			requiredFunds = order.Price * order.Quantity * 1.001
+			// Fallback to default fee rate (0.1%)
+			defaultFeeRate := decimal.NewFromFloat(0.001)
+			requiredFunds = orderValue.Mul(decimal.NewFromFloat(1).Add(defaultFeeRate))
 		} else {
-			requiredFunds = orderValue.Add(feeResult.FinalFee).InexactFloat64()
+			requiredFunds = orderValue.Add(feeResult.FinalFee)
 		}
 
 		// Check available balance through bookkeeper
@@ -352,9 +355,9 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 				return nil, fmt.Errorf("failed to verify funds")
 			}
 
-			if account.Available < requiredFunds {
-				return nil, fmt.Errorf("insufficient funds: required %.8f %s, available %.8f %s",
-					requiredFunds, quoteCurrency, account.Available, quoteCurrency)
+			if account.Available.LessThan(requiredFunds) {
+				return nil, fmt.Errorf("insufficient funds: required %s %s, available %s %s",
+					requiredFunds.String(), quoteCurrency, account.Available.String(), quoteCurrency)
 			}
 		}
 	} else {
@@ -373,9 +376,9 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 				return nil, fmt.Errorf("failed to verify funds")
 			}
 
-			if account.Available < order.Quantity {
-				return nil, fmt.Errorf("insufficient funds: required %.8f %s, available %.8f %s",
-					order.Quantity, baseCurrency, account.Available, baseCurrency)
+			if account.Available.LessThan(order.Quantity) {
+				return nil, fmt.Errorf("insufficient funds: required %s %s, available %s %s",
+					order.Quantity.String(), baseCurrency, account.Available.String(), baseCurrency)
 			}
 		}
 	}
@@ -399,8 +402,8 @@ func (s *Service) PlaceOrder(ctx context.Context, order *models.Order) (*models.
 		zap.String("symbol", order.Symbol),
 		zap.String("side", order.Side),
 		zap.String("type", order.Type),
-		zap.Float64("price", order.Price),
-		zap.Float64("quantity", order.Quantity))
+		zap.String("price", order.Price.String()),
+		zap.String("quantity", order.Quantity.String()))
 
 	// 5. Check for advanced order types and route to trigger monitoring
 	isAdvancedOrder := false
@@ -542,7 +545,7 @@ func (s *Service) CancelOrder(ctx context.Context, orderID string) error {
 		quoteCurrency := order.Pair[3:]
 
 		// Unlock funds
-		if err := s.bookkeeperSvc.UnlockFunds(ctx, order.UserID.String(), quoteCurrency, remainingFunds.InexactFloat64()); err != nil {
+		if err := s.bookkeeperSvc.UnlockFunds(ctx, order.UserID.String(), quoteCurrency, remainingFunds); err != nil {
 			s.logger.Error("Failed to unlock funds", zap.Error(err))
 		}
 	} else if order.Side == "sell" {
@@ -550,7 +553,7 @@ func (s *Service) CancelOrder(ctx context.Context, orderID string) error {
 		baseCurrency := order.Pair[:3]
 
 		// Unlock funds
-		if err := s.bookkeeperSvc.UnlockFunds(ctx, order.UserID.String(), baseCurrency, order.Quantity.InexactFloat64()); err != nil {
+		if err := s.bookkeeperSvc.UnlockFunds(ctx, order.UserID.String(), baseCurrency, order.Quantity); err != nil {
 			s.logger.Error("Failed to unlock funds", zap.Error(err))
 		}
 	}
@@ -598,8 +601,8 @@ func (s *Service) GetOrderBook(symbol string, depth int) (*models.OrderBookSnaps
 	for _, b := range bids {
 		if len(b) >= 2 {
 			apiBids = append(apiBids, models.OrderBookLevel{
-				Price:  parseFloat(b[0]),
-				Volume: parseFloat(b[1]),
+				Price:  parseDecimal(b[0]),
+				Volume: parseDecimal(b[1]),
 			})
 		}
 	}
@@ -607,8 +610,8 @@ func (s *Service) GetOrderBook(symbol string, depth int) (*models.OrderBookSnaps
 	for _, a := range asks {
 		if len(a) >= 2 {
 			apiAsks = append(apiAsks, models.OrderBookLevel{
-				Price:  parseFloat(a[0]),
-				Volume: parseFloat(a[1]),
+				Price:  parseDecimal(a[0]),
+				Volume: parseDecimal(a[1]),
 			})
 		}
 	}
@@ -674,6 +677,12 @@ func (s *Service) GetOrderBookBinary(symbol string, depth int) ([]byte, error) {
 func parseFloat(s string) float64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return f
+}
+
+// parseDecimal helper
+func parseDecimal(s string) decimal.Decimal {
+	d, _ := decimal.NewFromString(s)
+	return d
 }
 
 // --- Minimal stub for order placement and retrieval for tests ---
@@ -798,7 +807,7 @@ func (s *Service) GetInventory(pair string) (float64, error) {
 		return 0.0, nil
 	}
 
-	return account.Balance, nil
+	return account.Balance.InexactFloat64(), nil
 }
 
 // GetAccountBalance returns total account balance (simplified to USD equivalent)
@@ -810,19 +819,20 @@ func (s *Service) GetAccountBalance() (float64, error) {
 		return 0.0, fmt.Errorf("failed to get accounts: %w", err)
 	}
 
-	var totalBalance float64
+	var totalBalance decimal.Decimal
 	for _, account := range accounts {
 		// Convert all balances to USD equivalent (simplified)
 		if account.Currency == "USD" || account.Currency == "USDT" {
-			totalBalance += account.Balance
+			totalBalance = totalBalance.Add(account.Balance)
 		} else {
 			// For other currencies, we'd need to convert to USD at current market rate
 			// For now, use balance as-is (placeholder)
-			totalBalance += account.Balance
+			totalBalance = totalBalance.Add(account.Balance)
 		}
 	}
 
-	return totalBalance, nil
+	totalFloat, _ := totalBalance.Float64()
+	return totalFloat, nil
 }
 
 // GetOpenOrders returns all open orders for a trading pair
@@ -867,28 +877,29 @@ func (s *Service) GetMarketData(pair string) (*MarketData, error) {
 	}
 
 	// Calculate order imbalance
-	var bidVolume, askVolume float64
+	var bidVolume, askVolume decimal.Decimal
 	for _, level := range orderBook.Bids {
-		bidVolume += level.Volume
+		bidVolume = bidVolume.Add(level.Volume)
 	}
 	for _, level := range orderBook.Asks {
-		askVolume += level.Volume
+		askVolume = askVolume.Add(level.Volume)
 	}
 
-	var imbalance float64
-	if bidVolume+askVolume > 0 {
-		imbalance = (bidVolume - askVolume) / (bidVolume + askVolume)
+	var imbalance decimal.Decimal
+	totalVolume := bidVolume.Add(askVolume)
+	if totalVolume.GreaterThan(decimal.Zero) {
+		imbalance = bidVolume.Sub(askVolume).Div(totalVolume)
 	}
 
 	// Calculate mid price
-	var midPrice float64
+	var midPrice decimal.Decimal
 	if len(orderBook.Bids) > 0 && len(orderBook.Asks) > 0 {
-		midPrice = (orderBook.Asks[0].Price + orderBook.Bids[0].Price) / 2
+		midPrice = orderBook.Asks[0].Price.Add(orderBook.Bids[0].Price).Div(decimal.NewFromInt(2))
 	}
 
 	return &MarketData{
 		Price:          midPrice,
-		Volume:         bidVolume + askVolume,
+		Volume:         totalVolume,
 		Timestamp:      time.Now(),
 		BidBookDepth:   convertToPriceLevels(orderBook.Bids),
 		AskBookDepth:   convertToPriceLevels(orderBook.Asks),

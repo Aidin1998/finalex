@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microcosm-cc/bluemonday"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -73,15 +74,15 @@ type ValidationResult struct {
 
 // ParamRule defines validation rules for a parameter
 type ParamRule struct {
-	Required      bool           `json:"required"`
-	Type          string         `json:"type"` // string, int, float, bool, email, url, uuid
-	MinLength     *int           `json:"min_length,omitempty"`
-	MaxLength     *int           `json:"max_length,omitempty"`
-	Pattern       string         `json:"pattern,omitempty"`
-	PatternRegex  *regexp.Regexp `json:"-"`
-	AllowedValues []string       `json:"allowed_values,omitempty"`
-	MinValue      *float64       `json:"min_value,omitempty"`
-	MaxValue      *float64       `json:"max_value,omitempty"`
+	Required      bool             `json:"required"`
+	Type          string           `json:"type"` // string, int, float, bool, email, url, uuid
+	MinLength     *int             `json:"min_length,omitempty"`
+	MaxLength     *int             `json:"max_length,omitempty"`
+	Pattern       string           `json:"pattern,omitempty"`
+	PatternRegex  *regexp.Regexp   `json:"-"`
+	AllowedValues []string         `json:"allowed_values,omitempty"`
+	MinValue      *decimal.Decimal `json:"min_value,omitempty"`
+	MaxValue      *decimal.Decimal `json:"max_value,omitempty"`
 }
 
 // EndpointValidationRule defines validation rules for a specific endpoint
@@ -286,32 +287,34 @@ func (v *Validator) ValidateCurrency(currency string) (string, error) {
 	return currency, nil
 }
 
-// ValidateAmount validates monetary amounts
-func (v *Validator) ValidateAmount(amount string, fieldName string) (float64, error) {
+// ValidateAmount validates monetary amounts and returns decimal.Decimal for precision
+func (v *Validator) ValidateAmount(amount string, fieldName string) (decimal.Decimal, error) {
 	amount = strings.TrimSpace(amount)
 
 	if amount == "" {
-		return 0, fmt.Errorf("%s cannot be empty", fieldName)
+		return decimal.Zero, fmt.Errorf("%s cannot be empty", fieldName)
 	}
 
 	// Check for suspicious patterns
 	if v.sqlInjectionRegex.MatchString(amount) {
-		return 0, fmt.Errorf("%s contains invalid characters", fieldName)
+		return decimal.Zero, fmt.Errorf("%s contains invalid characters", fieldName)
 	}
 
-	// Parse amount
-	value, err := strconv.ParseFloat(amount, 64)
+	// Parse amount using decimal for financial precision
+	value, err := decimal.NewFromString(amount)
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s format", fieldName)
+		return decimal.Zero, fmt.Errorf("invalid %s format: %v", fieldName, err)
 	}
 
 	// Check for reasonable bounds
-	if value < 0 {
-		return 0, fmt.Errorf("%s cannot be negative", fieldName)
+	if value.IsNegative() {
+		return decimal.Zero, fmt.Errorf("%s cannot be negative", fieldName)
 	}
 
-	if value > 1e15 { // 1 quadrillion limit
-		return 0, fmt.Errorf("%s exceeds maximum allowed value", fieldName)
+	// Maximum reasonable value check (1 quadrillion)
+	maxValue := decimal.NewFromFloat(1e15)
+	if value.GreaterThan(maxValue) {
+		return decimal.Zero, fmt.Errorf("%s exceeds maximum allowed value", fieldName)
 	}
 
 	return value, nil
@@ -816,15 +819,17 @@ func ValidateJSONFields(validator *Validator, data map[string]interface{}, prefi
 			if _, err := validator.ValidateAndSanitizeString(v, fieldName, 255, ""); err != nil {
 				return err
 			}
+			// For financial fields passed as strings, validate using decimal
+			if strings.HasSuffix(fieldName, "price") || strings.HasSuffix(fieldName, "quantity") || strings.Contains(fieldName, "amount") {
+				if _, err := validator.ValidateAmount(v, fieldName); err != nil {
+					return err
+				}
+			}
 		case float64:
+			// DEPRECATED: float64 should not be used for financial fields
 			// Check decimal precision for known numeric fields
 			if strings.HasSuffix(fieldName, "price") || strings.HasSuffix(fieldName, "quantity") || strings.Contains(fieldName, "amount") {
-				// Limit to max 8 decimal places
-				decStr := fmt.Sprintf("%v", v)
-				decimalRegex := regexp.MustCompile(`^\d+(\.\d{1,8})?$`)
-				if !decimalRegex.MatchString(decStr) {
-					return fmt.Errorf("%s has invalid decimal precision: %s", fieldName, decStr)
-				}
+				return fmt.Errorf("%s should use decimal.Decimal instead of float64 for financial precision", fieldName)
 			}
 		case map[string]interface{}:
 			// Recursive validation for nested objects

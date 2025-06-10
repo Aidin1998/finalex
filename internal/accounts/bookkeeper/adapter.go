@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/Aidin1998/finalex/pkg/models"
+	"github.com/shopspring/decimal"
 )
 
 var ErrXANotSupported = errors.New("XA operations not supported by BookkeeperService adapter")
@@ -56,7 +57,7 @@ func (a *BookkeeperXAAdapter) GetAccountTransactions(ctx context.Context, userID
 }
 
 // CreateTransaction implements the BookkeeperService interface
-func (a *BookkeeperXAAdapter) CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+func (a *BookkeeperXAAdapter) CreateTransaction(ctx context.Context, userID, transactionType string, amount decimal.Decimal, currency, reference, description string) (*models.Transaction, error) {
 	return a.bookkeeper.CreateTransaction(ctx, userID, transactionType, amount, currency, reference, description)
 }
 
@@ -71,12 +72,12 @@ func (a *BookkeeperXAAdapter) FailTransaction(ctx context.Context, transactionID
 }
 
 // LockFunds implements the BookkeeperService interface (non-XA version)
-func (a *BookkeeperXAAdapter) LockFunds(ctx context.Context, userID, currency string, amount float64) error {
+func (a *BookkeeperXAAdapter) LockFunds(ctx context.Context, userID, currency string, amount decimal.Decimal) error {
 	return a.bookkeeper.LockFunds(ctx, userID, currency, amount)
 }
 
 // UnlockFunds implements the BookkeeperService interface (non-XA version)
-func (a *BookkeeperXAAdapter) UnlockFunds(ctx context.Context, userID, currency string, amount float64) error {
+func (a *BookkeeperXAAdapter) UnlockFunds(ctx context.Context, userID, currency string, amount decimal.Decimal) error {
 	return a.bookkeeper.UnlockFunds(ctx, userID, currency, amount)
 }
 
@@ -146,25 +147,25 @@ func (a *BookkeeperXAAdapter) RecoverXA() ([]XID, error) {
 }
 
 // XA-specific bookkeeper operations
-func (a *BookkeeperXAAdapter) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+func (a *BookkeeperXAAdapter) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error {
 	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
 		return xa.LockFundsXA(ctx, xid, userID, currency, amount)
 	}
 	return ErrXANotSupported
 }
-func (a *BookkeeperXAAdapter) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+func (a *BookkeeperXAAdapter) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error {
 	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
 		return xa.UnlockFundsXA(ctx, xid, userID, currency, amount)
 	}
 	return ErrXANotSupported
 }
-func (a *BookkeeperXAAdapter) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error {
+func (a *BookkeeperXAAdapter) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount decimal.Decimal, reference string) error {
 	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
 		return xa.TransferFundsXA(ctx, xid, fromUserID, toUserID, currency, amount, reference)
 	}
 	return ErrXANotSupported
 }
-func (a *BookkeeperXAAdapter) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+func (a *BookkeeperXAAdapter) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount decimal.Decimal, currency, reference, description string) (*models.Transaction, error) {
 	if xa, ok := a.xaResource.(BookkeeperXAService); ok {
 		return xa.CreateTransactionXA(ctx, xid, userID, transactionType, amount, currency, reference, description)
 	}

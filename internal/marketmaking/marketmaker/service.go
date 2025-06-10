@@ -9,6 +9,7 @@ import (
 	"github.com/Aidin1998/finalex/internal/marketmaking/strategies/common"
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -90,10 +91,10 @@ type TradingAPI interface {
 	PlaceOrder(ctx context.Context, order *models.Order) (*models.Order, error)
 	CancelOrder(ctx context.Context, orderID string) error
 	GetOrderBook(pair string, depth int) (*models.OrderBookSnapshot, error)
-	GetInventory(pair string) (float64, error)
+	GetInventory(pair string) (decimal.Decimal, error)
 
 	// Advanced capabilities
-	GetAccountBalance() (float64, error)
+	GetAccountBalance() (decimal.Decimal, error)
 	GetOpenOrders(pair string) ([]*models.Order, error)
 	GetRecentTrades(pair string, limit int) ([]*models.Trade, error)
 	GetMarketData(pair string) (*common.MarketData, error)
@@ -121,15 +122,15 @@ type OptimizedTradingAPI interface {
 // Enhanced data structures for optimization
 type OrderUpdate struct {
 	OrderID  string
-	Price    float64
-	Quantity float64
+	Price    decimal.Decimal
+	Quantity decimal.Decimal
 	Status   string
 }
 
 type MarketDataUpdate struct {
 	Pair      string
-	Price     float64
-	Volume    float64
+	Price     decimal.Decimal
+	Volume    decimal.Decimal
 	Timestamp time.Time
 	OrderBook *models.OrderBookSnapshot
 }
@@ -138,20 +139,20 @@ type MarketDataUpdate struct {
 type EnhancedMarketData struct {
 	Pair           string
 	OrderBook      *models.OrderBookSnapshot
-	Mid            float64
-	Spread         float64
-	Volatility     float64
-	Inventory      float64
+	Mid            decimal.Decimal
+	Spread         decimal.Decimal
+	Volatility     decimal.Decimal
+	Inventory      decimal.Decimal
 	Timestamp      time.Time
-	OrderImbalance float64
-	VWAP           float64
-	MarketImpact   float64
-	LiquidityScore float64
-	BidVolume      float64
-	AskVolume      float64
-	LastPrice      float64
-	Volume24h      float64
-	PriceChange24h float64
+	OrderImbalance decimal.Decimal
+	VWAP           decimal.Decimal
+	MarketImpact   decimal.Decimal
+	LiquidityScore decimal.Decimal
+	BidVolume      decimal.Decimal
+	AskVolume      decimal.Decimal
+	LastPrice      decimal.Decimal
+	Volume24h      decimal.Decimal
+	PriceChange24h decimal.Decimal
 }
 
 type L2OrderBook struct {
@@ -163,8 +164,8 @@ type L2OrderBook struct {
 
 // PriceLevel represents internal price level structure
 type InternalPriceLevel struct {
-	Price    float64
-	Quantity float64
+	Price    decimal.Decimal
+	Quantity decimal.Decimal
 	Count    int
 }
 
@@ -899,7 +900,7 @@ func (s *Service) updatePerformanceMetrics() {
 	if len(s.trades) > 0 {
 		successfulTrades := 0
 		for _, trade := range s.trades {
-			if trade.Quantity > 0 { // Assuming positive quantity indicates successful trade
+			if trade.Quantity.GreaterThan(decimal.Zero) { // Assuming positive quantity indicates successful trade
 				successfulTrades++
 			}
 		}
@@ -970,14 +971,13 @@ func (s *Service) processMarketData(pair string) {
 		s.logger.Debugf("No market data available for pair %s", pair)
 		return
 	}
-
 	// Update volatility calculation
 	if len(s.priceHistory[pair]) > 0 {
-		s.updateVolatilityMetrics(pair, marketData.Mid)
+		s.updateVolatilityMetrics(pair, marketData.Mid.InexactFloat64())
 	}
 
 	// Update spread metrics
-	s.updateSpreadMetrics(pair, marketData.Spread)
+	s.updateSpreadMetrics(pair, marketData.Spread.InexactFloat64())
 
 	// Process order book depth
 	if marketData.OrderBook != nil {
@@ -1080,15 +1080,14 @@ func (s *Service) executeOptimizedMarketMakingCycle(ctx context.Context, riskMgr
 		marketData := s.marketData[pair]
 		if marketData == nil || strat == nil {
 			continue
-		}
-		// Compute optimal quote (bid, ask, size) with inventory/volatility
+		} // Compute optimal quote (bid, ask, size) with inventory/volatility
 		quoteOut, err := strat.Quote(ctx, common.QuoteInput{
 			Symbol:     pair,
 			Pair:       pair,
-			MidPrice:   common.MustDecimalFromFloat(marketData.Mid),
-			Volume:     common.MustDecimalFromFloat(marketData.Volume24h),
-			Volatility: common.MustDecimalFromFloat(marketData.Volatility),
-			Inventory:  common.MustDecimalFromFloat(0), // Inventory not used in this context
+			MidPrice:   marketData.Mid,
+			Volume:     marketData.Volume24h,
+			Volatility: marketData.Volatility,
+			Inventory:  decimal.Zero, // Inventory not used in this context
 			// Add more fields as needed
 		})
 		if err != nil || quoteOut == nil {
@@ -1160,24 +1159,21 @@ func (s *Service) updatePairMetricsOptimized(pair string, marketData *EnhancedMa
 	if marketData == nil {
 		return
 	}
-
 	// Update core metrics
-	Spread.WithLabelValues(pair).Set(marketData.Spread)
-	Inventory.WithLabelValues(pair).Set(marketData.Inventory)
-
+	Spread.WithLabelValues(pair).Set(marketData.Spread.InexactFloat64())
+	Inventory.WithLabelValues(pair).Set(marketData.Inventory.InexactFloat64())
 	// Update order book metrics if available
 	if marketData.OrderBook != nil {
 		if len(marketData.OrderBook.Bids) > 0 {
-			OrderBookDepth.WithLabelValues(pair, "bid", "0").Set(marketData.OrderBook.Bids[0].Volume)
+			OrderBookDepth.WithLabelValues(pair, "bid", "0").Set(marketData.OrderBook.Bids[0].Volume.InexactFloat64())
 		}
 		if len(marketData.OrderBook.Asks) > 0 {
-			OrderBookDepth.WithLabelValues(pair, "ask", "0").Set(marketData.OrderBook.Asks[0].Volume)
+			OrderBookDepth.WithLabelValues(pair, "ask", "0").Set(marketData.OrderBook.Asks[0].Volume.InexactFloat64())
 		}
 	}
-
 	// Update volatility surface metrics if enabled
 	if s.enableVolSurface {
-		VolatilitySurfaceMetric.WithLabelValues(pair, "1m").Set(marketData.Volatility)
+		VolatilitySurfaceMetric.WithLabelValues(pair, "1m").Set(marketData.Volatility.InexactFloat64())
 	}
 }
 
@@ -1240,9 +1236,9 @@ func (s *Service) updateSpreadMetrics(pair string, spread float64) {
 func (s *Service) updateOrderBookMetrics(pair string, orderBook *models.OrderBookSnapshot) {
 	// Update order book depth metrics
 	if len(orderBook.Bids) > 0 {
-		OrderBookDepth.WithLabelValues(pair, "bid", "0").Set(orderBook.Bids[0].Volume)
+		OrderBookDepth.WithLabelValues(pair, "bid", "0").Set(orderBook.Bids[0].Volume.InexactFloat64())
 	}
 	if len(orderBook.Asks) > 0 {
-		OrderBookDepth.WithLabelValues(pair, "ask", "0").Set(orderBook.Asks[0].Volume)
+		OrderBookDepth.WithLabelValues(pair, "ask", "0").Set(orderBook.Asks[0].Volume.InexactFloat64())
 	}
 }

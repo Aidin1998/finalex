@@ -352,13 +352,12 @@ func (bs *BalanceServiceImpl) Credit(ctx context.Context, req *CreditRequest) (*
 		CreatedAt:     startTime,
 		UpdatedAt:     startTime,
 	})
-	defer bs.activeTransactions.Delete(transactionID)
-	// Create transaction record
+	defer bs.activeTransactions.Delete(transactionID) // Create transaction record
 	transaction := &models.Transaction{
 		ID:          uuid.MustParse(transactionID),
 		UserID:      uuid.MustParse(req.UserID),
 		Type:        "credit",
-		Amount:      req.Amount.InexactFloat64(),
+		Amount:      req.Amount,
 		Currency:    req.Currency,
 		Reference:   req.Reference,
 		Description: req.Description,
@@ -407,13 +406,12 @@ func (bs *BalanceServiceImpl) Credit(ctx context.Context, req *CreditRequest) (*
 
 	// Get updated balance
 	updatedAccount, _ := bs.bookkeeper.GetAccount(ctx, req.UserID, req.Currency)
-
 	response := &CreditResponse{
 		TransactionID: transactionID,
 		UserID:        req.UserID,
 		Currency:      req.Currency,
 		Amount:        req.Amount,
-		NewBalance:    decimal.NewFromFloat(updatedAccount.Balance),
+		NewBalance:    updatedAccount.Balance,
 		Status:        "completed",
 		Timestamp:     completedAt,
 	}
@@ -467,19 +465,17 @@ func (bs *BalanceServiceImpl) Debit(ctx context.Context, req *DebitRequest) (*De
 		bs.incrementMetric("failed_operations")
 		return nil, fmt.Errorf("failed to get account: %w", err)
 	}
-
-	if account.Available < req.Amount.InexactFloat64() {
+	if account.Available.Cmp(req.Amount) < 0 {
 		bs.incrementMetric("failed_operations")
-		return nil, fmt.Errorf("insufficient funds: available=%f, required=%s",
-			account.Available, req.Amount.String())
+		return nil, fmt.Errorf("insufficient funds: available=%s, required=%s",
+			account.Available.String(), req.Amount.String())
 	}
-
 	// Create transaction record
 	transaction := &models.Transaction{
 		ID:          uuid.MustParse(transactionID),
 		UserID:      uuid.MustParse(req.UserID),
 		Type:        "debit",
-		Amount:      -req.Amount.InexactFloat64(),
+		Amount:      req.Amount.Neg(),
 		Currency:    req.Currency,
 		Reference:   req.Reference,
 		Description: req.Description,
@@ -529,13 +525,12 @@ func (bs *BalanceServiceImpl) Debit(ctx context.Context, req *DebitRequest) (*De
 
 	// Get updated balance
 	updatedAccount, _ := bs.bookkeeper.GetAccount(ctx, req.UserID, req.Currency)
-
 	response := &DebitResponse{
 		TransactionID: transactionID,
 		UserID:        req.UserID,
 		Currency:      req.Currency,
 		Amount:        req.Amount,
-		NewBalance:    decimal.NewFromFloat(updatedAccount.Balance),
+		NewBalance:    updatedAccount.Balance,
 		Status:        "completed",
 		Timestamp:     completedAt,
 	}
@@ -591,15 +586,14 @@ func (bs *BalanceServiceImpl) AtomicTransfer(ctx context.Context, req *AtomicTra
 	// Get updated balances
 	fromAccount, _ := bs.bookkeeper.GetAccount(ctx, req.FromUserID, req.Currency)
 	toAccount, _ := bs.bookkeeper.GetAccount(ctx, req.ToUserID, req.Currency)
-
 	response := &AtomicTransferResponse{
 		TransactionID:  uuid.New().String(),
 		FromUserID:     req.FromUserID,
 		ToUserID:       req.ToUserID,
 		Currency:       req.Currency,
 		Amount:         req.Amount,
-		FromNewBalance: decimal.NewFromFloat(fromAccount.Balance),
-		ToNewBalance:   decimal.NewFromFloat(toAccount.Balance),
+		FromNewBalance: fromAccount.Balance,
+		ToNewBalance:   toAccount.Balance,
 		Status:         "completed",
 		Timestamp:      time.Now(),
 	}
@@ -729,9 +723,9 @@ func (bs *BalanceServiceImpl) preValidateTransfers(ctx context.Context, transfer
 		}
 
 		// Check sufficient funds
-		if account.Available < transfer.Amount.InexactFloat64() {
-			return fmt.Errorf("transfer %d: insufficient funds for user %s in %s: available=%f, required=%s",
-				i, transfer.FromUserID, transfer.Currency, account.Available, transfer.Amount.String())
+		if account.Available.Cmp(transfer.Amount) < 0 {
+			return fmt.Errorf("transfer %d: insufficient funds for user %s in %s: available=%s, required=%s",
+				i, transfer.FromUserID, transfer.Currency, account.Available.String(), transfer.Amount.String())
 		}
 
 		// Validate user IDs are different
@@ -812,9 +806,9 @@ func (bs *BalanceServiceImpl) executeSingleTransferInTx(ctx context.Context, tx 
 	}
 
 	// Verify sufficient funds again within the transaction
-	if fromAccount.Available < transfer.Amount.InexactFloat64() {
-		return nil, fmt.Errorf("insufficient funds: available=%f, required=%s",
-			fromAccount.Available, transfer.Amount.String())
+	if fromAccount.Available.Cmp(transfer.Amount) < 0 {
+		return nil, fmt.Errorf("insufficient funds: available=%s, required=%s",
+			fromAccount.Available.String(), transfer.Amount.String())
 	}
 
 	// Update balances atomically
@@ -856,7 +850,7 @@ func (bs *BalanceServiceImpl) executeSingleTransferInTx(ctx context.Context, tx 
 		ID:          uuid.New(),
 		UserID:      fromUserUUID,
 		Type:        "multi_transfer_out",
-		Amount:      -transfer.Amount.InexactFloat64(),
+		Amount:      transfer.Amount.Neg(),
 		Currency:    transfer.Currency,
 		Reference:   operationRef,
 		Description: transfer.Description,
@@ -869,7 +863,7 @@ func (bs *BalanceServiceImpl) executeSingleTransferInTx(ctx context.Context, tx 
 		ID:          uuid.New(),
 		UserID:      toUserUUID,
 		Type:        "multi_transfer_in",
-		Amount:      transfer.Amount.InexactFloat64(),
+		Amount:      transfer.Amount,
 		Currency:    transfer.Currency,
 		Reference:   operationRef,
 		Description: transfer.Description,
@@ -885,10 +879,9 @@ func (bs *BalanceServiceImpl) executeSingleTransferInTx(ctx context.Context, tx 
 	if err := tx.Create(toTx).Error; err != nil {
 		return nil, fmt.Errorf("failed to create to transaction: %w", err)
 	}
-
 	// Calculate new balances for response
-	fromNewBalance := decimal.NewFromFloat(fromAccount.Balance).Sub(transfer.Amount)
-	toNewBalance := decimal.NewFromFloat(toAccount.Balance).Add(transfer.Amount)
+	fromNewBalance := fromAccount.Balance.Sub(transfer.Amount)
+	toNewBalance := toAccount.Balance.Add(transfer.Amount)
 	return &TransferResult{
 		FromUserID:     transfer.FromUserID,
 		ToUserID:       transfer.ToUserID,
@@ -1071,13 +1064,12 @@ func (bs *BalanceServiceImpl) GetBalance(ctx context.Context, userID, currency s
 	if err != nil {
 		return nil, err
 	}
-
 	return &BalanceInfo{
 		UserID:    userID,
 		Currency:  currency,
-		Total:     decimal.NewFromFloat(account.Balance),
-		Available: decimal.NewFromFloat(account.Available),
-		Locked:    decimal.NewFromFloat(account.Locked),
+		Total:     account.Balance,
+		Available: account.Available,
+		Locked:    account.Locked,
 		UpdatedAt: account.UpdatedAt,
 	}, nil
 }
@@ -1146,10 +1138,10 @@ func (bs *BalanceServiceImpl) ValidateTransaction(ctx context.Context, req *Vali
 		if err != nil {
 			response.Valid = false
 			response.Errors = append(response.Errors, "failed to retrieve account information")
-		} else if account.Available < req.Amount.InexactFloat64() {
+		} else if account.Available.Cmp(req.Amount) < 0 {
 			response.Valid = false
-			response.Errors = append(response.Errors, fmt.Sprintf("insufficient funds: available=%f, required=%s",
-				account.Available, req.Amount.String()))
+			response.Errors = append(response.Errors, fmt.Sprintf("insufficient funds: available=%s, required=%s",
+				account.Available.String(), req.Amount.String()))
 		}
 
 		if req.Operation == "transfer" && req.ToUserID == "" {
@@ -1222,13 +1214,12 @@ func (bs *BalanceServiceImpl) LockFunds(ctx context.Context, req *LockFundsReque
 
 	// Get updated balance
 	account, _ := bs.bookkeeper.GetAccount(ctx, req.UserID, req.Currency)
-
 	response := &LockFundsResponse{
 		LockID:        uuid.New().String(),
 		UserID:        req.UserID,
 		Currency:      req.Currency,
 		Amount:        req.Amount,
-		LockedBalance: decimal.NewFromFloat(account.Locked),
+		LockedBalance: account.Locked,
 		Status:        "completed",
 		ExpiresAt:     req.ExpiresAt,
 		Timestamp:     time.Now(),
@@ -1275,13 +1266,12 @@ func (bs *BalanceServiceImpl) UnlockFunds(ctx context.Context, req *UnlockFundsR
 
 	// Get updated balance
 	account, _ := bs.bookkeeper.GetAccount(ctx, req.UserID, req.Currency)
-
 	response := &UnlockFundsResponse{
 		LockID:           req.LockID,
 		UserID:           req.UserID,
 		Currency:         req.Currency,
 		Amount:           req.Amount,
-		AvailableBalance: decimal.NewFromFloat(account.Available),
+		AvailableBalance: account.Available,
 		Status:           "completed",
 		Timestamp:        time.Now(),
 	}

@@ -164,16 +164,15 @@ func (tpm *TradingPathManager) PlaceOrderHotPath(ctx context.Context, order *mod
 	defer func() {
 		latency := time.Since(start)
 		tpm.updateHotPathMetrics(latency)
-	}()
-	// Direct matching engine placement - no XA transaction overhead
+	}() // Direct matching engine placement - no XA transaction overhead
 	matchOrder := &model.Order{
 		ID:        order.ID,
 		UserID:    order.UserID,
 		Pair:      order.Symbol,
 		Side:      order.Side,
 		Type:      order.Type,
-		Quantity:  decimal.NewFromFloat(order.Quantity),
-		Price:     decimal.NewFromFloat(order.Price),
+		Quantity:  order.Quantity,
+		Price:     order.Price,
 		Status:    order.Status,
 		CreatedAt: order.CreatedAt,
 	}
@@ -182,10 +181,9 @@ func (tpm *TradingPathManager) PlaceOrderHotPath(ctx context.Context, order *mod
 	if err != nil {
 		return nil, fmt.Errorf("hot path order placement failed: %w", err)
 	}
-
 	// Update order status
 	order.Status = result.Status
-	order.FilledQuantity = result.FilledQuantity.InexactFloat64()
+	order.FilledQuantity = result.FilledQuantity
 	order.UpdatedAt = time.Now()
 
 	// If trades occurred, queue them for warm path settlement

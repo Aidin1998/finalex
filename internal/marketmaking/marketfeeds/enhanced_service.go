@@ -169,16 +169,15 @@ func (s *EnhancedService) Stop() error {
 func (s *EnhancedService) GetMarketPrices(ctx context.Context) ([]*models.MarketPrice, error) {
 	s.dataMutex.RLock()
 	defer s.dataMutex.RUnlock()
-
 	prices := make([]*models.MarketPrice, 0, len(s.aggregatedTickers))
 	for _, ticker := range s.aggregatedTickers {
 		price := &models.MarketPrice{
 			Symbol:    ticker.Symbol,
-			Price:     ticker.Price.InexactFloat64(),
-			Change24h: ticker.PriceChangePercent.InexactFloat64(),
-			Volume24h: ticker.Volume.InexactFloat64(),
-			High24h:   ticker.HighPrice.InexactFloat64(),
-			Low24h:    ticker.LowPrice.InexactFloat64(),
+			Price:     ticker.Price,
+			Change24h: ticker.PriceChangePercent,
+			Volume24h: ticker.Volume,
+			High24h:   ticker.HighPrice,
+			Low24h:    ticker.LowPrice,
 			UpdatedAt: ticker.UpdatedAt,
 		}
 		prices = append(prices, price)
@@ -196,14 +195,13 @@ func (s *EnhancedService) GetMarketPrice(ctx context.Context, symbol string) (*m
 	if !exists {
 		return nil, fmt.Errorf("market price not found for symbol %s", symbol)
 	}
-
 	return &models.MarketPrice{
 		Symbol:    ticker.Symbol,
-		Price:     ticker.Price.InexactFloat64(),
-		Change24h: ticker.PriceChangePercent.InexactFloat64(),
-		Volume24h: ticker.Volume.InexactFloat64(),
-		High24h:   ticker.HighPrice.InexactFloat64(),
-		Low24h:    ticker.LowPrice.InexactFloat64(),
+		Price:     ticker.Price,
+		Change24h: ticker.PriceChangePercent,
+		Volume24h: ticker.Volume,
+		High24h:   ticker.HighPrice,
+		Low24h:    ticker.LowPrice,
 		UpdatedAt: ticker.UpdatedAt,
 	}, nil
 }
@@ -224,7 +222,6 @@ func (s *EnhancedService) GetCandles(ctx context.Context, symbol, interval strin
 	if provider == nil {
 		return nil, fmt.Errorf("no healthy exchange providers available")
 	}
-
 	klines, err := provider.GetKlines(ctx, symbol, interval, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get klines from %s: %w", provider.GetName(), err)
@@ -233,11 +230,11 @@ func (s *EnhancedService) GetCandles(ctx context.Context, symbol, interval strin
 	for i, kline := range klines {
 		candles[i] = &models.Candle{
 			Timestamp: time.Unix(kline.OpenTime/1000, 0),
-			Open:      kline.Open.InexactFloat64(),
-			High:      kline.High.InexactFloat64(),
-			Low:       kline.Low.InexactFloat64(),
-			Close:     kline.Close.InexactFloat64(),
-			Volume:    kline.Volume.InexactFloat64(),
+			Open:      kline.Open,
+			High:      kline.High,
+			Low:       kline.Low,
+			Close:     kline.Close,
+			Volume:    kline.Volume,
 		}
 	}
 

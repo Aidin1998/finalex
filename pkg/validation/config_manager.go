@@ -362,9 +362,8 @@ func (cm *ConfigManager) validateParamRule(name string, rule ParamRule) error {
 	if rule.MinLength != nil && rule.MaxLength != nil && *rule.MinLength > *rule.MaxLength {
 		return fmt.Errorf("min_length cannot be greater than max_length")
 	}
-
 	// Validate value constraints
-	if rule.MinValue != nil && rule.MaxValue != nil && *rule.MinValue > *rule.MaxValue {
+	if rule.MinValue != nil && rule.MaxValue != nil && rule.MinValue.GreaterThan(*rule.MaxValue) {
 		return fmt.Errorf("min_value cannot be greater than max_value")
 	}
 

@@ -1,3 +1,4 @@
+// Package messaging provides message-driven services for the bookkeeper
 package messaging
 
 import (
@@ -63,11 +64,11 @@ func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *R
 	}
 
 	// Calculate expected new values for better performance monitoring
-	expectedNewAvailable := oldAccount.Available - fundsMsg.Amount.InexactFloat64()
-	expectedNewLocked := oldAccount.Locked + fundsMsg.Amount.InexactFloat64()
+	expectedNewAvailable := oldAccount.Available.Sub(fundsMsg.Amount)
+	expectedNewLocked := oldAccount.Locked.Add(fundsMsg.Amount)
 
 	// Lock the funds
-	err = s.bookkeeper.LockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount.InexactFloat64())
+	err = s.bookkeeper.LockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount)
 	if err != nil {
 		s.logger.Error("Failed to lock funds",
 			zap.Error(err),
@@ -81,12 +82,12 @@ func (s *BookkeeperMessageService) handleFundsLocked(ctx context.Context, msg *R
 		BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", fundsMsg.MessageID),
 		UserID:       fundsMsg.UserID,
 		Currency:     fundsMsg.Currency,
-		OldBalance:   decimal.NewFromFloat(oldAccount.Balance),
-		NewBalance:   decimal.NewFromFloat(oldAccount.Balance), // Balance unchanged in lock operation
-		OldAvailable: decimal.NewFromFloat(oldAccount.Available),
-		NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
-		OldLocked:    decimal.NewFromFloat(oldAccount.Locked),
-		NewLocked:    decimal.NewFromFloat(expectedNewLocked),
+		OldBalance:   oldAccount.Balance,
+		NewBalance:   oldAccount.Balance, // Balance unchanged in lock operation
+		OldAvailable: oldAccount.Available,
+		NewAvailable: expectedNewAvailable,
+		OldLocked:    oldAccount.Locked,
+		NewLocked:    expectedNewLocked,
 		Amount:       fundsMsg.Amount,
 		Reference:    fundsMsg.OrderID,
 		Description:  fmt.Sprintf("Funds locked for order: %s", fundsMsg.Reason),
@@ -115,11 +116,11 @@ func (s *BookkeeperMessageService) handleFundsUnlocked(ctx context.Context, msg 
 	}
 
 	// Calculate expected new values for better performance monitoring
-	expectedNewAvailable := oldAccount.Available + fundsMsg.Amount.InexactFloat64()
-	expectedNewLocked := oldAccount.Locked - fundsMsg.Amount.InexactFloat64()
+	expectedNewAvailable := oldAccount.Available.Add(fundsMsg.Amount)
+	expectedNewLocked := oldAccount.Locked.Sub(fundsMsg.Amount)
 
 	// Unlock the funds
-	err = s.bookkeeper.UnlockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount.InexactFloat64())
+	err = s.bookkeeper.UnlockFunds(ctx, fundsMsg.UserID, fundsMsg.Currency, fundsMsg.Amount)
 	if err != nil {
 		s.logger.Error("Failed to unlock funds",
 			zap.Error(err),
@@ -133,12 +134,12 @@ func (s *BookkeeperMessageService) handleFundsUnlocked(ctx context.Context, msg 
 		BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", fundsMsg.MessageID),
 		UserID:       fundsMsg.UserID,
 		Currency:     fundsMsg.Currency,
-		OldBalance:   decimal.NewFromFloat(oldAccount.Balance),
-		NewBalance:   decimal.NewFromFloat(oldAccount.Balance), // Balance unchanged in unlock operation
-		OldAvailable: decimal.NewFromFloat(oldAccount.Available),
-		NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
-		OldLocked:    decimal.NewFromFloat(oldAccount.Locked),
-		NewLocked:    decimal.NewFromFloat(expectedNewLocked),
+		OldBalance:   oldAccount.Balance,
+		NewBalance:   oldAccount.Balance, // Balance unchanged in unlock operation
+		OldAvailable: oldAccount.Available,
+		NewAvailable: expectedNewAvailable,
+		OldLocked:    oldAccount.Locked,
+		NewLocked:    expectedNewLocked,
 		Amount:       fundsMsg.Amount,
 		Reference:    fundsMsg.OrderID,
 		Description:  fmt.Sprintf("Funds unlocked for order: %s", fundsMsg.Reason),
@@ -202,7 +203,7 @@ func (s *BookkeeperMessageService) updateBalanceForTrade(ctx context.Context, us
 
 	// Create transaction
 	description := fmt.Sprintf("Trade execution - %s", reference)
-	_, err = s.bookkeeper.CreateTransaction(ctx, userID, transactionType, amount.InexactFloat64(), currency, reference, description)
+	_, err = s.bookkeeper.CreateTransaction(ctx, userID, transactionType, amount, currency, reference, description)
 	if err != nil {
 		return fmt.Errorf("failed to create transaction: %w", err)
 	}
@@ -218,12 +219,12 @@ func (s *BookkeeperMessageService) updateBalanceForTrade(ctx context.Context, us
 		BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", ""),
 		UserID:       userID,
 		Currency:     currency,
-		OldBalance:   decimal.NewFromFloat(oldAccount.Balance),
-		NewBalance:   decimal.NewFromFloat(newAccount.Balance),
-		OldAvailable: decimal.NewFromFloat(oldAccount.Available),
-		NewAvailable: decimal.NewFromFloat(newAccount.Available),
-		OldLocked:    decimal.NewFromFloat(oldAccount.Locked),
-		NewLocked:    decimal.NewFromFloat(newAccount.Locked),
+		OldBalance:   oldAccount.Balance,
+		NewBalance:   newAccount.Balance,
+		OldAvailable: oldAccount.Available,
+		NewAvailable: newAccount.Available,
+		OldLocked:    oldAccount.Locked,
+		NewLocked:    newAccount.Locked,
 		Amount:       amount,
 		Reference:    reference,
 		Description:  description,
@@ -354,7 +355,7 @@ func (s *BookkeeperMessageService) handleBatchFundsOperations(ctx context.Contex
 		fundsOp := bookkeeper.FundsOperation{
 			UserID:   op.UserID,
 			Currency: op.Currency,
-			Amount:   op.Amount.InexactFloat64(),
+			Amount:   op.Amount,
 			OrderID:  op.OrderID,
 			Reason:   op.Reason,
 		}
@@ -395,13 +396,13 @@ func (s *BookkeeperMessageService) handleBatchFundsOperations(ctx context.Contex
 		}
 
 		// Calculate expected new values
-		var expectedNewAvailable, expectedNewLocked float64
+		var expectedNewAvailable, expectedNewLocked decimal.Decimal
 		if op.OpType == "lock" {
-			expectedNewAvailable = account.Available - op.Amount.InexactFloat64()
-			expectedNewLocked = account.Locked + op.Amount.InexactFloat64()
+			expectedNewAvailable = account.Available.Sub(op.Amount)
+			expectedNewLocked = account.Locked.Add(op.Amount)
 		} else {
-			expectedNewAvailable = account.Available + op.Amount.InexactFloat64()
-			expectedNewLocked = account.Locked - op.Amount.InexactFloat64()
+			expectedNewAvailable = account.Available.Add(op.Amount)
+			expectedNewLocked = account.Locked.Sub(op.Amount)
 		}
 
 		// Create and publish balance event
@@ -409,12 +410,12 @@ func (s *BookkeeperMessageService) handleBatchFundsOperations(ctx context.Contex
 			BaseMessage:  NewBaseMessage(MsgBalanceUpdated, "bookkeeper", batchMsg.MessageID),
 			UserID:       op.UserID,
 			Currency:     op.Currency,
-			OldBalance:   decimal.NewFromFloat(account.Balance),
-			NewBalance:   decimal.NewFromFloat(account.Balance), // Balance unchanged in lock/unlock operations
-			OldAvailable: decimal.NewFromFloat(account.Available),
-			NewAvailable: decimal.NewFromFloat(expectedNewAvailable),
-			OldLocked:    decimal.NewFromFloat(account.Locked),
-			NewLocked:    decimal.NewFromFloat(expectedNewLocked),
+			OldBalance:   account.Balance,
+			NewBalance:   account.Balance, // Balance unchanged in lock/unlock operations
+			OldAvailable: account.Available,
+			NewAvailable: expectedNewAvailable,
+			OldLocked:    account.Locked,
+			NewLocked:    expectedNewLocked,
 			Amount:       op.Amount,
 			Reference:    op.OrderID,
 			Description:  fmt.Sprintf("Funds %sed for order: %s", op.OpType, op.Reason),

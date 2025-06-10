@@ -9,6 +9,7 @@ import (
 
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -36,16 +37,16 @@ type BatchOperationResult struct {
 type AccountBalance struct {
 	UserID    string
 	Currency  string
-	Balance   float64
-	Available float64
-	Locked    float64
+	Balance   decimal.Decimal
+	Available decimal.Decimal
+	Locked    decimal.Decimal
 }
 
 // FundsOperation represents a funds lock/unlock operation
 type FundsOperation struct {
 	UserID   string
 	Currency string
-	Amount   float64
+	Amount   decimal.Decimal
 	OrderID  string
 	Reason   string
 }
@@ -110,11 +111,11 @@ type BookkeeperService interface {
 	GetAccount(ctx context.Context, userID, currency string) (*models.Account, error)
 	CreateAccount(ctx context.Context, userID, currency string) (*models.Account, error)
 	GetAccountTransactions(ctx context.Context, userID, currency string, limit, offset int) ([]*models.Transaction, int64, error)
-	CreateTransaction(ctx context.Context, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error)
+	CreateTransaction(ctx context.Context, userID, transactionType string, amount decimal.Decimal, currency, reference, description string) (*models.Transaction, error)
 	CompleteTransaction(ctx context.Context, transactionID string) error
 	FailTransaction(ctx context.Context, transactionID string) error
-	LockFunds(ctx context.Context, userID, currency string, amount float64) error
-	UnlockFunds(ctx context.Context, userID, currency string, amount float64) error
+	LockFunds(ctx context.Context, userID, currency string, amount decimal.Decimal) error
+	UnlockFunds(ctx context.Context, userID, currency string, amount decimal.Decimal) error
 	// Batch operations for N+1 query resolution
 	BatchGetAccounts(ctx context.Context, userIDs []string, currencies []string) (map[string]map[string]*models.Account, error)
 	BatchLockFunds(ctx context.Context, operations []FundsOperation) (*BatchOperationResult, error)
@@ -203,9 +204,9 @@ func (s *Service) CreateAccount(ctx context.Context, userID string, currency str
 		ID:        uuid.New(),
 		UserID:    parsedUserID,
 		Currency:  currency,
-		Balance:   0,
-		Available: 0,
-		Locked:    0,
+		Balance:   decimal.Zero,
+		Available: decimal.Zero,
+		Locked:    decimal.Zero,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -245,7 +246,7 @@ func (s *Service) GetAccountTransactions(ctx context.Context, userID string, cur
 }
 
 // CreateTransaction creates a transaction
-func (s *Service) CreateTransaction(ctx context.Context, userID string, transactionType string, amount float64, currency string, reference, description string) (*models.Transaction, error) {
+func (s *Service) CreateTransaction(ctx context.Context, userID string, transactionType string, amount decimal.Decimal, currency string, reference, description string) (*models.Transaction, error) {
 	// Start transaction
 	tx := s.db.Begin()
 	if tx.Error != nil {
@@ -337,15 +338,15 @@ func (s *Service) CompleteTransaction(ctx context.Context, transactionID string)
 
 	// Update account balance
 	if transaction.Type == "deposit" {
-		account.Balance += transaction.Amount
-		account.Available += transaction.Amount
+		account.Balance = account.Balance.Add(transaction.Amount)
+		account.Available = account.Available.Add(transaction.Amount)
 	} else if transaction.Type == "withdrawal" {
-		if account.Available < transaction.Amount {
+		if account.Available.Cmp(transaction.Amount) < 0 {
 			tx.Rollback()
 			return fmt.Errorf("insufficient funds")
 		}
-		account.Balance -= transaction.Amount
-		account.Available -= transaction.Amount
+		account.Balance = account.Balance.Sub(transaction.Amount)
+		account.Available = account.Available.Sub(transaction.Amount)
 	}
 	account.UpdatedAt = time.Now()
 
@@ -423,16 +424,16 @@ func (s *Service) FailTransaction(ctx context.Context, transactionID string) err
 }
 
 // atomicBalanceUpdate safely updates balance, available, and locked fields atomically within a transaction.
-func atomicBalanceUpdate(tx *gorm.DB, account *models.Account, deltaBalance, deltaAvailable, deltaLocked float64) error {
-	account.Balance += deltaBalance
-	account.Available += deltaAvailable
-	account.Locked += deltaLocked
+func atomicBalanceUpdate(tx *gorm.DB, account *models.Account, deltaBalance, deltaAvailable, deltaLocked decimal.Decimal) error {
+	account.Balance = account.Balance.Add(deltaBalance)
+	account.Available = account.Available.Add(deltaAvailable)
+	account.Locked = account.Locked.Add(deltaLocked)
 	account.UpdatedAt = time.Now()
 	return tx.Save(account).Error
 }
 
 // LockFunds locks funds in an account
-func (s *Service) LockFunds(ctx context.Context, userID string, currency string, amount float64) error {
+func (s *Service) LockFunds(ctx context.Context, userID string, currency string, amount decimal.Decimal) error {
 	tx := s.db.Begin()
 	if tx.Error != nil {
 		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
@@ -452,11 +453,11 @@ func (s *Service) LockFunds(ctx context.Context, userID string, currency string,
 		return fmt.Errorf("failed to find account: %w", err)
 	}
 
-	if account.Available < amount {
+	if account.Available.Cmp(amount) < 0 {
 		tx.Rollback()
 		return fmt.Errorf("insufficient funds")
 	}
-	if err := atomicBalanceUpdate(tx, &account, 0, -amount, amount); err != nil {
+	if err := atomicBalanceUpdate(tx, &account, decimal.Zero, amount.Neg(), amount); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to lock funds: %w", err)
 	}
@@ -467,7 +468,7 @@ func (s *Service) LockFunds(ctx context.Context, userID string, currency string,
 }
 
 // UnlockFunds unlocks funds in an account
-func (s *Service) UnlockFunds(ctx context.Context, userID string, currency string, amount float64) error {
+func (s *Service) UnlockFunds(ctx context.Context, userID string, currency string, amount decimal.Decimal) error {
 	tx := s.db.Begin()
 	if tx.Error != nil {
 		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
@@ -487,11 +488,11 @@ func (s *Service) UnlockFunds(ctx context.Context, userID string, currency strin
 		return fmt.Errorf("failed to find account: %w", err)
 	}
 
-	if account.Locked < amount {
+	if account.Locked.Cmp(amount) < 0 {
 		tx.Rollback()
 		return fmt.Errorf("insufficient locked funds")
 	}
-	if err := atomicBalanceUpdate(tx, &account, 0, amount, -amount); err != nil {
+	if err := atomicBalanceUpdate(tx, &account, decimal.Zero, amount, amount.Neg()); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to unlock funds: %w", err)
 	}
@@ -502,21 +503,21 @@ func (s *Service) UnlockFunds(ctx context.Context, userID string, currency strin
 }
 
 // atomicTransfer atomically transfers funds between two accounts within a transaction.
-func atomicTransfer(tx *gorm.DB, fromAccount, toAccount *models.Account, amount float64) error {
-	if fromAccount.Available < amount {
+func atomicTransfer(tx *gorm.DB, fromAccount, toAccount *models.Account, amount decimal.Decimal) error {
+	if fromAccount.Available.Cmp(amount) < 0 {
 		return fmt.Errorf("insufficient funds")
 	}
-	if err := atomicBalanceUpdate(tx, fromAccount, -amount, -amount, 0); err != nil {
+	if err := atomicBalanceUpdate(tx, fromAccount, amount.Neg(), amount.Neg(), decimal.Zero); err != nil {
 		return fmt.Errorf("failed to update from account: %w", err)
 	}
-	if err := atomicBalanceUpdate(tx, toAccount, amount, amount, 0); err != nil {
+	if err := atomicBalanceUpdate(tx, toAccount, amount, amount, decimal.Zero); err != nil {
 		return fmt.Errorf("failed to update to account: %w", err)
 	}
 	return nil
 }
 
 // TransferFunds transfers funds between accounts
-func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID string, currency string, amount float64, description string) error {
+func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID string, currency string, amount decimal.Decimal, description string) error {
 	fromMu := s.getAccountMutex(fromUserID, currency)
 	toMu := s.getAccountMutex(toUserID, currency)
 	// Always lock in a consistent order to avoid deadlocks
@@ -568,9 +569,9 @@ func (s *Service) TransferFunds(ctx context.Context, fromUserID string, toUserID
 				ID:        uuid.New(),
 				UserID:    parsedToUserID,
 				Currency:  currency,
-				Balance:   0,
-				Available: 0,
-				Locked:    0,
+				Balance:   decimal.Zero,
+				Available: decimal.Zero,
+				Locked:    decimal.Zero,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -658,12 +659,12 @@ func (s *Service) getAccountMutex(userID, currency string) *sync.Mutex {
 }
 
 // EnhancedLockFunds locks funds with SELECT FOR UPDATE and enhanced validation
-func (s *Service) EnhancedLockFunds(ctx context.Context, userID, currency string, amount float64, opts *TransactionOptions) error {
+func (s *Service) EnhancedLockFunds(ctx context.Context, userID, currency string, amount decimal.Decimal, opts *TransactionOptions) error {
 	if opts == nil {
 		opts = DefaultTransactionOptions()
 	}
 
-	if amount <= 0 {
+	if amount.Cmp(decimal.Zero) <= 0 {
 		return ErrInvalidAmount
 	}
 
@@ -690,7 +691,7 @@ func (s *Service) EnhancedLockFunds(ctx context.Context, userID, currency string
 		s.logger.Warn("Retrying lock funds operation",
 			zap.String("user_id", userID),
 			zap.String("currency", currency),
-			zap.Float64("amount", amount),
+			zap.Float64("amount", amount.InexactFloat64()),
 			zap.Int("attempt", attempt+1),
 			zap.Error(err))
 	}
@@ -699,7 +700,7 @@ func (s *Service) EnhancedLockFunds(ctx context.Context, userID, currency string
 }
 
 // executeLockFundsWithRetry performs the actual lock funds operation with enhanced locking
-func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currency string, amount float64, opts *TransactionOptions) error {
+func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currency string, amount decimal.Decimal, opts *TransactionOptions) error {
 	// Start transaction with timeout
 	tx := s.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
@@ -746,9 +747,9 @@ func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currenc
 	}
 
 	// Verify sufficient funds with row-level lock held
-	if account.Available < amount {
+	if account.Available.Cmp(amount) < 0 {
 		tx.Rollback()
-		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, account.Available, amount)
+		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, account.Available.InexactFloat64(), amount.InexactFloat64())
 	}
 
 	// Log audit trail
@@ -756,13 +757,13 @@ func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currenc
 		s.logger.Info("Locking funds",
 			zap.String("user_id", userID),
 			zap.String("currency", currency),
-			zap.Float64("amount", amount),
-			zap.Float64("available_before", account.Available),
-			zap.Float64("locked_before", account.Locked))
+			zap.Float64("amount", amount.InexactFloat64()),
+			zap.Float64("available_before", account.Available.InexactFloat64()),
+			zap.Float64("locked_before", account.Locked.InexactFloat64()))
 	}
 
 	// Perform atomic balance update
-	if err := atomicBalanceUpdate(tx, &account, 0, -amount, amount); err != nil {
+	if err := atomicBalanceUpdate(tx, &account, decimal.Zero, amount.Neg(), amount); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to lock funds: %w", err)
 	}
@@ -777,16 +778,16 @@ func (s *Service) executeLockFundsWithRetry(ctx context.Context, userID, currenc
 		s.logger.Info("Successfully locked funds",
 			zap.String("user_id", userID),
 			zap.String("currency", currency),
-			zap.Float64("amount", amount),
-			zap.Float64("available_after", account.Available-amount),
-			zap.Float64("locked_after", account.Locked+amount))
+			zap.Float64("amount", amount.InexactFloat64()),
+			zap.Float64("available_after", account.Available.Sub(amount).InexactFloat64()),
+			zap.Float64("locked_after", account.Locked.Add(amount).InexactFloat64()))
 	}
 
 	return nil
 }
 
 // validateLockFundsPreConditions performs pre-transaction validation
-func (s *Service) validateLockFundsPreConditions(ctx context.Context, tx *gorm.DB, userID, currency string, amount float64) error {
+func (s *Service) validateLockFundsPreConditions(ctx context.Context, tx *gorm.DB, userID, currency string, amount decimal.Decimal) error {
 	// Check if account exists
 	var count int64
 	if err := tx.Model(&models.Account{}).Where("user_id = ? AND currency = ?", userID, currency).Count(&count).Error; err != nil {
@@ -803,12 +804,12 @@ func (s *Service) validateLockFundsPreConditions(ctx context.Context, tx *gorm.D
 }
 
 // EnhancedTransferFunds performs fund transfer with enhanced transaction handling
-func (s *Service) EnhancedTransferFunds(ctx context.Context, fromUserID, toUserID, currency string, amount float64, description string, opts *TransactionOptions) error {
+func (s *Service) EnhancedTransferFunds(ctx context.Context, fromUserID, toUserID, currency string, amount decimal.Decimal, description string, opts *TransactionOptions) error {
 	if opts == nil {
 		opts = DefaultTransactionOptions()
 	}
 
-	if amount <= 0 {
+	if amount.Cmp(decimal.Zero) <= 0 {
 		return ErrInvalidAmount
 	}
 
@@ -836,7 +837,7 @@ func (s *Service) EnhancedTransferFunds(ctx context.Context, fromUserID, toUserI
 			zap.String("from_user_id", fromUserID),
 			zap.String("to_user_id", toUserID),
 			zap.String("currency", currency),
-			zap.Float64("amount", amount),
+			zap.Float64("amount", amount.InexactFloat64()),
 			zap.Int("attempt", attempt+1),
 			zap.Error(err))
 	}
@@ -845,7 +846,7 @@ func (s *Service) EnhancedTransferFunds(ctx context.Context, fromUserID, toUserI
 }
 
 // executeTransferWithEnhancedLocking performs the actual transfer with enhanced locking
-func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUserID, toUserID, currency string, amount float64, description string, opts *TransactionOptions) error {
+func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUserID, toUserID, currency string, amount decimal.Decimal, description string, opts *TransactionOptions) error {
 	// Get account mutexes in consistent order to avoid deadlocks
 	fromMu := s.getAccountMutex(fromUserID, currency)
 	toMu := s.getAccountMutex(toUserID, currency)
@@ -933,9 +934,9 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 				ID:        uuid.New(),
 				UserID:    parsedToUserID,
 				Currency:  currency,
-				Balance:   0,
-				Available: 0,
-				Locked:    0,
+				Balance:   decimal.Zero,
+				Available: decimal.Zero,
+				Locked:    decimal.Zero,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -950,9 +951,9 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 	}
 
 	// Verify sufficient funds with locks held
-	if fromAccount.Available < amount {
+	if fromAccount.Available.Cmp(amount) < 0 {
 		tx.Rollback()
-		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, fromAccount.Available, amount)
+		return fmt.Errorf("%w: available %.8f, required %.8f", ErrInsufficientFunds, fromAccount.Available.InexactFloat64(), amount.InexactFloat64())
 	}
 
 	// Log audit trail
@@ -961,9 +962,9 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 			zap.String("from_user_id", fromUserID),
 			zap.String("to_user_id", toUserID),
 			zap.String("currency", currency),
-			zap.Float64("amount", amount),
-			zap.Float64("from_available_before", fromAccount.Available),
-			zap.Float64("to_available_before", toAccount.Available))
+			zap.Float64("amount", amount.InexactFloat64()),
+			zap.Float64("from_available_before", fromAccount.Available.InexactFloat64()),
+			zap.Float64("to_available_before", toAccount.Available.InexactFloat64()))
 	}
 
 	// Perform atomic transfer
@@ -1019,7 +1020,7 @@ func (s *Service) executeTransferWithEnhancedLocking(ctx context.Context, fromUs
 }
 
 // validateTransferPreConditions performs pre-transaction validation for transfers
-func (s *Service) validateTransferPreConditions(ctx context.Context, tx *gorm.DB, fromUserID, toUserID, currency string, amount float64) error {
+func (s *Service) validateTransferPreConditions(ctx context.Context, tx *gorm.DB, fromUserID, toUserID, currency string, amount decimal.Decimal) error {
 	// Check if from account exists
 	var count int64
 	if err := tx.Model(&models.Account{}).Where("user_id = ? AND currency = ?", fromUserID, currency).Count(&count).Error; err != nil {
@@ -1304,13 +1305,13 @@ func (s *Service) processBatchLockFunds(ctx context.Context, operations []FundsO
 			continue
 		}
 
-		if account.Available < op.Amount {
+		if account.Available.Cmp(op.Amount) < 0 {
 			result.FailedItems[opKey] = fmt.Errorf("insufficient funds: available %.8f, required %.8f",
-				account.Available, op.Amount)
+				account.Available.InexactFloat64(), op.Amount.InexactFloat64())
 			continue
 		}
 
-		if err := atomicBalanceUpdate(tx, &account, 0, -op.Amount, op.Amount); err != nil {
+		if err := atomicBalanceUpdate(tx, &account, decimal.Zero, op.Amount.Neg(), op.Amount); err != nil {
 			result.FailedItems[opKey] = fmt.Errorf("failed to lock funds: %w", err)
 			continue
 		}
@@ -1348,13 +1349,13 @@ func (s *Service) processBatchUnlockFunds(ctx context.Context, operations []Fund
 			continue
 		}
 
-		if account.Locked < op.Amount {
+		if account.Locked.Cmp(op.Amount) < 0 {
 			result.FailedItems[opKey] = fmt.Errorf("insufficient locked funds: locked %.8f, required %.8f",
-				account.Locked, op.Amount)
+				account.Locked.InexactFloat64(), op.Amount.InexactFloat64())
 			continue
 		}
 
-		if err := atomicBalanceUpdate(tx, &account, 0, op.Amount, -op.Amount); err != nil {
+		if err := atomicBalanceUpdate(tx, &account, decimal.Zero, op.Amount, op.Amount.Neg()); err != nil {
 			result.FailedItems[opKey] = fmt.Errorf("failed to unlock funds: %w", err)
 			continue
 		}
@@ -1409,7 +1410,7 @@ type XAOperation struct {
 	Type        string // "lock_funds", "unlock_funds", "transfer", "create_transaction"
 	UserID      string
 	Currency    string
-	Amount      float64
+	Amount      decimal.Decimal
 	FromUserID  string
 	ToUserID    string
 	Reference   string
@@ -1425,10 +1426,10 @@ type BookkeeperXAService interface {
 	XAResource
 
 	// XA-specific bookkeeper operations
-	LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error
-	UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error
-	TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error
-	CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error)
+	LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error
+	UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error
+	TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount decimal.Decimal, reference string) error
+	CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount decimal.Decimal, currency, reference, description string) (*models.Transaction, error)
 }
 
 // XA Resource Implementation
@@ -1611,7 +1612,7 @@ func (s *Service) RecoverXA() ([]XID, error) {
 // XA-specific bookkeeper operations
 
 // LockFundsXA locks funds within an XA transaction
-func (s *Service) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+func (s *Service) LockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error {
 	s.xaMutex.Lock()
 	defer s.xaMutex.Unlock()
 
@@ -1639,13 +1640,13 @@ func (s *Service) LockFundsXA(ctx context.Context, xid XID, userID, currency str
 	}
 
 	// Check if account has enough available funds
-	if account.Available < amount {
+	if account.Available.Cmp(amount) < 0 {
 		return ErrInsufficientFunds
 	}
 
 	// Update account within transaction
-	account.Available -= amount
-	account.Locked += amount
+	account.Available = account.Available.Sub(amount)
+	account.Locked = account.Locked.Add(amount)
 	account.UpdatedAt = time.Now()
 
 	if err := txn.DBTransaction.Save(&account).Error; err != nil {
@@ -1666,13 +1667,13 @@ func (s *Service) LockFundsXA(ctx context.Context, xid XID, userID, currency str
 		zap.String("xid", xidStr),
 		zap.String("user_id", userID),
 		zap.String("currency", currency),
-		zap.Float64("amount", amount))
+		zap.Float64("amount", amount.InexactFloat64()))
 
 	return nil
 }
 
 // UnlockFundsXA unlocks funds within an XA transaction
-func (s *Service) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount float64) error {
+func (s *Service) UnlockFundsXA(ctx context.Context, xid XID, userID, currency string, amount decimal.Decimal) error {
 	s.xaMutex.Lock()
 	defer s.xaMutex.Unlock()
 
@@ -1700,13 +1701,13 @@ func (s *Service) UnlockFundsXA(ctx context.Context, xid XID, userID, currency s
 	}
 
 	// Check if account has enough locked funds
-	if account.Locked < amount {
-		return fmt.Errorf("insufficient locked funds: locked %.8f, required %.8f", account.Locked, amount)
+	if account.Locked.Cmp(amount) < 0 {
+		return fmt.Errorf("insufficient locked funds: locked %.8f, required %.8f", account.Locked.InexactFloat64(), amount.InexactFloat64())
 	}
 
 	// Update account within transaction
-	account.Available += amount
-	account.Locked -= amount
+	account.Available = account.Available.Add(amount)
+	account.Locked = account.Locked.Sub(amount)
 	account.UpdatedAt = time.Now()
 
 	if err := txn.DBTransaction.Save(&account).Error; err != nil {
@@ -1727,13 +1728,13 @@ func (s *Service) UnlockFundsXA(ctx context.Context, xid XID, userID, currency s
 		zap.String("xid", xidStr),
 		zap.String("user_id", userID),
 		zap.String("currency", currency),
-		zap.Float64("amount", amount))
+		zap.Float64("amount", amount.InexactFloat64()))
 
 	return nil
 }
 
 // TransferFundsXA transfers funds between accounts within an XA transaction
-func (s *Service) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount float64, reference string) error {
+func (s *Service) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUserID, currency string, amount decimal.Decimal, reference string) error {
 	s.xaMutex.Lock()
 	defer s.xaMutex.Unlock()
 
@@ -1771,13 +1772,13 @@ func (s *Service) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUs
 	}
 
 	// Check if from account has enough available funds
-	if fromAccount.Available < amount {
+	if fromAccount.Available.Cmp(amount) < 0 {
 		return ErrInsufficientFunds
 	}
 
 	// Update accounts
-	fromAccount.Available -= amount
-	toAccount.Available += amount
+	fromAccount.Available = fromAccount.Available.Sub(amount)
+	toAccount.Available = toAccount.Available.Add(amount)
 
 	now := time.Now()
 	fromAccount.UpdatedAt = now
@@ -1809,14 +1810,14 @@ func (s *Service) TransferFundsXA(ctx context.Context, xid XID, fromUserID, toUs
 		zap.String("from_user_id", fromUserID),
 		zap.String("to_user_id", toUserID),
 		zap.String("currency", currency),
-		zap.Float64("amount", amount),
+		zap.Float64("amount", amount.InexactFloat64()),
 		zap.String("reference", reference))
 
 	return nil
 }
 
 // CreateTransactionXA creates a transaction within an XA transaction
-func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount float64, currency, reference, description string) (*models.Transaction, error) {
+func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, transactionType string, amount decimal.Decimal, currency, reference, description string) (*models.Transaction, error) {
 	s.xaMutex.Lock()
 	defer s.xaMutex.Unlock()
 
@@ -1866,7 +1867,7 @@ func (s *Service) CreateTransactionXA(ctx context.Context, xid XID, userID, tran
 		zap.String("xid", xidStr),
 		zap.String("user_id", userID),
 		zap.String("type", transactionType),
-		zap.Float64("amount", amount),
+		zap.Float64("amount", amount.InexactFloat64()),
 		zap.String("currency", currency))
 
 	return transaction, nil

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Aidin1998/finalex/pkg/models"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -125,13 +126,12 @@ func (f *FiatXAResource) InitiateDeposit(ctx context.Context, userID, currency s
 		zap.String("user_id", userID),
 		zap.String("currency", currency),
 		zap.Float64("amount", amount))
-
 	// Return a placeholder transaction - actual creation will happen during commit
 	return &models.Transaction{
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
 		Type:        "deposit",
-		Amount:      amount,
+		Amount:      decimal.NewFromFloat(amount),
 		Currency:    currency,
 		Status:      "pending",
 		Reference:   provider,
@@ -221,13 +221,12 @@ func (f *FiatXAResource) InitiateWithdrawal(ctx context.Context, userID, currenc
 		zap.String("user_id", userID),
 		zap.String("currency", currency),
 		zap.Float64("amount", amount))
-
 	// Return a placeholder transaction - actual creation will happen during commit
 	return &models.Transaction{
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
 		Type:        "withdrawal",
-		Amount:      amount,
+		Amount:      decimal.NewFromFloat(amount),
 		Currency:    currency,
 		Status:      "pending",
 		Reference:   "bank",
@@ -601,13 +600,12 @@ func (f *FiatXAResource) executeInitiateDeposit(tx *gorm.DB, ctx context.Context
 	currency := data["currency"].(string)
 	amount := data["amount"].(float64)
 	provider := data["provider"].(string)
-
 	// Create transaction record
 	transaction := &models.Transaction{
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
 		Type:        "deposit",
-		Amount:      amount,
+		Amount:      decimal.NewFromFloat(amount),
 		Currency:    currency,
 		Status:      "pending",
 		Reference:   provider,
@@ -637,13 +635,12 @@ func (f *FiatXAResource) executeInitiateWithdrawal(tx *gorm.DB, ctx context.Cont
 	userID := data["user_id"].(string)
 	currency := data["currency"].(string)
 	amount := data["amount"].(float64)
-
 	// Create transaction record
 	transaction := &models.Transaction{
 		ID:          uuid.New(),
 		UserID:      uuid.MustParse(userID),
 		Type:        "withdrawal",
-		Amount:      amount,
+		Amount:      decimal.NewFromFloat(amount),
 		Currency:    currency,
 		Status:      "pending",
 		Reference:   "bank",
