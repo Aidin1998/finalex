@@ -1,0 +1,2 @@
+# This file disables the duplicate migration for 001_create_accounts_partitioned.up.sql
+# It is not used for the main migration sequence. The canonical 001 migration is 001_create_audit_tables.up.sql.

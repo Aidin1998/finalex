@@ -31,6 +31,7 @@ go.work.sum
 # Environment variables
 .env
 .env.local
+*.env
 
 # Log files
 *.log

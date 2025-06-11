@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -95,6 +96,18 @@ func main() {
 
 		c.Next()
 	})
+
+	// --- Supabase/Postgres DB connection ---
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL environment variable not set. Example: postgresql://postgres:password@db.aiywrixoivhazskkisjz.supabase.co:5432/postgres")
+	}
+	conn, err := pgx.Connect(context.Background(), dbURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to Supabase/Postgres: %v", err)
+	}
+	defer conn.Close(context.Background())
+	log.Println("Connected to Supabase/Postgres!")
 
 	// Main documentation page
 	router.GET("/", func(c *gin.Context) {
