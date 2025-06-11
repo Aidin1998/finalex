@@ -6,82 +6,65 @@
 -- =============================================================================
 
 -- Primary composite index for BatchGetAccounts optimization
--- This index eliminates table scans for user+currency lookups
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_user_currency_idx 
-ON accounts (user_id, currency);
+CREATE INDEX accounts_user_currency_idx ON accounts (user_id, currency);
 
 -- Support index for user-based queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_user_id_idx 
-ON accounts (user_id);
+CREATE INDEX accounts_user_id_idx ON accounts (user_id);
 
 -- Support index for currency-based queries (lower priority)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_currency_idx 
-ON accounts (currency);
+CREATE INDEX accounts_currency_idx ON accounts (currency);
 
 -- Covering index for balance operations (includes frequently accessed columns)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_user_currency_balance_covering_idx 
-ON accounts (user_id, currency) 
-INCLUDE (balance, available, locked, updated_at);
+CREATE INDEX accounts_user_currency_balance_covering_idx ON accounts (user_id, currency);
+-- Supabase does not support INCLUDE, so only basic index is created
 
 -- =============================================================================
 -- ORDERS TABLE INDEXES
 -- =============================================================================
 
 -- Composite index for batch order retrieval by user and symbol
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_user_symbol_idx 
-ON orders (user_id, symbol);
+CREATE INDEX orders_user_symbol_idx ON orders (user_id, symbol);
 
 -- Index for batch order retrieval by user and status
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_user_status_idx 
-ON orders (user_id, status);
+CREATE INDEX orders_user_status_idx ON orders (user_id, status);
 
 -- Composite index for order book queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_symbol_status_price_idx 
-ON orders (symbol, status, price);
+CREATE INDEX orders_symbol_status_price_idx ON orders (symbol, status, price);
 
 -- Index for batch order operations by order IDs
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_batch_ids_idx 
-ON orders (id) 
+CREATE INDEX orders_batch_ids_idx ON orders (id) 
 WHERE status IN ('pending', 'partially_filled');
 
 -- Covering index for trading engine queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_symbol_side_price_covering_idx 
-ON orders (symbol, side, price) 
-INCLUDE (quantity, filled_quantity, status, created_at)
-WHERE status IN ('pending', 'partially_filled');
+CREATE INDEX orders_symbol_side_price_covering_idx ON orders (symbol, side, price);
+-- Supabase does not support INCLUDE, so only basic index is created
 
 -- =============================================================================
 -- TRADES TABLE INDEXES
 -- =============================================================================
 
 -- Index for batch trade retrieval by order IDs
-CREATE INDEX CONCURRENTLY IF NOT EXISTS trades_order_id_idx 
-ON trades (order_id);
+CREATE INDEX trades_order_id_idx ON trades (order_id);
 
 -- Composite index for user trade history
-CREATE INDEX CONCURRENTLY IF NOT EXISTS trades_user_symbol_timestamp_idx 
-ON trades (user_id, symbol, created_at DESC);
+CREATE INDEX trades_user_symbol_timestamp_idx ON trades (user_id, symbol, created_at DESC);
 
 -- Index for batch trade operations
-CREATE INDEX CONCURRENTLY IF NOT EXISTS trades_batch_orders_idx 
-ON trades (order_id, created_at DESC);
+CREATE INDEX trades_batch_orders_idx ON trades (order_id, created_at DESC);
 
 -- =============================================================================
 -- TRANSACTIONS TABLE INDEXES
 -- =============================================================================
 
 -- Composite index for user transaction history
-CREATE INDEX CONCURRENTLY IF NOT EXISTS transactions_user_currency_type_idx 
-ON transactions (user_id, currency, type);
+CREATE INDEX transactions_user_currency_type_idx ON transactions (user_id, currency, type);
 
 -- Index for transaction status queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS transactions_status_created_idx 
-ON transactions (status, created_at)
+CREATE INDEX transactions_status_created_idx ON transactions (status, created_at)
 WHERE status IN ('pending', 'processing');
 
 -- Index for reference-based lookups
-CREATE INDEX CONCURRENTLY IF NOT EXISTS transactions_reference_idx 
-ON transactions (reference)
+CREATE INDEX transactions_reference_idx ON transactions (reference)
 WHERE reference IS NOT NULL;
 
 -- =============================================================================
@@ -89,17 +72,17 @@ WHERE reference IS NOT NULL;
 -- =============================================================================
 
 -- Partial index for active accounts (frequently accessed)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_active_user_currency_idx 
+CREATE INDEX accounts_active_user_currency_idx 
 ON accounts (user_id, currency, updated_at)
 WHERE balance > 0 OR available > 0 OR locked > 0;
 
 -- Partial index for orders in active states
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_active_user_symbol_idx 
+CREATE INDEX orders_active_user_symbol_idx 
 ON orders (user_id, symbol, updated_at)
 WHERE status IN ('pending', 'partially_filled');
 
 -- Index for batch funds operations (lock/unlock)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS accounts_funds_operations_idx 
+CREATE INDEX accounts_funds_operations_idx 
 ON accounts (user_id, currency, available, locked)
 WHERE available > 0 OR locked > 0;
 
@@ -108,12 +91,12 @@ WHERE available > 0 OR locked > 0;
 -- =============================================================================
 
 -- Index for performance monitoring and analytics
-CREATE INDEX CONCURRENTLY IF NOT EXISTS orders_performance_monitoring_idx 
+CREATE INDEX orders_performance_monitoring_idx 
 ON orders (created_at, symbol, status)
 WHERE created_at >= CURRENT_DATE - INTERVAL '7 days';
 
 -- Index for trade volume analysis
-CREATE INDEX CONCURRENTLY IF NOT EXISTS trades_volume_analysis_idx 
+CREATE INDEX trades_volume_analysis_idx 
 ON trades (symbol, created_at, quantity)
 WHERE created_at >= CURRENT_DATE - INTERVAL '1 day';
 

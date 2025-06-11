@@ -1,5 +1,5 @@
--- PostgreSQL trades table
-CREATE TABLE trades (
+-- Migration: Create trades table
+CREATE TABLE IF NOT EXISTS trades (
     id UUID PRIMARY KEY,
     order_id UUID NOT NULL,
     counter_order_id UUID NOT NULL,
@@ -13,6 +13,5 @@ CREATE TABLE trades (
     fee_currency VARCHAR(10) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
 CREATE INDEX idx_trades_user_created ON trades (user_id, created_at DESC);
 CREATE INDEX idx_trades_symbol_side ON trades (symbol, side);

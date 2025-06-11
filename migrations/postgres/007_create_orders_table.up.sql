@@ -1,5 +1,5 @@
--- PostgreSQL orders table
-CREATE TABLE orders (
+-- Migration: Create orders table
+CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL,
     symbol VARCHAR(20) NOT NULL,
@@ -10,6 +10,5 @@ CREATE TABLE orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
 CREATE INDEX idx_orders_user_created ON orders (user_id, created_at DESC);
 CREATE INDEX idx_orders_symbol_status ON orders (symbol, status);

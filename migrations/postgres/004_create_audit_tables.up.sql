@@ -1,8 +1,6 @@
--- Ultra-high concurrency ledger transactions table
--- Supports audit trail and transaction history with time-based partitioning
-
-CREATE TABLE ledger_transactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+-- Migration: Create audit tables for ledger, balance snapshots, and audit log
+CREATE TABLE IF NOT EXISTS ledger_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL,
     transaction_type VARCHAR(50) NOT NULL,
     amount DECIMAL(20,8) NOT NULL,
@@ -24,44 +22,11 @@ CREATE TABLE ledger_transactions (
             'reservation', 'release', 'freeze', 'unfreeze'
         )
     )
-) PARTITION BY RANGE (created_at);
+);
 
--- Create monthly partitions for the current and next 12 months
-CREATE TABLE ledger_transactions_2024_12 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2024-12-01') TO ('2025-01-01');
-CREATE TABLE ledger_transactions_2025_01 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
-CREATE TABLE ledger_transactions_2025_02 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-02-01') TO ('2025-03-01');
-CREATE TABLE ledger_transactions_2025_03 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-03-01') TO ('2025-04-01');
-CREATE TABLE ledger_transactions_2025_04 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
-CREATE TABLE ledger_transactions_2025_05 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');
-CREATE TABLE ledger_transactions_2025_06 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-06-01') TO ('2025-07-01');
-CREATE TABLE ledger_transactions_2025_07 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
-CREATE TABLE ledger_transactions_2025_08 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
-CREATE TABLE ledger_transactions_2025_09 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-09-01') TO ('2025-10-01');
-CREATE TABLE ledger_transactions_2025_10 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-10-01') TO ('2025-11-01');
-CREATE TABLE ledger_transactions_2025_11 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-11-01') TO ('2025-12-01');
-CREATE TABLE ledger_transactions_2025_12 PARTITION OF ledger_transactions 
-    FOR VALUES FROM ('2025-12-01') TO ('2026-01-01');
-
--- Hot path indexes for account transaction history
-CREATE INDEX CONCURRENTLY idx_ledger_transactions_account_created ON ledger_transactions (account_id, created_at DESC);
-
--- Transaction lookup by reference
-CREATE INDEX CONCURRENTLY idx_ledger_transactions_reference ON ledger_transactions (reference_id, reference_type);
-
--- Transaction type analysis
-CREATE INDEX CONCURRENTLY idx_ledger_transactions_type_created ON ledger_transactions (transaction_type, created_at);
+-- Indexes for performance
+CREATE INDEX idx_ledger_transactions_account_created ON ledger_transactions (account_id, created_at DESC);
+CREATE INDEX idx_ledger_transactions_type ON ledger_transactions (transaction_type);
 
 -- Audit and compliance queries
 CREATE INDEX CONCURRENTLY idx_ledger_transactions_created_amount ON ledger_transactions (created_at, amount) WHERE ABS(amount) > 1000;
@@ -70,7 +35,7 @@ CREATE INDEX CONCURRENTLY idx_ledger_transactions_created_amount ON ledger_trans
 CREATE INDEX CONCURRENTLY idx_ledger_transactions_metadata_gin ON ledger_transactions USING GIN (metadata);
 
 -- Balance snapshots table for point-in-time balance verification
-CREATE TABLE balance_snapshots (
+CREATE TABLE IF NOT EXISTS balance_snapshots (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     account_id UUID NOT NULL,
     balance DECIMAL(20,8) NOT NULL,
@@ -104,7 +69,7 @@ CREATE INDEX CONCURRENTLY idx_balance_snapshots_account_snapshot ON balance_snap
 CREATE INDEX CONCURRENTLY idx_balance_snapshots_type_created ON balance_snapshots (snapshot_type, created_at);
 
 -- Transaction journal for double-entry bookkeeping
-CREATE TABLE transaction_journal (
+CREATE TABLE IF NOT EXISTS transaction_journal (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transaction_id UUID NOT NULL,
     account_id UUID NOT NULL,
@@ -146,7 +111,7 @@ CREATE INDEX CONCURRENTLY idx_transaction_journal_account_created ON transaction
 CREATE INDEX CONCURRENTLY idx_transaction_journal_currency_created ON transaction_journal (currency, created_at);
 
 -- Audit log table for compliance and monitoring
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity_type VARCHAR(100) NOT NULL,
     entity_id UUID NOT NULL,
@@ -163,35 +128,7 @@ CREATE TABLE audit_log (
     CONSTRAINT audit_log_action_valid CHECK (
         action IN ('create', 'update', 'delete', 'freeze', 'unfreeze', 'suspend', 'activate')
     )
-) PARTITION BY RANGE (created_at);
-
--- Create weekly partitions for audit log (high volume)
-CREATE TABLE audit_log_2024_w49 PARTITION OF audit_log 
-    FOR VALUES FROM ('2024-12-02') TO ('2024-12-09');
-CREATE TABLE audit_log_2024_w50 PARTITION OF audit_log 
-    FOR VALUES FROM ('2024-12-09') TO ('2024-12-16');
-CREATE TABLE audit_log_2024_w51 PARTITION OF audit_log 
-    FOR VALUES FROM ('2024-12-16') TO ('2024-12-23');
-CREATE TABLE audit_log_2024_w52 PARTITION OF audit_log 
-    FOR VALUES FROM ('2024-12-23') TO ('2024-12-30');
-CREATE TABLE audit_log_2025_w01 PARTITION OF audit_log 
-    FOR VALUES FROM ('2024-12-30') TO ('2025-01-06');
-
--- Continue creating partitions for the next 12 weeks
-CREATE TABLE audit_log_2025_w02 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-01-06') TO ('2025-01-13');
-CREATE TABLE audit_log_2025_w03 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-01-13') TO ('2025-01-20');
-CREATE TABLE audit_log_2025_w04 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-01-20') TO ('2025-01-27');
-CREATE TABLE audit_log_2025_w05 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-01-27') TO ('2025-02-03');
-CREATE TABLE audit_log_2025_w06 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-02-03') TO ('2025-02-10');
-CREATE TABLE audit_log_2025_w07 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-02-10') TO ('2025-02-17');
-CREATE TABLE audit_log_2025_w08 PARTITION OF audit_log 
-    FOR VALUES FROM ('2025-02-17') TO ('2025-02-24');
+);
 
 -- Indexes for audit log
 CREATE INDEX CONCURRENTLY idx_audit_log_entity ON audit_log (entity_type, entity_id, created_at DESC);
